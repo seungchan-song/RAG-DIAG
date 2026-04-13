@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag"
+version = "0.1.0"
+description = "RAG 공격 및 정보 유출 진단 시스템"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+  {name = "팀 수박", email = "songseungchan@sejong.ac.kr"},
+]
+
+dependencies = [
+  # === RAG 프레임워크 ===
+  "haystack-ai>=2.0.0",           # Haystack v2 (RAG 파이프라인 오케스트레이션)
+  "faiss-cpu>=1.7.4",             # FAISS 벡터 검색 (CPU 버전)
+
+  # === 임베딩 & 리랭킹 ===
+  "sentence-transformers>=2.2.0",  # BGE-m3-ko 임베딩 모델 로드용
+
+  # === NER & PII 탐지 ===
+  "transformers>=4.36.0",          # KPF-BERT 모델 로드용
+  "torch>=2.1.0",                  # PyTorch (transformers 백엔드)
+
+  # === LLM API ===
+  "openai>=1.10.0",                # GPT-4o mini API 호출용
+
+  # === CLI ===
+  "typer>=0.9.0",                  # CLI 프레임워크
+  "rich>=13.0.0",                  # 터미널 시각화 (테이블, 진행바 등)
+
+  # === 평가 지표 ===
+  "rouge-score>=0.1.2",            # ROUGE-L 유사도 계산
+
+  # === PDF 처리 ===
+  "pypdf>=3.0.0",                  # PDF 텍스트 추출 (Haystack PyPDFToDocument용)
+
+  # === 설정 & 유틸리티 ===
+  "pyyaml>=6.0",                   # YAML 설정 파일 파싱
+  "python-dotenv>=1.0.0",          # .env 환경변수 로드
+  "loguru>=0.7.0",                 # 로깅 라이브러리
+
+  # === 리포트 ===
+  "fpdf2>=2.7.0",                  # PDF 리포트 생성
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",                 # 테스트 프레임워크
+  "pytest-cov>=4.0.0",             # 테스트 커버리지
+  "ruff>=0.1.0",                   # 린터 & 포매터
+]
+
+[project.scripts]
+rag = "rag.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+indent-width = 2
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
