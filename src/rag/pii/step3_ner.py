@@ -110,18 +110,28 @@ class NERDetector:
     """
     NER 모델과 토크나이저를 로드합니다.
 
-    파인튜닝된 KPF-BERT 모델을 지정 경로에서 로드합니다.
-    모델이 없으면 경고를 출력하고, 이후 detect()는 빈 결과를 반환합니다.
-    """
-    model_dir = Path(self.model_path)
+    로컬 경로와 Hugging Face Hub 모델 ID를 모두 지원합니다.
 
-    if not model_dir.exists():
-      logger.warning(
-        f"NER 모델을 찾을 수 없습니다: {self.model_path}. "
-        f"STEP 3 NER 탐지를 건너뜁니다. "
-        f"모델을 models/ 디렉토리에 배치해주세요."
-      )
-      return
+    - 로컬 경로 예시: "models/kpf-bert-kdpii"
+    - Hub 모델 ID 예시: "townboy/kpfbert-kdpii"
+
+    로컬 경로인 경우 해당 디렉토리가 존재해야 합니다.
+    Hub 모델 ID인 경우 최초 실행 시 자동으로 다운로드 및 캐싱됩니다.
+    """
+    # 로컬 경로인지 Hugging Face Hub 모델 ID인지 구분합니다.
+    # Path(model_path).exists()가 True이면 로컬 경로, 아니면 Hub 모델 ID로 간주합니다.
+    local_path = Path(self.model_path)
+    is_local = local_path.exists()
+
+    if is_local:
+      # 로컬 경로: 파일 시스템에서 직접 로드합니다
+      model_identifier = str(local_path)
+      logger.info(f"로컬 모델 경로에서 NER 모델을 로드합니다: {model_identifier}")
+    else:
+      # Hugging Face Hub 모델 ID: 자동 다운로드 후 캐싱합니다
+      # 최초 실행 시 인터넷 연결이 필요합니다 (~/.cache/huggingface에 저장)
+      model_identifier = self.model_path
+      logger.info(f"Hugging Face Hub에서 NER 모델을 다운로드합니다: {model_identifier}")
 
     try:
       # Hugging Face transformers의 pipeline을 사용합니다
@@ -130,8 +140,8 @@ class NERDetector:
       # token-classification 파이프라인: 텍스트에서 NER 태그를 추출합니다
       self.pipeline = hf_pipeline(
         "token-classification",
-        model=str(model_dir),
-        tokenizer=str(model_dir),
+        model=model_identifier,
+        tokenizer=model_identifier,
         aggregation_strategy="simple",  # 인접 동일 태그를 합칩니다
         device=-1,  # CPU 사용 (-1=CPU, 0=GPU)
       )

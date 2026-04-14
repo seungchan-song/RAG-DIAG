@@ -69,7 +69,7 @@ evaluator:
 pii:
   # STEP 3: NER 모델
   ner:
-    model_path: "models/kpf-bert-kdpii"   # 파인튜닝된 KPF-BERT 경로
+    model_path: "townboy/kpfbert-kdpii"   # Hugging Face Hub의 파인튜닝 KPF-BERT
     confidence_threshold: 0.8              # NER 신뢰도 임계값
   # STEP 4: sLLM 교차검증
   sllm:
