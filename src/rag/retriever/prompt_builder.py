@@ -53,7 +53,11 @@ def create_prompt_builder(template: str | None = None) -> PromptBuilder:
   if template is None:
     template = RAG_PROMPT_TEMPLATE
 
-  builder = PromptBuilder(template=template)
+  # required_variables=["documents"]를 설정해야 합니다.
+  # 설정하지 않으면 Haystack이 documents를 선택적(optional)으로 처리하여
+  # retriever를 기다리지 않고 prompt_builder를 즉시 실행합니다.
+  # 그 결과 검색 결과가 항상 0개인 버그가 발생합니다.
+  builder = PromptBuilder(template=template, required_variables=["documents"])
 
   logger.debug("프롬프트 빌더 생성 완료")
   return builder

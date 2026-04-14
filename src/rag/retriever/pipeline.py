@@ -78,6 +78,11 @@ def build_rag_pipeline(
   # 프롬프트 → LLM 생성기
   pipeline.connect("prompt_builder.prompt", "generator.prompt")
 
+  # query_embedder(SentenceTransformersTextEmbedder)는 run() 전에
+  # warm_up()으로 모델을 로드해야 합니다.
+  # 호출하지 않으면 쿼리 임베딩이 None이 되어 검색 결과가 0개 나옵니다.
+  logger.info("RAG 질의 파이프라인 워밍업 시작 (임베딩 모델 로드)...")
+  pipeline.warm_up()
   logger.info("RAG 질의 파이프라인 구성 완료")
   return pipeline
 
@@ -89,13 +94,17 @@ def run_query(
   """
   RAG 파이프라인에 질문을 보내고 답변을 받습니다.
 
+  Haystack v2의 pipeline.run()은 query를 query_embedder와 prompt_builder에
+  동시에 넘길 경우, prompt_builder를 독립 브랜치로 판단하여 retriever를
+  건너뛰는 버그가 있습니다. 이를 피하기 위해 컴포넌트를 직접 순차 호출합니다.
+
   Args:
     pipeline: build_rag_pipeline()으로 만든 RAG 파이프라인
     query: 사용자 질문 텍스트
 
   Returns:
-    dict: 파이프라인 실행 결과. 주요 키:
-      - "generator": {"replies": ["답변 텍스트"], "meta": [...]}
+    dict: 실행 결과. 주요 키:
+      - "generator": {"replies": ["답변 텍스트"]}
       - "retriever": {"documents": [Document, ...]}
 
   사용 예시:
@@ -105,18 +114,33 @@ def run_query(
   """
   logger.info(f"질의 실행: {query[:50]}...")
 
-  # 파이프라인에 질의를 입력합니다
-  # query_embedder에는 text로, prompt_builder에는 query로 전달합니다
-  result = pipeline.run({
-    "query_embedder": {"text": query},
-    "prompt_builder": {"query": query},
-  })
+  # STEP 1: 질의를 벡터로 변환합니다
+  query_embedder = pipeline.get_component("query_embedder")
+  emb_result = query_embedder.run(text=query)
+  query_embedding = emb_result["embedding"]
 
-  # 결과에서 답변을 추출합니다
-  replies = result.get("generator", {}).get("replies", [])
+  # STEP 2: 벡터로 유사 문서를 검색합니다
+  retriever = pipeline.get_component("retriever")
+  ret_result = retriever.run(query_embedding=query_embedding)
+  documents = ret_result["documents"]
+  logger.debug(f"검색된 문서: {len(documents)}개")
+
+  # STEP 3: 검색된 문서와 질의를 결합하여 프롬프트를 만듭니다
+  prompt_builder = pipeline.get_component("prompt_builder")
+  pb_result = prompt_builder.run(documents=documents, query=query)
+  prompt = pb_result["prompt"]
+
+  # STEP 4: LLM이 프롬프트를 받아 답변을 생성합니다
+  generator = pipeline.get_component("generator")
+  gen_result = generator.run(prompt=prompt)
+
+  replies = gen_result.get("replies", [])
   if replies:
     logger.info(f"답변 생성 완료 (길이: {len(replies[0])}자)")
   else:
     logger.warning("답변이 생성되지 않았습니다")
 
-  return result
+  return {
+    "retriever": ret_result,
+    "generator": gen_result,
+  }
