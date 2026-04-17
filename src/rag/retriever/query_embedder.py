@@ -22,30 +22,30 @@ from loguru import logger
 
 
 def create_query_embedder(config: dict[str, Any]) -> SentenceTransformersTextEmbedder:
-  """
-  질의 텍스트를 벡터로 변환하는 임베딩 컴포넌트를 생성합니다.
+    """
+    질의 텍스트를 벡터로 변환하는 임베딩 컴포넌트를 생성합니다.
 
-  문서 임베딩(ingest/embedder.py)과 동일한 모델을 사용합니다.
-  같은 모델을 사용해야 문서-질의 간 유사도 비교가 정확합니다.
+    문서 임베딩(ingest/embedder.py)과 동일한 모델을 사용합니다.
+    같은 모델을 사용해야 문서-질의 간 유사도 비교가 정확합니다.
 
-  Args:
-    config: YAML에서 로드한 설정 딕셔너리.
-            config["embedding"]["model_name"]에서 모델명을 읽습니다.
+    Args:
+      config: YAML에서 로드한 설정 딕셔너리.
+              config["embedding"]["model_name"]에서 모델명을 읽습니다.
 
-  Returns:
-    SentenceTransformersTextEmbedder: 질의 임베딩 컴포넌트
-  """
-  embedding_config = config.get("embedding", {})
-  model_name = embedding_config.get("model_name", "dragonkue/BGE-m3-ko")
-  device_str = embedding_config.get("device", "cpu")
+    Returns:
+      SentenceTransformersTextEmbedder: 질의 임베딩 컴포넌트
+    """
+    embedding_config = config.get("embedding", {})
+    model_name = embedding_config.get("model_name", "dragonkue/BGE-m3-ko")
+    device_str = embedding_config.get("device", "cpu")
 
-  # Haystack v2에서는 ComponentDevice 객체를 사용해야 합니다
-  device = ComponentDevice.from_str(device_str)
+    # Haystack v2에서는 ComponentDevice 객체를 사용해야 합니다
+    device = ComponentDevice.from_str(device_str)
 
-  embedder = SentenceTransformersTextEmbedder(
-    model=model_name,
-    device=device,
-  )
+    embedder = SentenceTransformersTextEmbedder(
+        model=model_name,
+        device=device,
+    )
 
-  logger.debug(f"질의 임베딩기 생성 완료 (모델: {model_name})")
-  return embedder
+    logger.debug(f"질의 임베딩기 생성 완료 (모델: {model_name})")
+    return embedder

@@ -12,7 +12,7 @@ ingest:
 # === 임베딩 모델 설정 ===
 embedding:
   model_name: "dragonkue/BGE-m3-ko"  # 한국어 특화 임베딩 모델
-  device: "cpu"                       # cpu 또는 cuda
+  device: "cpu"                       # cpu 또는 cuda -> GPU 있으면 "cuda"
 
 # === 검색 설정 ===
 retriever:
