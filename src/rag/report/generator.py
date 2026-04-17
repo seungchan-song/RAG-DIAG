@@ -394,96 +394,196 @@ class ReportGenerator:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
 
-    # 한국어 지원을 위한 유니코드 폰트 등록
-    # fpdf2는 내장 유니코드 폰트(Helvetica)를 지원합니다
-    # 한국어 글꼴이 없으면 기본 폰트를 사용하고 영문으로 표시합니다
+    # 한글 폰트 등록
+    font_path = Path(__file__).parent.parent.parent.parent / "참고자료" / "HCRBatang.ttf"
+    if not font_path.exists():
+      logger.warning(
+        f"한글 폰트를 찾을 수 없습니다: {font_path}. "
+        "기본 폰트를 사용합니다."
+      )
+      use_korean_font = False
+    else:
+      try:
+        pdf.add_font("HCRBatang", "", str(font_path))
+        use_korean_font = True
+        logger.debug(f"한글 폰트 등록 완료: {font_path}")
+      except Exception as e:
+        logger.warning(f"한글 폰트 등록 실패: {e}. 기본 폰트를 사용합니다.")
+        use_korean_font = False
+
     pdf.add_page()
 
     # --- 제목 ---
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 15, "RAG Security Diagnostic Report", ln=True, align="C")
+    if use_korean_font:
+      pdf.set_font("HCRBatang", "", 18)
+      pdf.cell(0, 15, "RAG 보안 진단 리포트", ln=True, align="C")
+    else:
+      pdf.set_font("Helvetica", "B", 18)
+      pdf.cell(0, 15, "RAG Security Diagnostic Report", ln=True, align="C")
     pdf.ln(5)
 
     # --- 실험 메타정보 ---
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "1. Experiment Info", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"  Run ID: {summary.get('run_id', 'N/A')}", ln=True)
-    pdf.cell(
-      0, 6,
-      f"  Generated: {summary.get('생성_시간', 'N/A')}",
-      ln=True,
-    )
+    if use_korean_font:
+      pdf.set_font("HCRBatang", "", 12)
+      pdf.cell(0, 8, "1. 실험 정보", ln=True)
+      pdf.set_font("HCRBatang", "", 10)
+      pdf.cell(0, 6, f"  실험 ID: {summary.get('run_id', 'N/A')}", ln=True)
+      pdf.cell(
+        0, 6,
+        f"  생성 시간: {summary.get('생성_시간', 'N/A')}",
+        ln=True,
+      )
+    else:
+      pdf.set_font("Helvetica", "B", 12)
+      pdf.cell(0, 8, "1. Experiment Info", ln=True)
+      pdf.set_font("Helvetica", "", 10)
+      pdf.cell(0, 6, f"  Run ID: {summary.get('run_id', 'N/A')}", ln=True)
+      pdf.cell(
+        0, 6,
+        f"  Generated: {summary.get('생성_시간', 'N/A')}",
+        ln=True,
+      )
     pdf.ln(5)
 
     # --- 시나리오별 결과 ---
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "2. Scenario Results", ln=True)
+    if use_korean_font:
+      pdf.set_font("HCRBatang", "", 12)
+      pdf.cell(0, 8, "2. 시나리오 결과", ln=True)
+    else:
+      pdf.set_font("Helvetica", "B", 12)
+      pdf.cell(0, 8, "2. Scenario Results", ln=True)
 
     for scenario, data in scenario_results.items():
-      pdf.set_font("Helvetica", "B", 11)
+      if use_korean_font:
+        pdf.set_font("HCRBatang", "", 11)
+      else:
+        pdf.set_font("Helvetica", "B", 11)
       pdf.cell(0, 7, f"  [{scenario}]", ln=True)
-      pdf.set_font("Helvetica", "", 10)
+
+      if use_korean_font:
+        pdf.set_font("HCRBatang", "", 10)
+      else:
+        pdf.set_font("Helvetica", "", 10)
 
       total = data.get("total", 0)
 
       if scenario.upper() == "R2":
         success_rate = data.get("success_rate", 0)
         avg_score = data.get("avg_score", 0)
-        pdf.cell(
-          0, 6,
-          f"    Total trials: {total}, "
-          f"Success rate: {success_rate:.2%}, "
-          f"Avg ROUGE-L: {avg_score:.4f}",
-          ln=True,
-        )
+        if use_korean_font:
+          pdf.cell(
+            0, 6,
+            f"    전체 시행: {total}, "
+            f"성공률: {success_rate:.2%}, "
+            f"평균 ROUGE-L: {avg_score:.4f}",
+            ln=True,
+          )
+        else:
+          pdf.cell(
+            0, 6,
+            f"    Total trials: {total}, "
+            f"Success rate: {success_rate:.2%}, "
+            f"Avg ROUGE-L: {avg_score:.4f}",
+            ln=True,
+          )
 
       elif scenario.upper() == "R4":
         hit_rate = data.get("hit_rate", 0)
         is_success = data.get("is_inference_successful", False)
-        pdf.cell(
-          0, 6,
-          f"    Total trials: {total}, "
-          f"Hit rate: {hit_rate:.2%}, "
-          f"Inference: {'SUCCESS (Privacy Risk!)' if is_success else 'FAILED (Safe)'}",
-          ln=True,
-        )
+        success_text = "성공 (개인정보 위험!)" if is_success else "실패 (안전함)"
+        if use_korean_font:
+          pdf.cell(
+            0, 6,
+            f"    전체 시행: {total}, "
+            f"적중률: {hit_rate:.2%}, "
+            f"추론: {success_text}",
+            ln=True,
+          )
+        else:
+          pdf.cell(
+            0, 6,
+            f"    Total trials: {total}, "
+            f"Hit rate: {hit_rate:.2%}, "
+            f"Inference: {'SUCCESS (Privacy Risk!)' if is_success else 'FAILED (Safe)'}",
+            ln=True,
+          )
 
       elif scenario.upper() == "R9":
         success_rate = data.get("success_rate", 0)
-        pdf.cell(
-          0, 6,
-          f"    Total trials: {total}, "
-          f"Injection success rate: {success_rate:.2%}",
-          ln=True,
-        )
+        if use_korean_font:
+          pdf.cell(
+            0, 6,
+            f"    전체 시행: {total}, "
+            f"주입 성공률: {success_rate:.2%}",
+            ln=True,
+          )
+        else:
+          pdf.cell(
+            0, 6,
+            f"    Total trials: {total}, "
+            f"Injection success rate: {success_rate:.2%}",
+            ln=True,
+          )
 
       pdf.ln(3)
 
     # --- PII 유출 프로파일 ---
     pii_data = summary.get("PII_유출_프로파일", {})
     if pii_data and "error" not in pii_data:
-      pdf.set_font("Helvetica", "B", 12)
-      pdf.cell(0, 8, "3. PII Leakage Profile", ln=True)
+      if use_korean_font:
+        pdf.set_font("HCRBatang", "", 12)
+        pdf.cell(0, 8, "3. PII 유출 프로파일", ln=True)
+      else:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "3. PII Leakage Profile", ln=True)
 
       for scenario, pii_info in pii_data.items():
-        pdf.set_font("Helvetica", "B", 11)
+        if use_korean_font:
+          pdf.set_font("HCRBatang", "", 11)
+        else:
+          pdf.set_font("Helvetica", "B", 11)
         pdf.cell(0, 7, f"  [{scenario}]", ln=True)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(
-          0, 6,
-          f"    Responses with PII: "
-          f"{pii_info.get('PII_포함_응답', 0)}"
-          f"/{pii_info.get('전체_응답', 0)} "
-          f"({pii_info.get('PII_포함률', '0%')})",
-          ln=True,
-        )
-        pdf.cell(
-          0, 6,
-          f"    Total PII detected: "
-          f"{pii_info.get('총_PII_탐지', 0)}",
-          ln=True,
-        )
+
+        if use_korean_font:
+          pdf.set_font("HCRBatang", "", 10)
+        else:
+          pdf.set_font("Helvetica", "", 10)
+
+        pii_responses = pii_info.get('PII_포함_응답', 0)
+        total_responses = pii_info.get('전체_응답', 0)
+        pii_rate = pii_info.get('PII_포함률', '0%')
+        pii_count = pii_info.get('총_PII_탐지', 0)
+
+        if use_korean_font:
+          pdf.cell(
+            0, 6,
+            f"    PII 포함 응답: "
+            f"{pii_responses}"
+            f"/{total_responses} "
+            f"({pii_rate})",
+            ln=True,
+          )
+          pdf.cell(
+            0, 6,
+            f"    탐지된 총 PII: "
+            f"{pii_count}",
+            ln=True,
+          )
+        else:
+          pdf.cell(
+            0, 6,
+            f"    Responses with PII: "
+            f"{pii_responses}"
+            f"/{total_responses} "
+            f"({pii_rate})",
+            ln=True,
+          )
+          pdf.cell(
+            0, 6,
+            f"    Total PII detected: "
+            f"{pii_count}",
+            ln=True,
+          )
 
         # 태그별 탐지 수
         tags = pii_info.get("태그별_탐지", {})
@@ -491,27 +591,49 @@ class ReportGenerator:
           tag_str = ", ".join(
             f"{tag}: {count}" for tag, count in tags.items()
           )
-          pdf.cell(0, 6, f"    By type: {tag_str}", ln=True)
+          if use_korean_font:
+            pdf.cell(0, 6, f"    유형별: {tag_str}", ln=True)
+          else:
+            pdf.cell(0, 6, f"    By type: {tag_str}", ln=True)
         pdf.ln(3)
 
     # --- 종합 판정 ---
-    pdf.set_font("Helvetica", "B", 12)
+    if use_korean_font:
+      pdf.set_font("HCRBatang", "", 12)
+    else:
+      pdf.set_font("Helvetica", "B", 12)
     section_num = 4 if pii_data and "error" not in pii_data else 3
-    pdf.cell(0, 8, f"{section_num}. Overall Assessment", ln=True)
-    pdf.set_font("Helvetica", "", 10)
+
+    if use_korean_font:
+      pdf.cell(0, 8, f"{section_num}. 종합 평가", ln=True)
+      pdf.set_font("HCRBatang", "", 10)
+    else:
+      pdf.cell(0, 8, f"{section_num}. Overall Assessment", ln=True)
+      pdf.set_font("Helvetica", "", 10)
 
     # 위험도 판정
     risk_level = self._assess_risk_level(scenario_results)
-    pdf.cell(0, 6, f"  Risk Level: {risk_level}", ln=True)
+    if use_korean_font:
+      pdf.cell(0, 6, f"  위험도: {risk_level}", ln=True)
+    else:
+      pdf.cell(0, 6, f"  Risk Level: {risk_level}", ln=True)
     pdf.ln(10)
 
     # --- 푸터 ---
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.cell(
-      0, 5,
-      "Generated by RAG Security Diagnostic System",
-      ln=True, align="C",
-    )
+    if use_korean_font:
+      pdf.set_font("HCRBatang", "", 8)
+      pdf.cell(
+        0, 5,
+        "RAG 보안 진단 시스템으로 생성됨",
+        ln=True, align="C",
+      )
+    else:
+      pdf.set_font("Helvetica", "I", 8)
+      pdf.cell(
+        0, 5,
+        "Generated by RAG Security Diagnostic System",
+        ln=True, align="C",
+      )
 
     # PDF 저장
     pdf_path = run_dir / "report.pdf"
