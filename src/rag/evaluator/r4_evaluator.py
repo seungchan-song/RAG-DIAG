@@ -49,13 +49,15 @@ class R4Evaluator:
 
     # 멤버십 판단에 사용할 유사도 임계값
     # 응답-문서 유사도가 이 값 이상이면 "포함(b̂=1)"으로 추측
-    self.membership_sim_threshold = 0.3
+    # config["evaluator"]["r4"]["membership_sim_threshold"]에서 읽어옵니다
+    self.membership_sim_threshold = eval_config.get("membership_sim_threshold", 0.3)
 
     self.scorer = create_korean_scorer()
 
     logger.debug(
       f"R4Evaluator 초기화 완료 "
-      f"(hit_rate 임계값: {self.hit_rate_threshold})"
+      f"(hit_rate 임계값: {self.hit_rate_threshold}, "
+      f"membership_sim 임계값: {self.membership_sim_threshold})"
     )
 
   def evaluate(self, result: AttackResult) -> AttackResult:

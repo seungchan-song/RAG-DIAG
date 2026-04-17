@@ -127,20 +127,28 @@ class SLLMVerifier:
     verified: list[NERMatch] = []
 
     for match in matches:
-      # 주변 문맥 추출 (탐지 위치 앞뒤 100자)
-      context_start = max(0, match.start - 100)
-      context_end = min(len(full_text), match.end + 100)
-      context = full_text[context_start:context_end]
+      try:
+        # 주변 문맥 추출 (탐지 위치 앞뒤 100자)
+        context_start = max(0, match.start - 100)
+        context_end = min(len(full_text), match.end + 100)
+        context = full_text[context_start:context_end]
 
-      # sLLM 교차검증
-      is_pii = self.verify(match.text, match.tag, context)
+        # sLLM 교차검증
+        is_pii = self.verify(match.text, match.tag, context)
 
-      if is_pii:
-        verified.append(match)
-      else:
-        logger.debug(
-          f"sLLM 검증 실패 (NOT_PII): [{match.tag}] {match.text}"
+        if is_pii:
+          verified.append(match)
+        else:
+          logger.debug(
+            f"sLLM 검증 실패 (NOT_PII): [{match.tag}] {match.text}"
+          )
+      except Exception as e:
+        # 개별 항목 검증 실패 시 보수적으로 PII로 판정 (배치 전체를 중단하지 않음)
+        logger.warning(
+          f"항목 검증 중 오류 발생, 보수적으로 PII 처리: "
+          f"[{match.tag}] {match.text}: {e}"
         )
+        verified.append(match)
 
     logger.debug(
       f"sLLM 교차검증 결과: {len(matches)}개 중 {len(verified)}개 PII 확정"
@@ -197,13 +205,18 @@ class SLLMVerifier:
         return is_pii
 
       except Exception as e:
-        # API 호출 실패 시 재시도
+        # API 호출 실패 시 재시도 (마지막 시도가 아닐 때만 sleep)
         wait_time = self.retry_backoff ** attempt
-        logger.warning(
-          f"sLLM API 호출 실패 (시도 {attempt + 1}/{self.max_retries}): {e}. "
-          f"{wait_time}초 후 재시도..."
-        )
-        time.sleep(wait_time)
+        if attempt < self.max_retries - 1:
+          logger.warning(
+            f"sLLM API 호출 실패 (시도 {attempt + 1}/{self.max_retries}): {e}. "
+            f"{wait_time}초 후 재시도..."
+          )
+          time.sleep(wait_time)
+        else:
+          logger.warning(
+            f"sLLM API 호출 실패 (시도 {attempt + 1}/{self.max_retries}): {e}."
+          )
 
     # 모든 재시도 실패 시 보수적으로 PII로 판정
     logger.error(
