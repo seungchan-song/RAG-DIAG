@@ -90,16 +90,28 @@ class R2ExtractionAttack(BaseAttack):
     logger.debug(f"R2 공격 실행: {query[:50]}...")
 
     # RAG 파이프라인에 복합 쿼리 전달
-    response = self._run_rag_query(rag_pipeline, query)
+    trace = self._run_rag_query(rag_pipeline, query)
+    replies = trace.get("generator", {}).get("replies", [])
+    response = replies[0] if replies else ""
 
     return AttackResult(
       scenario="R2",
       query=query,
       response=response,
+      query_id=query_info.get("query_id", ""),
+      profile_name=trace.get("profile_name", ""),
       target_text=target_text,
+      retrieved_documents=trace.get("retrieved_documents", []),
+      raw_retrieved_documents=trace.get("raw_retrieved_documents", []),
+      thresholded_documents=trace.get("thresholded_documents", []),
+      reranked_documents=trace.get("reranked_documents", []),
+      final_prompt=trace.get("prompt", ""),
+      retrieval_config=trace.get("retrieval_config", {}),
       metadata={
         "anchor": query_info.get("anchor", ""),
         "command": query_info.get("command", ""),
         "target_doc_id": query_info.get("target_doc_id", ""),
+        "keyword": query_info.get("keyword", ""),
+        "reranker_enabled": trace.get("reranker_enabled", False),
       },
     )

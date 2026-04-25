@@ -39,6 +39,7 @@ def create_file_router() -> FileTypeRouter:
     mime_types=[
       "application/pdf",   # PDF 파일
       "text/plain",        # TXT, MD 파일
+      "text/markdown",     # Markdown 파일
     ]
   )
 

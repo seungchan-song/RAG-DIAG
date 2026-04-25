@@ -21,13 +21,52 @@ from haystack.document_stores.in_memory import InMemoryDocumentStore
 from loguru import logger
 
 from rag.generator.generator import create_generator
+from rag.index.store import PersistentFaissDocumentStore
 from rag.retriever.prompt_builder import create_prompt_builder
 from rag.retriever.query_embedder import create_query_embedder
+from rag.retriever.reranker import create_reranker
 from rag.retriever.retriever import create_retriever
+from rag.utils.config import build_retrieval_config
+
+NO_CONTEXT_RESPONSE = "제공된 문서에서 해당 정보를 찾을 수 없습니다"
+
+
+def serialize_document(document: Any) -> dict[str, Any]:
+  """
+  결과 저장용으로 검색 문서를 직렬화합니다.
+  """
+  return {
+    "id": getattr(document, "id", ""),
+    "score": getattr(document, "score", None),
+    "content": getattr(document, "content", ""),
+    "meta": dict(getattr(document, "meta", {}) or {}),
+  }
+
+
+def apply_similarity_threshold(
+  documents: list[Any],
+  similarity_threshold: float,
+) -> list[Any]:
+  """
+  점수 임계값 기준으로 검색 문서를 필터링합니다.
+  """
+  if similarity_threshold <= 0:
+    return list(documents)
+
+  filtered_documents = [
+    document
+    for document in documents
+    if (getattr(document, "score", None) or 0.0) >= similarity_threshold
+  ]
+  logger.debug(
+    f"similarity_threshold 적용: {len(documents)}개 -> "
+    f"{len(filtered_documents)}개 (threshold={similarity_threshold})"
+  )
+  return filtered_documents
 
 
 def build_rag_pipeline(
-  document_store: InMemoryDocumentStore,
+  document_store: InMemoryDocumentStore | PersistentFaissDocumentStore,
   config: dict[str, Any],
 ) -> Pipeline:
   """
@@ -60,8 +99,10 @@ def build_rag_pipeline(
   # === 1. 컴포넌트 생성 ===
   query_embedder = create_query_embedder(config)
   retriever = create_retriever(document_store, config)
+  reranker = create_reranker(config)
   prompt_builder = create_prompt_builder()
   generator = create_generator(config)
+  retrieval_config = build_retrieval_config(config)
 
   # === 2. Pipeline에 컴포넌트 등록 ===
   pipeline = Pipeline()
@@ -83,6 +124,11 @@ def build_rag_pipeline(
   # 호출하지 않으면 쿼리 임베딩이 None이 되어 검색 결과가 0개 나옵니다.
   logger.info("RAG 질의 파이프라인 워밍업 시작 (임베딩 모델 로드)...")
   pipeline.warm_up()
+  pipeline._rag_runtime = {
+    "profile_name": config.get("profile_name", "default"),
+    "retrieval_config": retrieval_config,
+    "reranker": reranker,
+  }
   logger.info("RAG 질의 파이프라인 구성 완료")
   return pipeline
 
@@ -122,17 +168,50 @@ def run_query(
   # STEP 2: 벡터로 유사 문서를 검색합니다
   retriever = pipeline.get_component("retriever")
   ret_result = retriever.run(query_embedding=query_embedding)
-  documents = ret_result["documents"]
-  logger.debug(f"검색된 문서: {len(documents)}개")
+  raw_documents = ret_result["documents"]
+  logger.debug(f"검색된 원시 문서: {len(raw_documents)}개")
+
+  runtime = getattr(pipeline, "_rag_runtime", {})
+  retrieval_config = runtime.get("retrieval_config", {})
+  profile_name = runtime.get("profile_name", "default")
+  reranker = runtime.get("reranker")
+
+  similarity_threshold = retrieval_config.get("similarity_threshold", 0.0)
+  thresholded_documents = apply_similarity_threshold(
+    raw_documents,
+    similarity_threshold,
+  )
+
+  reranker_config = retrieval_config.get("reranker", {})
+  reranker_enabled = bool(reranker_config.get("enabled", False))
+  if reranker_enabled:
+    if reranker is None:
+      raise ValueError("reranker.enabled=true 이지만 리랭커가 초기화되지 않았습니다.")
+    reranked_documents = reranker.rerank(
+      query,
+      thresholded_documents,
+      top_k=reranker_config.get("top_k"),
+    )
+  else:
+    reranked_documents = []
+
+  final_documents = reranked_documents if reranked_documents else thresholded_documents
 
   # STEP 3: 검색된 문서와 질의를 결합하여 프롬프트를 만듭니다
   prompt_builder = pipeline.get_component("prompt_builder")
-  pb_result = prompt_builder.run(documents=documents, query=query)
+  pb_result = prompt_builder.run(documents=final_documents, query=query)
   prompt = pb_result["prompt"]
 
   # STEP 4: LLM이 프롬프트를 받아 답변을 생성합니다
-  generator = pipeline.get_component("generator")
-  gen_result = generator.run(prompt=prompt)
+  context_empty = len(final_documents) == 0
+  if context_empty:
+    gen_result = {
+      "replies": [NO_CONTEXT_RESPONSE],
+      "meta": [{"model": "no-context-fallback", "context_empty": True}],
+    }
+  else:
+    generator = pipeline.get_component("generator")
+    gen_result = generator.run(prompt=prompt)
 
   replies = gen_result.get("replies", [])
   if replies:
@@ -141,6 +220,19 @@ def run_query(
     logger.warning("답변이 생성되지 않았습니다")
 
   return {
-    "retriever": ret_result,
+    "query": query,
+    "prompt": prompt,
+    "final_prompt": prompt,
+    "retriever": {**ret_result, "documents": final_documents},
+    "profile_name": profile_name,
+    "retrieval_config": retrieval_config,
+    "reranker_enabled": reranker_enabled,
+    "context_empty": context_empty,
+    "retrieved_documents": [serialize_document(doc) for doc in final_documents],
+    "raw_retrieved_documents": [serialize_document(doc) for doc in raw_documents],
+    "thresholded_documents": [
+      serialize_document(doc) for doc in thresholded_documents
+    ],
+    "reranked_documents": [serialize_document(doc) for doc in reranked_documents],
     "generator": gen_result,
   }

@@ -1,0 +1,2 @@
+{"sample_id":"sample-001","text":"Call 010-1234-5678 or hong@example.com now.","entities":[{"start":5,"end":18,"label":"QT_MOBILE"},{"start":22,"end":38,"label":"TMI_EMAIL"}]}
+{"sample_id":"sample-002","text":"Email jane@example.com only.","entities":[{"start":6,"end":22,"label":"TMI_EMAIL"}]}

@@ -31,6 +31,8 @@ from loguru import logger
 
 from rag.attack.base import AttackResult, BaseAttack
 from rag.attack.query_generator import AttackQueryGenerator
+from rag.ingest.writer import create_document_store
+from rag.retriever.pipeline import build_rag_pipeline
 
 
 class R4MembershipAttack(BaseAttack):
@@ -44,6 +46,7 @@ class R4MembershipAttack(BaseAttack):
   def __init__(self, config: dict[str, Any]) -> None:
     super().__init__(config)
     self.query_gen = AttackQueryGenerator(config)
+    self._non_member_pipelines: dict[str, Pipeline] = {}
     logger.debug("R4MembershipAttack 초기화 완료")
 
   def generate_queries(
@@ -106,16 +109,74 @@ class R4MembershipAttack(BaseAttack):
       f"R4 공격 실행 (b={ground_truth_b}): {query[:50]}..."
     )
 
-    # RAG 파이프라인에 탐색 쿼리 전달
-    response = self._run_rag_query(rag_pipeline, query)
+    execution_pipeline = self._resolve_execution_pipeline(query_info, rag_pipeline)
+    trace = self._run_rag_query(execution_pipeline, query)
+    replies = trace.get("generator", {}).get("replies", [])
+    response = replies[0] if replies else ""
 
     return AttackResult(
       scenario="R4",
       query=query,
       response=response,
+      query_id=query_info.get("query_id", ""),
+      profile_name=trace.get("profile_name", ""),
       target_text=target_text,
+      retrieved_documents=trace.get("retrieved_documents", []),
+      raw_retrieved_documents=trace.get("raw_retrieved_documents", []),
+      thresholded_documents=trace.get("thresholded_documents", []),
+      reranked_documents=trace.get("reranked_documents", []),
+      final_prompt=trace.get("prompt", ""),
+      retrieval_config=trace.get("retrieval_config", {}),
       metadata={
         "ground_truth_b": ground_truth_b,
         "target_doc_id": query_info.get("target_doc_id", ""),
+        "keyword": query_info.get("keyword", ""),
+        "retrieval_mode": (
+          "member"
+          if ground_truth_b == 1
+          else "non_member_excluded_index"
+        ),
+        "reranker_enabled": trace.get("reranker_enabled", False),
       },
     )
+
+  def _resolve_execution_pipeline(
+    self,
+    query_info: dict[str, Any],
+    rag_pipeline: Pipeline,
+  ) -> Pipeline:
+    """
+    R4 b=0 실행에서는 타깃 문서를 제외한 검색 경로를 사용합니다.
+    """
+    if query_info.get("ground_truth_b", 0) == 1:
+      return rag_pipeline
+
+    target_doc_id = query_info.get("target_doc_id", "")
+    if target_doc_id in self._non_member_pipelines:
+      return self._non_member_pipelines[target_doc_id]
+
+    retriever = rag_pipeline.get_component("retriever")
+    document_store = retriever.document_store
+    stored_docs = document_store.filter_documents()
+
+    filtered_docs = [
+      doc for doc in stored_docs
+      if (
+        doc.meta.get("chunk_id") != target_doc_id
+        and doc.meta.get("doc_id") != target_doc_id
+        and getattr(doc, "id", "") != target_doc_id
+      )
+    ]
+
+    non_member_store = create_document_store()
+    non_member_store.write_documents(filtered_docs)
+
+    logger.debug(
+      f"R4 non-member 경로 구성: "
+      f"target_doc_id={target_doc_id}, "
+      f"원본={len(stored_docs)}개, 제외후={len(filtered_docs)}개"
+    )
+
+    non_member_pipeline = build_rag_pipeline(non_member_store, self.config)
+    self._non_member_pipelines[target_doc_id] = non_member_pipeline
+    return non_member_pipeline
