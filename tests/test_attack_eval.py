@@ -26,6 +26,11 @@ class TestAttackResult:
     assert result.score == 0.0
     assert result.metadata == {}
     assert result.target_text == ""
+    assert result.profile_name == ""
+    assert result.retrieval_config == {}
+    assert result.raw_retrieved_documents == []
+    assert result.thresholded_documents == []
+    assert result.reranked_documents == []
 
   def test_metadata_is_independent(self):
     """각 인스턴스의 metadata가 독립적인지 확인합니다."""
@@ -63,6 +68,7 @@ class TestAttackQueryGenerator:
     # 각 쿼리에 필수 키가 있는지 확인
     for q in queries:
       assert "query" in q
+      assert "query_id" in q
       assert "target_text" in q
 
   def test_r4_query_generation(self):
@@ -75,6 +81,7 @@ class TestAttackQueryGenerator:
     queries = self.generator.generate_r4_queries(target_doc, is_member=True)
     assert len(queries) > 0
     for q in queries:
+      assert "query_id" in q
       assert q["ground_truth_b"] in (0, 1)
 
   def test_r9_payload_generation(self):
@@ -89,6 +96,14 @@ class TestAttackQueryGenerator:
       assert "content" in doc
     for q in trigger_queries:
       assert "query" in q
+      assert "query_id" in q
+
+  def test_missing_keyword_falls_back_to_content(self):
+    queries = self.generator.generate_r2_queries([
+      {"content": "개인정보보호법 개인정보보호법 개요", "doc_id": "doc1"},
+    ])
+    assert len(queries) > 0
+    assert "개인정보보호법" in queries[0]["query"]
 
   def test_extract_keywords(self):
     keywords = self.generator.extract_keywords("개인정보보호법 주요 내용 요약")

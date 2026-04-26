@@ -1,18 +1,13 @@
-"""
-실험 관리 모듈
+"""Run directory, snapshot, checkpoint, and partial-result helpers."""
 
-각 실험 실행에 고유한 run_id를 부여하고, 실험 시점의 설정 스냅샷을 저장합니다.
-이를 통해 나중에 동일한 조건으로 실험을 재현할 수 있습니다.
+from __future__ import annotations
 
-사용 예시:
-  manager = ExperimentManager(config)
-  run_id = manager.create_run()           # 고유한 실험 ID 생성
-  manager.save_snapshot(run_id, config)   # 설정 스냅샷 저장
-  manager.save_result(run_id, result)     # 실험 결과 저장
-"""
-
+import hashlib
 import json
 import os
+import platform
+import subprocess
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,137 +15,495 @@ from typing import Any
 import yaml
 from loguru import logger
 
+REQUIRED_PROVENANCE_FIELDS = (
+  "code_version",
+  "python_version",
+  "platform",
+  "random_seed",
+  "embedding_model",
+  "reranker_model",
+  "pii_ner_model",
+  "pii_sllm_model",
+  "index_manifest_ref",
+  "index_manifest_hash",
+)
+SECRET_FIELD_TOKENS = (
+  "api_key",
+  "authorization",
+  "password",
+  "secret",
+  "token",
+)
+
 
 class ExperimentManager:
-  """
-  실험의 생성, 설정 저장, 결과 기록을 관리하는 클래스입니다.
+  """Manage run-scoped artifacts under one result directory."""
 
-  각 실험은 고유한 run_id를 가지며, 해당 실험의 모든 정보가
-  results_dir/run_id/ 디렉토리에 저장됩니다.
-  """
-
-  def __init__(self, config: dict[str, Any]) -> None:
-    """
-    ExperimentManager를 초기화합니다.
-
-    Args:
-      config: YAML에서 로드한 설정 딕셔너리.
-              config["report"]["output_dir"]에서 결과 저장 경로를 읽습니다.
-    """
-    # 결과 저장 경로 설정 (환경변수 > 설정파일 > 기본값)
+  def __init__(
+    self,
+    config: dict[str, Any],
+    *,
+    results_dir_override: str | Path | None = None,
+  ) -> None:
     self.results_dir = Path(
-      os.getenv(
+      results_dir_override
+      or os.getenv(
         "RAG_RESULTS_PATH",
-        config.get("report", {}).get("output_dir", "data/results")
+        config.get("report", {}).get("output_dir", "data/results"),
       )
     )
-    # 결과 저장 디렉토리가 없으면 자동 생성합니다
     self.results_dir.mkdir(parents=True, exist_ok=True)
 
   def create_run(self, prefix: str = "RAG") -> str:
-    """
-    고유한 실험 ID(run_id)를 생성합니다.
-
-    형식: {prefix}-{날짜}-{순번}
-    예시: RAG-2026-0413-001
-
-    Args:
-      prefix: run_id 앞에 붙는 접두사 (기본값: "RAG")
-
-    Returns:
-      생성된 run_id 문자열 (예: "RAG-2026-0413-001")
-    """
-    # 오늘 날짜를 YYYY-MMDD 형식으로 생성합니다
+    """Create a new run directory and return its run id."""
     today = datetime.now().strftime("%Y-%m%d")
-
-    # 같은 날짜에 이미 만들어진 실험이 있으면 순번을 증가시킵니다
     existing_runs = list(self.results_dir.glob(f"{prefix}-{today}-*"))
-    next_num = len(existing_runs) + 1
-
-    # 최종 run_id 생성 (예: RAG-2026-0413-001)
-    run_id = f"{prefix}-{today}-{next_num:03d}"
-
-    # 해당 실험의 결과 저장 디렉토리를 생성합니다
-    run_dir = self.results_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"새 실험 생성: {run_id} (저장 경로: {run_dir})")
+    run_id = f"{prefix}-{today}-{len(existing_runs) + 1:03d}"
+    self._ensure_run_dir(run_id)
+    logger.info("Created run {} at {}", run_id, self._run_dir(run_id))
     return run_id
 
-  def save_snapshot(self, run_id: str, config: dict[str, Any]) -> Path:
-    """
-    실험 시점의 설정 스냅샷을 YAML 파일로 저장합니다.
-
-    나중에 동일한 설정으로 실험을 재현하기 위해 사용됩니다.
-
-    Args:
-      run_id: 실험 ID (예: "RAG-2026-0413-001")
-      config: 저장할 설정 딕셔너리
-
-    Returns:
-      저장된 스냅샷 파일의 경로
-    """
-    # 스냅샷 파일 경로: results/run_id/snapshot.yaml
-    snapshot_path = self.results_dir / run_id / "snapshot.yaml"
-
-    # 설정에 메타정보를 추가합니다
+  def save_snapshot(
+    self,
+    run_id: str,
+    config: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+  ) -> Path:
+    """Save or overwrite the run snapshot."""
+    self._ensure_run_dir(run_id)
     snapshot = {
       "run_id": run_id,
       "created_at": datetime.now().isoformat(),
-      "config": config,
+      "config": deepcopy(config),
     }
+    if metadata:
+      snapshot.update(deepcopy(metadata))
 
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-      yaml.dump(snapshot, f, allow_unicode=True, default_flow_style=False)
+    resolved_config = snapshot.get("config", {}) or {}
+    snapshot["config_fingerprint"] = snapshot.get("config_fingerprint") or fingerprint_payload(
+      resolved_config
+    )
+    existing_provenance = snapshot.get("provenance", {})
+    computed_provenance = build_snapshot_provenance(resolved_config, snapshot)
+    if isinstance(existing_provenance, dict):
+      snapshot["provenance"] = _deep_merge_dicts(computed_provenance, existing_provenance)
+    else:
+      snapshot["provenance"] = computed_provenance
 
-    logger.info(f"설정 스냅샷 저장 완료: {snapshot_path}")
+    snapshot_path = self._run_dir(run_id) / "snapshot.yaml"
+    with open(snapshot_path, "w", encoding="utf-8") as file:
+      yaml.safe_dump(snapshot, file, allow_unicode=True, sort_keys=False)
+
+    logger.info("Saved snapshot to {}", snapshot_path)
     return snapshot_path
 
-  def save_result(self, run_id: str, result: dict[str, Any], filename: str = "result.json") -> Path:
-    """
-    실험 결과를 JSON 파일로 저장합니다.
+  def load_snapshot(self, run_id: str) -> dict[str, Any]:
+    """Load a run snapshot."""
+    snapshot_path = self._run_dir(run_id) / "snapshot.yaml"
+    if not snapshot_path.exists():
+      raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
+    with open(snapshot_path, "r", encoding="utf-8") as file:
+      return yaml.safe_load(file) or {}
 
-    Args:
-      run_id: 실험 ID
-      result: 저장할 결과 딕셔너리 (질의, 응답, 판정 결과 등)
-      filename: 결과 파일명 (기본값: "result.json")
-
-    Returns:
-      저장된 결과 파일의 경로
-    """
-    result_path = self.results_dir / run_id / filename
-
-    with open(result_path, "w", encoding="utf-8") as f:
-      json.dump(result, f, ensure_ascii=False, indent=2)
-
-    logger.info(f"실험 결과 저장 완료: {result_path}")
+  def save_result(
+    self,
+    run_id: str,
+    result: dict[str, Any],
+    filename: str = "result.json",
+  ) -> Path:
+    """Save a final result artifact."""
+    self._ensure_run_dir(run_id)
+    result_path = self._run_dir(run_id) / filename
+    with open(result_path, "w", encoding="utf-8") as file:
+      json.dump(result, file, ensure_ascii=False, indent=2)
+    logger.info("Saved result to {}", result_path)
     return result_path
 
-  def load_snapshot(self, run_id: str) -> dict[str, Any]:
-    """
-    저장된 설정 스냅샷을 불러옵니다.
+  def replay_audit_path(self, run_id: str) -> Path:
+    """Return the replay_audit.json path for a replayed run."""
+    return self._run_dir(run_id) / "replay_audit.json"
 
-    이전 실험과 동일한 조건으로 재실행할 때 사용합니다.
+  def save_replay_audit(self, run_id: str, audit: dict[str, Any]) -> Path:
+    """Persist replay audit details for a newly replayed run."""
+    self._ensure_run_dir(run_id)
+    payload = dict(audit)
+    payload["generated_at"] = datetime.now().isoformat()
+    audit_path = self.replay_audit_path(run_id)
+    with open(audit_path, "w", encoding="utf-8") as file:
+      json.dump(payload, file, ensure_ascii=False, indent=2)
+    logger.info("Saved replay audit to {}", audit_path)
+    return audit_path
 
-    Args:
-      run_id: 불러올 실험의 ID
+  def save_checkpoint(self, run_id: str, checkpoint: dict[str, Any]) -> Path:
+    """Save a checkpoint.json file for resuming long runs."""
+    self._ensure_run_dir(run_id)
+    checkpoint = dict(checkpoint)
+    checkpoint["run_id"] = run_id
+    checkpoint["updated_at"] = datetime.now().isoformat()
+    checkpoint_path = self._run_dir(run_id) / "checkpoint.json"
+    with open(checkpoint_path, "w", encoding="utf-8") as file:
+      json.dump(checkpoint, file, ensure_ascii=False, indent=2)
+    logger.info("Saved checkpoint to {}", checkpoint_path)
+    return checkpoint_path
 
-    Returns:
-      스냅샷에 저장된 설정 딕셔너리
+  def load_checkpoint(self, run_id: str) -> dict[str, Any]:
+    """Load an existing checkpoint."""
+    checkpoint_path = self._run_dir(run_id) / "checkpoint.json"
+    if not checkpoint_path.exists():
+      raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    with open(checkpoint_path, "r", encoding="utf-8") as file:
+      return json.load(file)
 
-    Raises:
-      FileNotFoundError: 스냅샷 파일이 없을 때
-    """
-    snapshot_path = self.results_dir / run_id / "snapshot.yaml"
+  def save_partial_results(
+    self,
+    run_id: str,
+    scenario: str,
+    results: list[dict[str, Any]],
+  ) -> Path:
+    """Persist scenario-scoped partial results for checkpoint/resume."""
+    self._ensure_run_dir(run_id)
+    partial_path = self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
+    payload = {
+      "run_id": run_id,
+      "scenario": scenario.upper(),
+      "updated_at": datetime.now().isoformat(),
+      "result_count": len(results),
+      "results": results,
+    }
+    with open(partial_path, "w", encoding="utf-8") as file:
+      json.dump(payload, file, ensure_ascii=False, indent=2)
+    logger.info("Saved partial results to {}", partial_path)
+    return partial_path
 
-    if not snapshot_path.exists():
-      raise FileNotFoundError(
-        f"스냅샷 파일을 찾을 수 없습니다: {snapshot_path}. "
-        f"run_id '{run_id}'가 올바른지 확인해주세요."
-      )
+  def load_partial_results(self, run_id: str, scenario: str) -> list[dict[str, Any]]:
+    """Load previously saved scenario-scoped partial results."""
+    partial_path = self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
+    if not partial_path.exists():
+      return []
+    with open(partial_path, "r", encoding="utf-8") as file:
+      payload = json.load(file)
+    return list(payload.get("results", []))
 
-    with open(snapshot_path, "r", encoding="utf-8") as f:
-      snapshot = yaml.safe_load(f)
+  def partial_results_path(self, run_id: str, scenario: str) -> Path:
+    """Return the path of the partial result artifact."""
+    return self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
 
-    logger.info(f"설정 스냅샷 로드 완료: {snapshot_path}")
-    return snapshot
+  def save_partial_failures(
+    self,
+    run_id: str,
+    scenario: str,
+    failures: list[dict[str, Any]],
+  ) -> Path:
+    """Persist scenario-scoped failure history for checkpoint/resume/reporting."""
+    self._ensure_run_dir(run_id)
+    failure_path = self.partial_failures_path(run_id, scenario)
+    payload = {
+      "run_id": run_id,
+      "scenario": scenario.upper(),
+      "updated_at": datetime.now().isoformat(),
+      "failure_count": len(failures),
+      "failures": failures,
+    }
+    with open(failure_path, "w", encoding="utf-8") as file:
+      json.dump(payload, file, ensure_ascii=False, indent=2)
+    logger.info("Saved partial failures to {}", failure_path)
+    return failure_path
+
+  def load_partial_failures(self, run_id: str, scenario: str) -> list[dict[str, Any]]:
+    """Load previously saved scenario-scoped failures."""
+    failure_path = self.partial_failures_path(run_id, scenario)
+    if not failure_path.exists():
+      return []
+    with open(failure_path, "r", encoding="utf-8") as file:
+      payload = json.load(file)
+    return list(payload.get("failures", []))
+
+  def partial_failures_path(self, run_id: str, scenario: str) -> Path:
+    """Return the path of the partial failure artifact."""
+    return self._run_dir(run_id) / f"{scenario.upper()}_failures.json"
+
+  def checkpoint_path(self, run_id: str) -> Path:
+    """Return the checkpoint path for a run."""
+    return self._run_dir(run_id) / "checkpoint.json"
+
+  def suite_manifest_path(self, run_id: str) -> Path:
+    """Return the suite manifest path for a suite run."""
+    return self._run_dir(run_id) / "suite_manifest.json"
+
+  def save_suite_manifest(self, run_id: str, manifest: dict[str, Any]) -> Path:
+    """Save a suite manifest artifact."""
+    self._ensure_run_dir(run_id)
+    payload = dict(manifest)
+    payload["run_id"] = run_id
+    manifest_path = self.suite_manifest_path(run_id)
+    with open(manifest_path, "w", encoding="utf-8") as file:
+      json.dump(payload, file, ensure_ascii=False, indent=2)
+    logger.info("Saved suite manifest to {}", manifest_path)
+    return manifest_path
+
+  def load_suite_manifest(self, run_id: str) -> dict[str, Any]:
+    """Load a suite manifest."""
+    manifest_path = self.suite_manifest_path(run_id)
+    if not manifest_path.exists():
+      raise FileNotFoundError(f"Suite manifest not found: {manifest_path}")
+    with open(manifest_path, "r", encoding="utf-8") as file:
+      return json.load(file)
+
+  def suite_checkpoint_path(self, run_id: str) -> Path:
+    """Return the suite checkpoint path for a suite run."""
+    return self._run_dir(run_id) / "suite_checkpoint.json"
+
+  def save_suite_checkpoint(self, run_id: str, checkpoint: dict[str, Any]) -> Path:
+    """Save a suite checkpoint artifact."""
+    self._ensure_run_dir(run_id)
+    payload = dict(checkpoint)
+    payload["run_id"] = run_id
+    payload["updated_at"] = datetime.now().isoformat()
+    checkpoint_path = self.suite_checkpoint_path(run_id)
+    with open(checkpoint_path, "w", encoding="utf-8") as file:
+      json.dump(payload, file, ensure_ascii=False, indent=2)
+    logger.info("Saved suite checkpoint to {}", checkpoint_path)
+    return checkpoint_path
+
+  def load_suite_checkpoint(self, run_id: str) -> dict[str, Any]:
+    """Load a suite checkpoint."""
+    checkpoint_path = self.suite_checkpoint_path(run_id)
+    if not checkpoint_path.exists():
+      raise FileNotFoundError(f"Suite checkpoint not found: {checkpoint_path}")
+    with open(checkpoint_path, "r", encoding="utf-8") as file:
+      return json.load(file)
+
+  def run_dir(self, run_id: str) -> Path:
+    """Return the on-disk run directory path."""
+    return self._run_dir(run_id)
+
+  def _run_dir(self, run_id: str) -> Path:
+    return self.results_dir / run_id
+
+  def _ensure_run_dir(self, run_id: str) -> Path:
+    run_dir = self._run_dir(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def fingerprint_payload(payload: Any) -> str:
+  """Return a stable SHA-256 fingerprint for a serializable payload."""
+  normalized = json.dumps(
+    _normalize_payload(payload),
+    ensure_ascii=False,
+    sort_keys=True,
+    separators=(",", ":"),
+  )
+  return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def build_snapshot_provenance(
+  config: dict[str, Any],
+  snapshot_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+  """Build one normalized provenance record for snapshots."""
+  context = snapshot_context or {}
+  retrieval_config = config.get("retrieval_config", {})
+  reranker_config = retrieval_config.get("reranker", {})
+  index_manifest = context.get("index_manifest", {}) if isinstance(context, dict) else {}
+  index_manifest_ref = ""
+  if isinstance(context, dict):
+    index_manifest_ref = str(context.get("index_manifest_ref") or "")
+
+  index_manifest_hash = ""
+  if isinstance(context, dict):
+    index_manifest_hash = str(context.get("index_manifest_hash") or "")
+  if not index_manifest_hash and isinstance(index_manifest, dict) and index_manifest:
+    index_manifest_hash = fingerprint_payload(index_manifest)
+
+  return {
+    "code_version": _resolve_code_version(),
+    "python_version": platform.python_version(),
+    "platform": platform.platform(),
+    "random_seed": config.get("experiment", {}).get("random_seed", ""),
+    "embedding_model": config.get("embedding", {}).get("model_name", ""),
+    "reranker_model": reranker_config.get(
+      "model_name",
+      config.get("reranker", {}).get("model_name", ""),
+    ),
+    "pii_ner_model": config.get("pii", {}).get("ner", {}).get("model_path", ""),
+    "pii_sllm_model": config.get("pii", {}).get("sllm", {}).get("model", ""),
+    "index_manifest_ref": index_manifest_ref,
+    "index_manifest_hash": index_manifest_hash,
+  }
+
+
+def snapshot_uses_compatibility_mode(snapshot: dict[str, Any]) -> bool:
+  """Return True when a snapshot predates the normalized provenance schema."""
+  provenance = snapshot.get("provenance")
+  if not snapshot.get("config_fingerprint"):
+    return True
+  if not isinstance(provenance, dict):
+    return True
+  return any(field not in provenance for field in REQUIRED_PROVENANCE_FIELDS)
+
+
+def build_replay_audit(
+  *,
+  source_run_id: str,
+  source_run_type: str,
+  replayed_run_id: str,
+  source_snapshot: dict[str, Any],
+  replay_snapshot: dict[str, Any],
+  compatibility_mode: bool,
+  index_manifest_match: bool | None,
+) -> dict[str, Any]:
+  """Build the replay audit payload stored beside a replayed run."""
+  return {
+    "source_run_id": source_run_id,
+    "source_run_type": source_run_type,
+    "replayed_run_id": replayed_run_id,
+    "compatibility_mode": compatibility_mode,
+    "snapshot_diff": diff_payloads(
+      _snapshot_diff_view(source_snapshot),
+      _snapshot_diff_view(replay_snapshot),
+    ),
+    "provenance_diff": diff_payloads(
+      source_snapshot.get("provenance", {}),
+      replay_snapshot.get("provenance", {}),
+    ),
+    "index_manifest_match": index_manifest_match,
+  }
+
+
+def diff_payloads(source: Any, target: Any) -> list[dict[str, Any]]:
+  """Return key-level additions, removals, and value changes between payloads."""
+  differences: list[dict[str, Any]] = []
+  _diff_payloads(source, target, differences, path="")
+  return differences
+
+
+def _diff_payloads(
+  source: Any,
+  target: Any,
+  differences: list[dict[str, Any]],
+  *,
+  path: str,
+) -> None:
+  if isinstance(source, dict) and isinstance(target, dict):
+    keys = sorted(set(source) | set(target))
+    for key in keys:
+      child_path = f"{path}.{key}" if path else str(key)
+      if key not in source:
+        differences.append(
+          {
+            "path": child_path,
+            "change": "added",
+            "new": _redact_diff_value(child_path, target[key]),
+          }
+        )
+        continue
+      if key not in target:
+        differences.append(
+          {
+            "path": child_path,
+            "change": "removed",
+            "old": _redact_diff_value(child_path, source[key]),
+          }
+        )
+        continue
+      _diff_payloads(source[key], target[key], differences, path=child_path)
+    return
+
+  if source != target:
+    differences.append(
+      {
+        "path": path or "$",
+        "change": "changed",
+        "old": _redact_diff_value(path, source),
+        "new": _redact_diff_value(path, target),
+      }
+    )
+
+
+def _snapshot_diff_view(snapshot: dict[str, Any]) -> dict[str, Any]:
+  filtered = deepcopy(snapshot)
+  for key in (
+    "run_id",
+    "created_at",
+    "updated_at",
+    "provenance",
+    "replayed_from_run_id",
+    "compatibility_mode",
+  ):
+    filtered.pop(key, None)
+  return filtered
+
+
+def _redact_diff_value(path: str, value: Any) -> Any:
+  lowered_path = path.lower()
+  if any(token in lowered_path for token in SECRET_FIELD_TOKENS):
+    return "<redacted>"
+  return _normalize_payload(value)
+
+
+def _normalize_payload(value: Any) -> Any:
+  if isinstance(value, dict):
+    return {
+      str(key): _normalize_payload(item)
+      for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+    }
+  if isinstance(value, (list, tuple)):
+    return [_normalize_payload(item) for item in value]
+  if isinstance(value, Path):
+    return str(value)
+  if isinstance(value, (str, int, float, bool)) or value is None:
+    return value
+  return str(value)
+
+
+def _resolve_code_version() -> dict[str, Any]:
+  """Collect a best-effort git-aware code version record."""
+  project_root = Path(__file__).resolve().parents[3]
+  git_head, head_error = _run_git_command(project_root, "rev-parse", "HEAD")
+  git_status, status_error = _run_git_command(project_root, "status", "--porcelain")
+
+  if git_head:
+    return {
+      "source": "git",
+      "git_head": git_head,
+      "working_tree": "dirty" if git_status else "clean",
+      "error": status_error if status_error and not git_status else "",
+    }
+
+  return {
+    "source": "unavailable",
+    "git_head": "",
+    "working_tree": "unknown",
+    "error": head_error or status_error or "git metadata unavailable",
+  }
+
+
+def _run_git_command(project_root: Path, *args: str) -> tuple[str, str]:
+  try:
+    completed = subprocess.run(
+      ["git", *args],
+      cwd=project_root,
+      capture_output=True,
+      text=True,
+      check=False,
+      timeout=5,
+    )
+  except (OSError, subprocess.SubprocessError) as error:
+    return "", str(error)
+
+  stdout = completed.stdout.strip()
+  stderr = completed.stderr.strip()
+  if completed.returncode != 0:
+    return "", stderr or stdout or f"git exited with {completed.returncode}"
+  return stdout, ""
+
+
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+  merged = deepcopy(base)
+  for key, value in override.items():
+    if isinstance(value, dict) and isinstance(merged.get(key), dict):
+      merged[key] = _deep_merge_dicts(merged[key], value)
+    else:
+      merged[key] = deepcopy(value)
+  return merged

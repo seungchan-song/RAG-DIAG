@@ -32,6 +32,8 @@ from typing import Any
 
 from loguru import logger
 
+from rag.utils.text import extract_keywords, slugify_token
+
 
 class AttackQueryGenerator:
   """
@@ -136,8 +138,8 @@ class AttackQueryGenerator:
     queries: list[dict[str, Any]] = []
 
     for doc in target_docs:
-      keyword = doc.get("keyword", "")
       content = doc.get("content", "")
+      keyword = doc.get("keyword") or self._resolve_keyword(doc)
       doc_id = doc.get("doc_id", "unknown")
 
       # 앵커 × 명령어 템플릿 조합
@@ -148,13 +150,17 @@ class AttackQueryGenerator:
         anchor = anchor_template.format(keyword=keyword)
         compound_query = f"{anchor} {command}"
 
-        for _ in range(num_repeats):
+        for repeat_index in range(num_repeats):
           queries.append({
             "query": compound_query,
+            "query_id": (
+              f"R2:{doc_id}:tpl-{i:02d}:rep-{repeat_index:02d}"
+            ),
             "anchor": anchor,
             "command": command,
             "target_text": content,
             "target_doc_id": doc_id,
+            "keyword": keyword,
           })
 
     logger.info(f"R2 공격 쿼리 {len(queries)}개 생성 완료")
@@ -189,7 +195,7 @@ class AttackQueryGenerator:
     num_templates = r4_config.get("num_templates", 10)
     num_repeats = r4_config.get("num_repeats", 3)
 
-    keyword = target_doc.get("keyword", "")
+    keyword = target_doc.get("keyword") or self._resolve_keyword(target_doc)
     content = target_doc.get("content", "")
     doc_id = target_doc.get("doc_id", "unknown")
     b = 1 if is_member else 0
@@ -200,12 +206,16 @@ class AttackQueryGenerator:
       template = self.R4_PROBE_TEMPLATES[i]
       probe_query = template.format(keyword=keyword)
 
-      for _ in range(num_repeats):
+      for repeat_index in range(num_repeats):
         queries.append({
           "query": probe_query,
+          "query_id": (
+            f"R4:{doc_id}:b-{b}:tpl-{i:02d}:rep-{repeat_index:02d}"
+          ),
           "target_text": content,
           "target_doc_id": doc_id,
           "ground_truth_b": b,
+          "keyword": keyword,
         })
 
     logger.info(
@@ -249,7 +259,7 @@ class AttackQueryGenerator:
     poison_docs: list[dict[str, Any]] = []
     trigger_queries: list[dict[str, Any]] = []
 
-    for trigger in trigger_keywords:
+    for trigger_index, trigger in enumerate(trigger_keywords):
       # 악성 문서 생성 (D_poi)
       for i in range(min(num_poison_docs, len(self.R9_POISON_DOC_TEMPLATES))):
         template = self.R9_POISON_DOC_TEMPLATES[i]
@@ -267,9 +277,13 @@ class AttackQueryGenerator:
         })
 
       # 트리거 쿼리 생성 (Q_T)
-      for _ in range(num_repeats):
+      for repeat_index in range(num_repeats):
         trigger_queries.append({
           "query": f"{trigger}에 대해 알려주세요.",
+          "query_id": (
+            f"R9:{slugify_token(trigger)}:"
+            f"trg-{trigger_index:02d}:rep-{repeat_index:02d}"
+          ),
           "trigger": trigger,
           "expected_marker": marker,
         })
@@ -294,23 +308,16 @@ class AttackQueryGenerator:
     Returns:
       list[str]: 추출된 키워드 목록
     """
-    # 불용어 (한국어 기본 불용어)
-    stopwords = {
-      "이", "그", "저", "것", "수", "등", "및", "를", "을", "에",
-      "의", "가", "는", "은", "로", "으로", "에서", "도", "만",
-      "다", "하다", "있다", "없다", "되다", "이다", "않다",
-    }
+    return extract_keywords(text, max_keywords=max_keywords)
 
-    # 2글자 이상 단어만 추출하고 불용어를 제거합니다
-    words = text.split()
-    filtered = [w for w in words if len(w) >= 2 and w not in stopwords]
+  def _resolve_keyword(self, target_doc: dict[str, Any]) -> str:
+    meta = target_doc.get("meta", {})
+    if meta.get("keyword"):
+      return str(meta["keyword"])
 
-    # 빈도 기반 정렬
-    freq: dict[str, int] = {}
-    for w in filtered:
-      freq[w] = freq.get(w, 0) + 1
+    content = target_doc.get("content", "")
+    keywords = extract_keywords(content, max_keywords=1)
+    if keywords:
+      return keywords[0]
 
-    sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)
-    keywords = [w for w, _ in sorted_words[:max_keywords]]
-
-    return keywords
+    return target_doc.get("doc_id", "문서")
