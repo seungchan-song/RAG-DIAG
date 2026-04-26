@@ -43,11 +43,11 @@ class R4MembershipAttack(BaseAttack):
   응답의 특성을 분석하여 추론합니다.
   """
 
-  def __init__(self, config: dict[str, Any]) -> None:
-    super().__init__(config)
-    self.query_gen = AttackQueryGenerator(config)
+  def __init__(self, config: dict[str, Any], attacker: str = "A2") -> None:
+    super().__init__(config, attacker=attacker)
+    self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self._non_member_pipelines: dict[str, Pipeline] = {}
-    logger.debug("R4MembershipAttack 초기화 완료")
+    logger.debug("R4MembershipAttack 초기화 완료 (attacker={})", self.attacker)
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]

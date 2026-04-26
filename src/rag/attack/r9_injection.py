@@ -42,13 +42,13 @@ class R9InjectionAttack(BaseAttack):
   generator가 의도하지 않은 출력을 하게 만듭니다.
   """
 
-  def __init__(self, config: dict[str, Any]) -> None:
-    super().__init__(config)
-    self.query_gen = AttackQueryGenerator(config)
+  def __init__(self, config: dict[str, Any], attacker: str = "A3") -> None:
+    super().__init__(config, attacker=attacker)
+    self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self.trigger_marker = config.get("evaluator", {}).get(
       "r9", {}
     ).get("trigger_marker", "[R9_ATTACK_SUCCESS_777]")
-    logger.debug("R9InjectionAttack 초기화 완료")
+    logger.debug("R9InjectionAttack 초기화 완료 (attacker={})", self.attacker)
 
   def generate_poison_docs(
     self, trigger_keywords: list[str]

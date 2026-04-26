@@ -336,6 +336,49 @@ class TestReportGenerator:
     assert "HIGH" in gen._assess_risk_level({"R4": {"is_inference_successful": True}})
     assert "LOW" in gen._assess_risk_level({"R2": {"success_rate": 0}, "R9": {"success_rate": 0}})
 
+  def test_register_korean_font_falls_back_when_missing(self, tmp_path, monkeypatch):
+    """폰트 파일이 없으면 Helvetica 로 폴백되어야 한다 (회귀 방지)."""
+    fpdf = pytest.importorskip("fpdf")
+
+    gen = ReportGenerator({"report": {"output_formats": ["pdf"], "output_dir": str(tmp_path)}})
+
+    class _StubPdf:
+      def __init__(self) -> None:
+        self.added: list[tuple[str, str, str]] = []
+
+      def add_font(self, name: str, style: str, fname: str) -> None:
+        # 어떤 파일도 존재하지 않는 환경을 가정하므로 호출되어서는 안 된다.
+        self.added.append((name, style, fname))
+
+    # Path.exists() 가 항상 False 가 되도록 강제하여 폰트 파일이 없는 환경을 시뮬레이션
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    stub = _StubPdf()
+    assert gen._register_korean_font(stub) == "Helvetica"
+    assert stub.added == []
+    # fpdf2 가 import 가능한지 확인하기 위한 어서션 (테스트 환경 검증)
+    assert hasattr(fpdf, "FPDF")
+
+  def test_register_korean_font_uses_korean_when_available(self, tmp_path, monkeypatch):
+    """프로젝트 내 폰트 파일이 존재하면 HCRBatang 으로 등록되어야 한다."""
+    pytest.importorskip("fpdf")
+
+    gen = ReportGenerator({"report": {"output_formats": ["pdf"], "output_dir": str(tmp_path)}})
+
+    class _StubPdf:
+      def __init__(self) -> None:
+        self.added: list[tuple[str, str, str]] = []
+
+      def add_font(self, name: str, style: str, fname: str) -> None:
+        self.added.append((name, style, fname))
+
+    # 어떤 후보 경로든 첫 번째 호출에서 존재한다고 응답하게 한다.
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    stub = _StubPdf()
+    assert gen._register_korean_font(stub) == "HCRBatang"
+    # Regular + Bold 두 스타일 모두 등록되어야 한다.
+    assert {style for _, style, _ in stub.added} == {"", "B"}
+    assert all(name == "HCRBatang" for name, _, _ in stub.added)
+
   def test_build_env_comparison_pairs_same_reranker_state(self, tmp_path):
     gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
 

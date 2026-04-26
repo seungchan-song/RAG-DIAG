@@ -110,6 +110,65 @@ class TestAttackQueryGenerator:
     assert isinstance(keywords, list)
     assert len(keywords) > 0
 
+  def test_attacker_a1_vs_a2_produces_different_anchors(self):
+    """A1(Unaware) 과 A2(Aware) 가 서로 다른 anchor 키워드를 생성해야 한다.
+
+    요구사항분석서 §2.4 기준: A1 은 사전지식 없음 → 일반 키워드 풀,
+    A2 는 사전지식 있음 → 타깃 문서 keyword.
+    """
+    target_doc = {
+      "content": "민감 정보가 포함된 내부 보고서입니다.",
+      "doc_id": "docX",
+      "keyword": "내부보고서",
+    }
+
+    gen_a1 = AttackQueryGenerator(self.config, attacker="A1")
+    gen_a2 = AttackQueryGenerator(self.config, attacker="A2")
+    queries_a1 = gen_a1.generate_r2_queries([target_doc])
+    queries_a2 = gen_a2.generate_r2_queries([target_doc])
+
+    keywords_a1 = {q["keyword"] for q in queries_a1}
+    keywords_a2 = {q["keyword"] for q in queries_a2}
+
+    # A2 는 타깃 문서 keyword 만 사용
+    assert keywords_a2 == {"내부보고서"}
+    # A1 은 일반 키워드 풀에서 선택하므로 A2 와 동일하면 안 됨
+    assert keywords_a1 != keywords_a2
+    # 최종 쿼리 본문 자체가 달라야 함
+    assert {q["query"] for q in queries_a1} != {q["query"] for q in queries_a2}
+    # 메타데이터에 attacker 필드가 보존되어야 함
+    assert all(q["attacker"] == "A1" for q in queries_a1)
+    assert all(q["attacker"] == "A2" for q in queries_a2)
+
+  def test_attacker_a3_vs_a4_uses_different_triggers(self):
+    """A3(Aware Insider) 와 A4(Unaware Insider) 가 서로 다른 트리거 셋을 사용해야 한다.
+
+    요구사항분석서 §2.4 기준: A3 은 정밀 표적 트리거,
+    A4 는 일반 트리거 풀로 광범위 공격.
+    """
+    specific_triggers = ["프로젝트Alpha", "기밀보고서"]
+
+    gen_a3 = AttackQueryGenerator(self.config, attacker="A3")
+    gen_a4 = AttackQueryGenerator(self.config, attacker="A4")
+    poison_a3, queries_a3 = gen_a3.generate_r9_payloads(specific_triggers)
+    poison_a4, queries_a4 = gen_a4.generate_r9_payloads(specific_triggers)
+
+    triggers_a3 = {q["trigger"] for q in queries_a3}
+    triggers_a4 = {q["trigger"] for q in queries_a4}
+
+    # A3 는 호출자가 전달한 정밀 트리거를 그대로 사용
+    assert triggers_a3 == set(specific_triggers)
+    # A4 는 일반 트리거 풀로 대체되어 정밀 트리거가 빠져야 함
+    assert triggers_a4 != triggers_a3
+    assert not (triggers_a4 & set(specific_triggers))
+    # poison 문서 내용도 트리거가 다르므로 달라야 함
+    assert {d["content"] for d in poison_a3} != {d["content"] for d in poison_a4}
+
+  def test_unknown_attacker_falls_back_to_a2(self):
+    """알 수 없는 공격자 코드는 A2(기본값)로 폴백되어야 한다."""
+    gen = AttackQueryGenerator(self.config, attacker="A99")
+    assert gen.attacker == "A2"
+
 
 # ============================================================
 # R2 평가기 테스트

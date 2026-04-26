@@ -39,10 +39,10 @@ class R2ExtractionAttack(BaseAttack):
   명령어 프롬프트로 generator에게 문서를 그대로 출력하도록 합니다.
   """
 
-  def __init__(self, config: dict[str, Any]) -> None:
-    super().__init__(config)
-    self.query_gen = AttackQueryGenerator(config)
-    logger.debug("R2ExtractionAttack 초기화 완료")
+  def __init__(self, config: dict[str, Any], attacker: str = "A2") -> None:
+    super().__init__(config, attacker=attacker)
+    self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
+    logger.debug("R2ExtractionAttack 초기화 완료 (attacker={})", self.attacker)
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]

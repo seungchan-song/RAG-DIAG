@@ -150,7 +150,7 @@ class _FakeRunner:
   def __init__(self, config) -> None:
     self.config = config
 
-  def prepare_queries(self, scenario, target_docs):
+  def prepare_queries(self, scenario, target_docs, attacker="A2"):
     return object(), [
       {"query": "query 010-1234-5678", "query_id": "q1"},
       {"query": "safe query", "query_id": "q2"},

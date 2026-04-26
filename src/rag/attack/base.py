@@ -71,8 +71,13 @@ class ExecutionFailureRecord:
 class BaseAttack(ABC):
   """Abstract base class for attack scenarios."""
 
-  def __init__(self, config: dict[str, Any]) -> None:
+  def __init__(
+    self,
+    config: dict[str, Any],
+    attacker: str = "A2",
+  ) -> None:
     self.config = config
+    self.attacker = (attacker or "A2").upper()
 
   @abstractmethod
   def generate_queries(self, target_docs: list[dict[str, Any]]) -> list[dict[str, Any]]:

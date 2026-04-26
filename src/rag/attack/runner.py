@@ -26,28 +26,34 @@ class AttackRunner:
     self.config = config
     logger.debug("AttackRunner initialized")
 
-  def create_attack(self, scenario: str) -> BaseAttack:
-    """Instantiate the concrete attack implementation for one scenario."""
+  def create_attack(self, scenario: str, attacker: str = "A2") -> BaseAttack:
+    """Instantiate the concrete attack implementation for one scenario.
+
+    attacker 는 시나리오별 query_generator 동작 분기에 사용됩니다
+    (요구사항분석서 §2.4 [표 13] A1~A4 매트릭스 참조).
+    """
     attack_cls = SCENARIO_MAP.get(scenario.upper())
     if attack_cls is None:
       raise ValueError(
         f"Unsupported scenario: {scenario}. "
         f"Available scenarios: {list(SCENARIO_MAP.keys())}"
       )
-    return attack_cls(self.config)
+    return attack_cls(self.config, attacker=attacker)
 
   def prepare_queries(
     self,
     scenario: str,
     target_docs: list[dict[str, Any]],
+    attacker: str = "A2",
   ) -> tuple[BaseAttack, list[dict[str, Any]]]:
     """Instantiate the scenario attack and generate all queries."""
-    attack = self.create_attack(scenario)
+    attack = self.create_attack(scenario, attacker=attacker)
     queries = attack.generate_queries(target_docs)
     logger.info(
-      "Prepared {} attack queries for scenario {}",
+      "Prepared {} attack queries for scenario {} (attacker={})",
       len(queries),
       scenario.upper(),
+      attacker,
     )
     return attack, queries
 
@@ -92,7 +98,7 @@ class AttackRunner:
     on_result: Any | None = None,
   ) -> list[AttackResult]:
     """Run one attack scenario across all generated queries."""
-    attack, queries = self.prepare_queries(scenario, target_docs)
+    attack, queries = self.prepare_queries(scenario, target_docs, attacker=attacker)
     skipped = completed_query_ids or set()
 
     logger.info(

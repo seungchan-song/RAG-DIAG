@@ -938,6 +938,45 @@ class ReportGenerator:
     logger.debug(f"Generated CSV report: {csv_path}")
     return csv_path
 
+  def _register_korean_font(self, pdf: Any) -> str:
+    """PDF 객체에 한글 폰트를 등록하고 사용할 폰트명을 반환합니다.
+
+    회귀 보호: 이전 커밋(af95c951)에서 도입된 함초롱바탕 폰트 등록 로직을
+    PR #2 머지 후 복구한 것입니다. 폰트 파일이 없거나 등록에 실패하면
+    영문 폰트(Helvetica)로 자동 폴백하고 경고 로그를 남깁니다.
+
+    Args:
+      pdf: fpdf2의 FPDF 인스턴스 (add_font 호출 대상).
+
+    Returns:
+      이후 set_font에 사용할 폰트명 ("HCRBatang" 또는 "Helvetica").
+    """
+    project_root = Path(__file__).resolve().parents[3]
+    font_candidates = [
+      project_root / "assets" / "fonts" / "HCRBatang.ttf",
+      project_root / "참고자료" / "HCRBatang.ttf",
+    ]
+    for font_path in font_candidates:
+      if not font_path.exists():
+        continue
+      try:
+        # fpdf2 v2.x: 동일 ttf를 Regular/Bold 두 스타일로 등록해 굵게 표시도 지원
+        pdf.add_font("HCRBatang", "", str(font_path))
+        pdf.add_font("HCRBatang", "B", str(font_path))
+        logger.debug(f"Registered Korean PDF font: {font_path}")
+        return "HCRBatang"
+      except Exception as exc:
+        logger.warning(
+          f"Failed to register Korean font {font_path}: {exc}. "
+          "Falling back to Helvetica."
+        )
+        break
+    logger.warning(
+      "Korean font HCRBatang.ttf not found; PDF report may render Korean as blanks. "
+      "Place the font under assets/fonts/HCRBatang.ttf or 참고자료/HCRBatang.ttf."
+    )
+    return "Helvetica"
+
   def _generate_pdf(
     self,
     run_dir: Path,
@@ -952,13 +991,18 @@ class ReportGenerator:
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
+
+    # PR #2 머지 과정에서 누락된 한글 폰트 등록을 복구합니다.
+    # 시나리오/데이터셋 이름 등 한글이 들어와도 PDF에서 깨지지 않도록 처리합니다.
+    base_font = self._register_korean_font(pdf)
+
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_font(base_font, "B", 16)
     pdf.cell(0, 10, "RAG Security Diagnostic Report", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     def write_line(text: str, size: int = 10, bold: bool = False) -> None:
-      pdf.set_font("Helvetica", "B" if bold else "", size)
+      pdf.set_font(base_font, "B" if bold else "", size)
       pdf.multi_cell(0, 6, text)
 
     write_line("1. Experiment Info", size=12, bold=True)

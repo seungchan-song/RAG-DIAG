@@ -1,11 +1,12 @@
 """
 LLM 응답 생성 모듈
 
-프롬프트를 LLM(GPT-4o mini 등)에 전달하여 최종 답변을 생성합니다.
+프롬프트를 LLM(GPT-4o mini, HyperCLOVA X 등)에 전달하여 최종 답변을 생성합니다.
 
 핵심 개념:
   - Generator: 프롬프트를 받아서 LLM에게 보내고 응답을 받는 컴포넌트
   - OpenAI API: GPT-4o mini 등의 모델을 API로 호출
+  - HyperCLOVA X: 네이버 ClovaStudio 의 HCX-DASH-002 모델을 API 로 호출
   - MockGenerator: API 키가 없을 때 검색된 문서 내용을 그대로 반환하는 모의 생성기
   - temperature: 응답의 창의성 정도 (0에 가까울수록 일관적, 1에 가까울수록 다양)
   - max_tokens: 생성할 최대 토큰 수
@@ -13,8 +14,12 @@ LLM 응답 생성 모듈
 사용 예시:
   generator = create_openai_generator(config)
   result = generator.run(prompt="질문에 답변해주세요...")
+
+  # 또는 국내 LLM 사용
+  generator = create_clova_generator(config)
 """
 
+import json
 import os
 from typing import Any
 
@@ -66,23 +71,49 @@ def create_generator(config: dict[str, Any]) -> Any:
   """
   설정과 환경에 맞는 Generator를 자동으로 선택하여 생성합니다.
 
-  - OPENAI_API_KEY가 있으면: OpenAI Generator (실제 LLM)
-  - OPENAI_API_KEY가 없으면: MockGenerator (모의 응답)
+  선택 우선순위:
+    1) config["generator"]["provider"] 가 "clova"  → HyperCLOVA X 생성기
+    2) config["generator"]["provider"] 가 "openai" → OpenAI 생성기 (기본값)
+    3) provider 가 "auto" 또는 미지정이면 환경변수에 따라 자동 선택
+    4) 어떤 API 키도 없으면 MockGenerator
 
   Args:
     config: YAML에서 로드한 설정 딕셔너리
 
   Returns:
-    Generator 컴포넌트 (OpenAIGenerator 또는 MockGenerator)
+    Generator 컴포넌트
   """
-  if os.getenv("OPENAI_API_KEY"):
-    return create_openai_generator(config)
-  else:
+  generator_config = config.get("generator", {}) or {}
+  provider = str(generator_config.get("provider", "auto")).lower()
+
+  if provider == "clova":
+    if os.getenv("NAVER_CLOVA_API_KEY"):
+      return create_clova_generator(config)
     logger.warning(
-      "OPENAI_API_KEY가 설정되지 않았습니다. "
-      "MockGenerator를 사용합니다 (검색 문서 원문을 응답으로 반환)."
+      "NAVER_CLOVA_API_KEY 가 설정되지 않았습니다. provider=clova 가 요청됐지만 "
+      "MockGenerator 로 폴백합니다."
     )
     return MockGenerator()
+
+  if provider == "openai":
+    if os.getenv("OPENAI_API_KEY"):
+      return create_openai_generator(config)
+    logger.warning(
+      "OPENAI_API_KEY 가 설정되지 않았습니다. provider=openai 가 요청됐지만 "
+      "MockGenerator 로 폴백합니다."
+    )
+    return MockGenerator()
+
+  # provider == "auto" (또는 미지정): 환경변수 우선순위에 따라 결정
+  if os.getenv("OPENAI_API_KEY"):
+    return create_openai_generator(config)
+  if os.getenv("NAVER_CLOVA_API_KEY"):
+    return create_clova_generator(config)
+  logger.warning(
+    "OPENAI_API_KEY / NAVER_CLOVA_API_KEY 모두 설정되지 않았습니다. "
+    "MockGenerator를 사용합니다 (검색 문서 원문을 응답으로 반환)."
+  )
+  return MockGenerator()
 
 
 def create_openai_generator(config: dict[str, Any]) -> Any:
@@ -135,5 +166,163 @@ def create_openai_generator(config: dict[str, Any]) -> Any:
   logger.debug(
     f"OpenAI Generator 생성 완료 "
     f"(모델: {model}, temperature: {temperature})"
+  )
+  return generator
+
+
+@component
+class ClovaXGenerator:
+  """
+  네이버 ClovaStudio 의 HyperCLOVA X 모델을 호출하는 Haystack 컴포넌트입니다.
+
+  사양: 생성기(국내) HyperCLOVA X HCX-DASH-002.
+  ClovaStudio Chat Completions 엔드포인트(testapp/v1 또는 v3 호환)로 POST 요청을
+  보내고, 응답에서 assistant 메시지 내용을 추출해 OpenAIGenerator 와 동일한
+  ``{"replies": [...], "meta": [...]}`` 형식으로 반환합니다.
+
+  HTTP 호출은 ``http_client`` 매개변수로 주입할 수 있어 단위 테스트에서 mock 으로
+  손쉽게 교체됩니다(아무 인자도 주지 않으면 표준 ``requests`` 라이브러리 사용).
+  """
+
+  def __init__(
+    self,
+    api_key: str,
+    *,
+    model: str = "HCX-DASH-002",
+    api_url: str = "https://clovastudio.apigw.ntruss.com",
+    temperature: float = 0.1,
+    max_tokens: int = 1024,
+    top_p: float = 0.8,
+    timeout: float = 30.0,
+    http_client: Any | None = None,
+  ) -> None:
+    self.api_key = api_key
+    self.model = model
+    self.api_url = api_url.rstrip("/")
+    self.temperature = float(temperature)
+    self.max_tokens = int(max_tokens)
+    self.top_p = float(top_p)
+    self.timeout = float(timeout)
+    self._http_client = http_client
+
+  def _resolve_endpoint(self) -> str:
+    """베이스 URL 에서 chat-completions 엔드포인트 경로를 구성합니다.
+
+    ClovaStudio 게이트웨이는 testapp/v1 과 v3 두 가지 경로를 모두 지원합니다.
+    `api_url` 에 이미 chat-completions 가 포함되어 있으면 그대로 사용합니다.
+    """
+    if "chat-completions" in self.api_url:
+      return self.api_url
+    return f"{self.api_url}/testapp/v1/chat-completions/{self.model}"
+
+  def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> Any:
+    if self._http_client is not None:
+      return self._http_client.post(url, headers=headers, json=body, timeout=self.timeout)
+    import requests  # 지연 import: 테스트 환경에서 의존성 회피
+
+    return requests.post(url, headers=headers, json=body, timeout=self.timeout)
+
+  @staticmethod
+  def _extract_reply(payload: dict[str, Any]) -> str:
+    """ClovaStudio 응답 payload 에서 assistant 메시지 본문을 추출합니다."""
+    result = payload.get("result") or {}
+    message = result.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str) and content:
+      return content
+    # v3 또는 변형 포맷 대응
+    outputs = result.get("outputText") or payload.get("outputText")
+    if isinstance(outputs, str) and outputs:
+      return outputs
+    return ""
+
+  @component.output_types(replies=list[str], meta=list[dict])
+  def run(self, prompt: str) -> dict[str, Any]:
+    url = self._resolve_endpoint()
+    headers = {
+      "Authorization": f"Bearer {self.api_key}",
+      "Content-Type": "application/json; charset=utf-8",
+      "X-NCP-CLOVASTUDIO-REQUEST-ID": "rag-attack-harness",
+    }
+    body: dict[str, Any] = {
+      "messages": [{"role": "user", "content": prompt}],
+      "temperature": self.temperature,
+      "maxTokens": self.max_tokens,
+      "topP": self.top_p,
+    }
+
+    try:
+      response = self._post(url, headers=headers, body=body)
+      status = getattr(response, "status_code", 200)
+      if status >= 400:
+        raw = getattr(response, "text", str(response))
+        logger.error("ClovaStudio 호출 실패 status={} body={}", status, raw[:200])
+        return {
+          "replies": [""],
+          "meta": [{"model": self.model, "provider": "clova", "error": f"HTTP {status}"}],
+        }
+      payload = response.json() if hasattr(response, "json") else {}
+      if isinstance(payload, str):
+        payload = json.loads(payload)
+      reply = self._extract_reply(payload or {})
+      meta = {
+        "model": self.model,
+        "provider": "clova",
+        "usage": (payload.get("result", {}) or {}).get("usage", {}),
+      }
+      return {"replies": [reply], "meta": [meta]}
+    except Exception as exc:  # noqa: BLE001 - 외부 API 호출 보호
+      logger.error("ClovaStudio 예외: {}", exc)
+      return {
+        "replies": [""],
+        "meta": [{"model": self.model, "provider": "clova", "error": str(exc)}],
+      }
+
+
+def create_clova_generator(config: dict[str, Any]) -> Any:
+  """
+  HyperCLOVA X(HCX-DASH-002) 기반 Generator 를 생성합니다.
+
+  환경변수 ``NAVER_CLOVA_API_KEY`` 가 반드시 설정되어 있어야 합니다.
+  ``NAVER_CLOVA_API_URL`` 은 옵션이며, 미설정 시 기본 ClovaStudio 게이트웨이를 사용합니다.
+
+  Args:
+    config: YAML 에서 로드한 설정 딕셔너리. ``config["generator"]["clova"]``
+            아래의 model/temperature/max_tokens 값을 사용합니다.
+
+  Returns:
+    ClovaXGenerator: HyperCLOVA X 호출 컴포넌트.
+
+  Raises:
+    ValueError: NAVER_CLOVA_API_KEY 환경변수가 설정되지 않았을 때.
+  """
+  api_key = os.getenv("NAVER_CLOVA_API_KEY")
+  if not api_key:
+    raise ValueError(
+      "NAVER_CLOVA_API_KEY 환경변수가 설정되지 않았습니다. "
+      ".env 파일에 NAVER_CLOVA_API_KEY=... 형태로 설정해주세요."
+    )
+
+  api_url = os.getenv("NAVER_CLOVA_API_URL", "https://clovastudio.apigw.ntruss.com")
+  gen_config = (config.get("generator", {}) or {}).get("clova", {}) or {}
+  model = gen_config.get("model", "HCX-DASH-002")
+  temperature = gen_config.get("temperature", 0.1)
+  max_tokens = gen_config.get("max_tokens", 1024)
+  top_p = gen_config.get("top_p", 0.8)
+
+  generator = ClovaXGenerator(
+    api_key=api_key,
+    model=model,
+    api_url=api_url,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    top_p=top_p,
+  )
+
+  logger.debug(
+    "ClovaX Generator 생성 완료 (모델: {}, temperature: {}, url: {})",
+    model,
+    temperature,
+    api_url,
   )
   return generator

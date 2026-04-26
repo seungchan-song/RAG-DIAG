@@ -34,6 +34,10 @@ profiles:
       enabled: false
 
 generator:
+  # provider 선택: "openai" | "clova" | "auto"
+  # - "auto": OPENAI_API_KEY 가 있으면 OpenAI, 없고 NAVER_CLOVA_API_KEY 만 있으면 ClovaX
+  # - 명시적으로 한 쪽으로 고정하려면 "openai" 또는 "clova" 사용
+  provider: "auto"
   openai:
     model: "gpt-4o-mini-2024-07-18"
     temperature: 0.1
@@ -42,6 +46,7 @@ generator:
     model: "HCX-DASH-002"
     temperature: 0.1
     max_tokens: 1024
+    top_p: 0.8
 
 attack:
   r2:
