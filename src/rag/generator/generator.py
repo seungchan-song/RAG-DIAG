@@ -37,7 +37,18 @@ class MockGenerator:
 
   실제 LLM 응답 대신 검색된 문서 원문을 반환하므로,
   ROUGE-L 기반 유출 판정(R2) 등의 평가에서도 유의미한 결과를 얻습니다.
+
+  system_prompt를 받더라도 mock이므로 실제 반영은 하지 않습니다.
+  (방어 지시문 우회 시뮬레이션 용도로, 의도적으로 무시합니다.)
   """
+
+  def __init__(self, system_prompt: str | None = None) -> None:
+    """
+    Args:
+      system_prompt: 설정에서 전달받은 시스템 프롬프트. Mock에서는 사용하지 않음.
+    """
+    if system_prompt:
+      logger.debug("MockGenerator: system_prompt 수신됨 (mock이므로 미적용, 길이={}자)", len(system_prompt))
 
   @component.output_types(replies=list[str], meta=list[dict])
   def run(self, prompt: str) -> dict[str, Any]:
@@ -77,6 +88,9 @@ def create_generator(config: dict[str, Any]) -> Any:
     3) provider 가 "auto" 또는 미지정이면 환경변수에 따라 자동 선택
     4) 어떤 API 키도 없으면 MockGenerator
 
+  config["generator"]["system_prompt"] 가 설정되어 있으면
+  각 생성기에 페르소나/방어 지시문으로 전달됩니다.
+
   Args:
     config: YAML에서 로드한 설정 딕셔너리
 
@@ -85,38 +99,50 @@ def create_generator(config: dict[str, Any]) -> Any:
   """
   generator_config = config.get("generator", {}) or {}
   provider = str(generator_config.get("provider", "auto")).lower()
+  system_prompt: str | None = generator_config.get("system_prompt") or None
+
+  if system_prompt:
+    logger.info(
+      "시스템 프롬프트 적용됨 (길이={}자, provider={})",
+      len(system_prompt),
+      provider,
+    )
 
   if provider == "clova":
     if os.getenv("NAVER_CLOVA_API_KEY"):
-      return create_clova_generator(config)
+      return create_clova_generator(config, system_prompt=system_prompt)
     logger.warning(
       "NAVER_CLOVA_API_KEY 가 설정되지 않았습니다. provider=clova 가 요청됐지만 "
       "MockGenerator 로 폴백합니다."
     )
-    return MockGenerator()
+    return MockGenerator(system_prompt=system_prompt)
 
   if provider == "openai":
     if os.getenv("OPENAI_API_KEY"):
-      return create_openai_generator(config)
+      return create_openai_generator(config, system_prompt=system_prompt)
     logger.warning(
       "OPENAI_API_KEY 가 설정되지 않았습니다. provider=openai 가 요청됐지만 "
       "MockGenerator 로 폴백합니다."
     )
-    return MockGenerator()
+    return MockGenerator(system_prompt=system_prompt)
 
   # provider == "auto" (또는 미지정): 환경변수 우선순위에 따라 결정
   if os.getenv("OPENAI_API_KEY"):
-    return create_openai_generator(config)
+    return create_openai_generator(config, system_prompt=system_prompt)
   if os.getenv("NAVER_CLOVA_API_KEY"):
-    return create_clova_generator(config)
+    return create_clova_generator(config, system_prompt=system_prompt)
   logger.warning(
     "OPENAI_API_KEY / NAVER_CLOVA_API_KEY 모두 설정되지 않았습니다. "
     "MockGenerator를 사용합니다 (검색 문서 원문을 응답으로 반환)."
   )
-  return MockGenerator()
+  return MockGenerator(system_prompt=system_prompt)
 
 
-def create_openai_generator(config: dict[str, Any]) -> Any:
+def create_openai_generator(
+  config: dict[str, Any],
+  *,
+  system_prompt: str | None = None,
+) -> Any:
   """
   OpenAI GPT 모델을 사용하는 Generator를 생성합니다.
 
@@ -126,6 +152,8 @@ def create_openai_generator(config: dict[str, Any]) -> Any:
   Args:
     config: YAML에서 로드한 설정 딕셔너리.
             config["generator"]["openai"] 아래의 설정을 사용합니다.
+    system_prompt: LLM의 system role 메시지로 전달할 페르소나/방어 지시문.
+                   None이면 system 메시지 없이 동작합니다.
 
   Returns:
     OpenAIGenerator: OpenAI 기반 텍스트 생성 컴포넌트
@@ -135,6 +163,7 @@ def create_openai_generator(config: dict[str, Any]) -> Any:
 
   설정 예시 (config/default.yaml):
     generator:
+      system_prompt: "민감한 개인정보는 절대 응답에 포함하지 마세요."
       openai:
         model: "gpt-4o-mini-2024-07-18"
         temperature: 0.1
@@ -155,17 +184,25 @@ def create_openai_generator(config: dict[str, Any]) -> Any:
   temperature = gen_config.get("temperature", 0.1)
   max_tokens = gen_config.get("max_tokens", 1024)
 
+  # system_prompt가 없으면 파라미터 자체를 전달하지 않음 (Haystack 기본 동작 유지)
+  extra_kwargs: dict[str, Any] = {}
+  if system_prompt:
+    extra_kwargs["system_prompt"] = system_prompt
+
   generator = OpenAIGenerator(
     model=model,
     generation_kwargs={
       "temperature": temperature,
       "max_tokens": max_tokens,
     },
+    **extra_kwargs,
   )
 
   logger.debug(
-    f"OpenAI Generator 생성 완료 "
-    f"(모델: {model}, temperature: {temperature})"
+    "OpenAI Generator 생성 완료 (모델: {}, temperature: {}, system_prompt={})",
+    model,
+    temperature,
+    "있음" if system_prompt else "없음",
   )
   return generator
 
@@ -194,6 +231,7 @@ class ClovaXGenerator:
     max_tokens: int = 1024,
     top_p: float = 0.8,
     timeout: float = 30.0,
+    system_prompt: str | None = None,
     http_client: Any | None = None,
   ) -> None:
     self.api_key = api_key
@@ -203,6 +241,7 @@ class ClovaXGenerator:
     self.max_tokens = int(max_tokens)
     self.top_p = float(top_p)
     self.timeout = float(timeout)
+    self.system_prompt = system_prompt or None
     self._http_client = http_client
 
   def _resolve_endpoint(self) -> str:
@@ -244,8 +283,15 @@ class ClovaXGenerator:
       "Content-Type": "application/json; charset=utf-8",
       "X-NCP-CLOVASTUDIO-REQUEST-ID": "rag-attack-harness",
     }
+    # system_prompt가 있으면 messages 배열 맨 앞에 system 역할로 추가합니다.
+    # ClovaStudio는 OpenAI와 동일한 messages 포맷을 지원합니다.
+    messages = []
+    if self.system_prompt:
+      messages.append({"role": "system", "content": self.system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
     body: dict[str, Any] = {
-      "messages": [{"role": "user", "content": prompt}],
+      "messages": messages,
       "temperature": self.temperature,
       "maxTokens": self.max_tokens,
       "topP": self.top_p,
@@ -279,7 +325,11 @@ class ClovaXGenerator:
       }
 
 
-def create_clova_generator(config: dict[str, Any]) -> Any:
+def create_clova_generator(
+  config: dict[str, Any],
+  *,
+  system_prompt: str | None = None,
+) -> Any:
   """
   HyperCLOVA X(HCX-DASH-002) 기반 Generator 를 생성합니다.
 
@@ -289,6 +339,8 @@ def create_clova_generator(config: dict[str, Any]) -> Any:
   Args:
     config: YAML 에서 로드한 설정 딕셔너리. ``config["generator"]["clova"]``
             아래의 model/temperature/max_tokens 값을 사용합니다.
+    system_prompt: LLM의 system 메시지로 전달할 페르소나/방어 지시문.
+                   None이면 system 메시지 없이 동작합니다.
 
   Returns:
     ClovaXGenerator: HyperCLOVA X 호출 컴포넌트.
@@ -317,12 +369,14 @@ def create_clova_generator(config: dict[str, Any]) -> Any:
     temperature=temperature,
     max_tokens=max_tokens,
     top_p=top_p,
+    system_prompt=system_prompt,
   )
 
   logger.debug(
-    "ClovaX Generator 생성 완료 (모델: {}, temperature: {}, url: {})",
+    "ClovaX Generator 생성 완료 (모델: {}, temperature: {}, url: {}, system_prompt={})",
     model,
     temperature,
     api_url,
+    "있음" if system_prompt else "없음",
   )
   return generator

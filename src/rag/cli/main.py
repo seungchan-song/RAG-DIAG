@@ -12,7 +12,11 @@ from typing import Any, Callable, Optional
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 from rich.table import Table
+from rich.text import Text
+from rich.columns import Columns
+from rich import box
 
 from rag.attack.base import AttackResult, ExecutionFailureRecord
 from rag.utils.config import load_config, load_env
@@ -22,8 +26,117 @@ app = typer.Typer(
   name="rag",
   help="RAG attack and retrieval diagnostics CLI",
   add_completion=False,
+  invoke_without_command=True,  # 서브커맨드 없이 실행해도 callback이 호출되도록
 )
 console = Console()
+
+_VERSION = "0.1.0"
+
+_BANNER = r"""
+██████╗  █████╗  ██████╗      ██████╗  ██╗ █████╗  ██████╗
+██╔══██╗██╔══██╗██╔════╝      ██╔══██╗ ██║██╔══██╗██╔════╝
+██████╔╝███████║██║  ███╗     ██║  ██║ ██║███████║██║  ███╗
+██╔══██╗██╔══██║██║   ██║     ██║  ██║ ██║██╔══██║██║   ██║
+██║  ██║██║  ██║╚██████╔╝     ██████╔╝ ██║██║  ██║╚██████╔╝
+╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝      ╚═════╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
+"""
+
+def _show_banner() -> None:
+  """
+  시작 화면 배너와 명령어 목록을 출력한다.
+
+  `python -m rag` 를 인수 없이 실행했을 때 호출되며,
+  ASCII 아트 로고, 버전, 프로젝트 설명, 명령어 목록을 Rich로 렌더링한다.
+  """
+  # ── 로고 패널 ──────────────────────────────────────────
+  banner_text = Text(_BANNER, style="bold cyan", justify="center")
+  subtitle = Text(
+    f"  RAG 보안 진단 시스템  •  v{_VERSION}  •  팀 수박",
+    style="bold white",
+    justify="center",
+  )
+  console.print(Panel(
+    Text.assemble(banner_text, "\n", subtitle),
+    border_style="cyan",
+    padding=(0, 2),
+  ))
+
+  # ── 명령어 목록 ────────────────────────────────────────
+  cmd_table = Table(
+    show_header=True,
+    header_style="bold magenta",
+    box=box.ROUNDED,
+    padding=(0, 2),
+    expand=True,
+  )
+  cmd_table.add_column("명령어", style="bold green", no_wrap=True)
+  cmd_table.add_column("설명", style="white")
+  cmd_table.add_column("예시", style="dim")
+
+  cmd_table.add_row(
+    "run",
+    "공격 시나리오 실행 (R2 / R4 / R9)",
+    "rag run -s R2 -a A1 -e poisoned",
+  )
+  cmd_table.add_row(
+    "ingest",
+    "문서를 FAISS 인덱스에 등록",
+    "rag ingest --path data/documents/",
+  )
+  cmd_table.add_row(
+    "query",
+    "단일 RAG 쿼리 테스트",
+    "rag query --text \"회원 정보 알려줘\"",
+  )
+  cmd_table.add_row(
+    "report",
+    "기존 실행 결과로 PDF/CSV 리포트 생성",
+    "rag report --run-id <run_id>",
+  )
+  cmd_table.add_row(
+    "pii-eval",
+    "PII 탐지 파이프라인 벤치마크",
+    "rag pii-eval --dataset kdpii",
+  )
+  cmd_table.add_row(
+    "replay",
+    "이전 실험을 새 run_id로 재실행",
+    "rag replay --run-id <run_id>",
+  )
+
+  console.print(Panel(
+    cmd_table,
+    title="[bold blue]사용 가능한 명령어[/bold blue]",
+    border_style="blue",
+    padding=(1, 1),
+  ))
+
+  # ── 빠른 시작 순서 ────────────────────────────────────
+  quick_start = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+  quick_start.add_column("Step", style="bold yellow", no_wrap=True)
+  quick_start.add_column("Command", style="green")
+  quick_start.add_column("Description", style="dim")
+  quick_start.add_row("1단계", "rag ingest --env clean", "Clean DB 인덱스 구축")
+  quick_start.add_row("2단계", "rag ingest --env poisoned -s R2", "Poisoned DB 인덱스 구축")
+  quick_start.add_row("3단계", "rag run -s R2 -a A1 -e poisoned", "단일 시나리오 공격 실행")
+  quick_start.add_row("   또는", "rag run --all-scenarios --all-envs", "전체 매트릭스 자동 실행")
+  quick_start.add_row("4단계", "rag report --run-id <run_id>", "PDF/CSV 리포트 생성")
+
+  console.print(Panel(
+    quick_start,
+    title="[bold yellow]빠른 시작[/bold yellow]",
+    border_style="yellow",
+    padding=(0, 1),
+  ))
+
+  # ── 사용법 힌트 ────────────────────────────────────────
+  console.print(
+    Panel(
+      "[bold]rag [italic]<명령어>[/italic] --help[/bold]  으로 각 명령어의 상세 옵션을 확인하세요.",
+      border_style="dim",
+      padding=(0, 2),
+    )
+  )
 
 
 @dataclass(frozen=True)
@@ -61,10 +174,19 @@ class SingleRunOutcome:
 
 
 @app.callback()
-def main_callback() -> None:
-  """Load environment variables and logging once for all commands."""
+def main_callback(ctx: typer.Context) -> None:
+  """
+  모든 명령어 실행 전에 공통으로 호출되는 콜백 함수.
+
+  - 환경변수(.env)를 로드한다.
+  - loguru 로거를 초기화한다.
+  - 서브커맨드 없이 `rag`만 입력하면 시작 화면을 출력하고 종료한다.
+  """
   load_env()
   setup_logger()
+  # 서브커맨드가 없을 때만 시작 화면 출력
+  if ctx.invoked_subcommand is None:
+    _show_banner()
 
 
 @app.command()
@@ -73,19 +195,19 @@ def run(
     None,
     "--scenario",
     "-s",
-    help="Scenario to run (R2, R4, R9)",
+    help="실행할 시나리오 (R2, R4, R9). --all-scenarios 미사용 시 필수.",
   ),
   attacker: str = typer.Option(
     "A1",
     "--attacker",
     "-a",
-    help="Attacker type (A1, A2, A3, A4)",
+    help="공격자 유형 (A1=앵커쿼리, A2=명령어프롬프트, A3=혼합, A4=반복). 기본값: A1",
   ),
   env: str = typer.Option(
     "poisoned",
     "--env",
     "-e",
-    help="Environment to run against (clean or poisoned)",
+    help="실행 환경 (clean=대조군, poisoned=실험군). 기본값: poisoned",
   ),
   profile: str = typer.Option(
     "default",
@@ -217,6 +339,14 @@ def run(
       f"Failure artifacts were saved under [bold]data/results/{outcome.run_id}/[/bold]."
     )
     raise typer.Exit(code=1)
+
+  console.print(
+    f"\n[green]Run complete.[/green] "
+    f"Status: [bold]{outcome.status}[/bold]  |  "
+    f"Run ID: [bold]{outcome.run_id}[/bold]\n"
+    f"Results saved under [bold]data/results/{outcome.run_id}/[/bold]\n"
+    f"Next step → [bold]rag report --run-id {outcome.run_id}[/bold]"
+  )
 
 
 @app.command()
@@ -1379,107 +1509,146 @@ def _execute_single_run(
     )
 
   executed_now = 0
-  for trial_index, query_info in enumerate(queries):
-    query_id = str(query_info.get("query_id", ""))
-    if query_id and query_id in completed_query_ids:
-      continue
+  failed_now = 0
+  skipped_count = sum(
+    1 for q in queries if str(q.get("query_id", "")) in completed_query_ids
+  )
+  pending_count = len(queries) - skipped_count
 
-    current_stage = "query_execute"
-    try:
-      result = runner.execute_query(
-        attack,
-        query_info=query_info,
-        rag_pipeline=rag_pipeline,
-        attacker=attacker,
-        env=env,
-        trial_index=trial_index,
-      )
-      _apply_index_context(
-        result,
-        index_manifest=index_manifest,
-        index_manifest_ref=str(index_manager.manifest_path),
-      )
-      _apply_suite_context(
-        result,
-        suite_context=suite_context,
-        env=env,
-        profile=profile_name,
-      )
-      _apply_replay_context(result, replay_context=replay_context)
-      current_stage = "evaluate"
-      evaluator.evaluate(result)
-      sanitized_result = storage_sanitizer.sanitized_copy(result)
-      current_stage = "persist"
-      next_evaluated_results = evaluated_results + [result]
-      next_stored_results = stored_results + [sanitized_result]
-      next_completed_query_ids = set(completed_query_ids)
-      next_failed_query_ids = set(failed_query_ids)
-      if query_id:
-        next_completed_query_ids.add(query_id)
-        next_failed_query_ids.discard(query_id)
+  progress = Progress(
+    SpinnerColumn(),
+    TextColumn("[bold cyan]{task.description}"),
+    BarColumn(bar_width=30),
+    TaskProgressColumn(),
+    TextColumn("[dim]{task.completed}/{task.total}"),
+    TimeElapsedColumn(),
+    TimeRemainingColumn(),
+    console=console,
+    transient=False,
+  )
+  task_id = progress.add_task(
+    f"{scenario} 공격 쿼리 실행 중",
+    total=pending_count,
+  )
 
-      next_checkpoint = dict(checkpoint)
-      next_checkpoint["completed_query_ids"] = sorted(next_completed_query_ids)
-      next_checkpoint["failed_query_ids"] = sorted(next_failed_query_ids)
-      next_checkpoint["planned_query_count"] = len(queries)
-      next_checkpoint["status"] = "running"
-      exp_manager.save_partial_results(
-        actual_run_id,
-        scenario,
-        [_serialize_value(item) for item in next_stored_results],
-      )
-      exp_manager.save_checkpoint(actual_run_id, next_checkpoint)
-      evaluated_results = next_evaluated_results
-      stored_results = next_stored_results
-      completed_query_ids = next_completed_query_ids
-      failed_query_ids = next_failed_query_ids
-      checkpoint = next_checkpoint
-      executed_now += 1
-    except Exception as error:
-      if query_id:
-        failed_query_ids.add(query_id)
-      checkpoint["completed_query_ids"] = sorted(completed_query_ids)
-      checkpoint["failed_query_ids"] = sorted(failed_query_ids)
-      checkpoint["planned_query_count"] = len(queries)
-      failure = _build_failure_record(
-        scenario=scenario,
-        query_id=query_id,
-        query_text=str(query_info.get("query", "")),
-        stage=current_stage,
-        error=error,
-        attempt_index=_next_failure_attempt_index(
-          failures,
+  with progress:
+    for trial_index, query_info in enumerate(queries):
+      query_id = str(query_info.get("query_id", ""))
+      if query_id and query_id in completed_query_ids:
+        continue
+
+      current_stage = "query_execute"
+      try:
+        result = runner.execute_query(
+          attack,
+          query_info=query_info,
+          rag_pipeline=rag_pipeline,
+          attacker=attacker,
+          env=env,
+          trial_index=trial_index,
+        )
+        _apply_index_context(
+          result,
+          index_manifest=index_manifest,
+          index_manifest_ref=str(index_manager.manifest_path),
+        )
+        _apply_suite_context(
+          result,
+          suite_context=suite_context,
+          env=env,
+          profile=profile_name,
+        )
+        _apply_replay_context(result, replay_context=replay_context)
+        current_stage = "evaluate"
+        evaluator.evaluate(result)
+        sanitized_result = storage_sanitizer.sanitized_copy(result)
+        current_stage = "persist"
+        next_evaluated_results = evaluated_results + [result]
+        next_stored_results = stored_results + [sanitized_result]
+        next_completed_query_ids = set(completed_query_ids)
+        next_failed_query_ids = set(failed_query_ids)
+        if query_id:
+          next_completed_query_ids.add(query_id)
+          next_failed_query_ids.discard(query_id)
+
+        next_checkpoint = dict(checkpoint)
+        next_checkpoint["completed_query_ids"] = sorted(next_completed_query_ids)
+        next_checkpoint["failed_query_ids"] = sorted(next_failed_query_ids)
+        next_checkpoint["planned_query_count"] = len(queries)
+        next_checkpoint["status"] = "running"
+        exp_manager.save_partial_results(
+          actual_run_id,
+          scenario,
+          [_serialize_value(item) for item in next_stored_results],
+        )
+        exp_manager.save_checkpoint(actual_run_id, next_checkpoint)
+        evaluated_results = next_evaluated_results
+        stored_results = next_stored_results
+        completed_query_ids = next_completed_query_ids
+        failed_query_ids = next_failed_query_ids
+        checkpoint = next_checkpoint
+        executed_now += 1
+        success_label = "[green]✓[/green]" if result.success else "[dim]–[/dim]"
+        progress.update(
+          task_id,
+          advance=1,
+          description=f"{scenario} 공격 쿼리 실행 중  {success_label} {query_id or trial_index}",
+        )
+      except Exception as error:
+        if query_id:
+          failed_query_ids.add(query_id)
+        checkpoint["completed_query_ids"] = sorted(completed_query_ids)
+        checkpoint["failed_query_ids"] = sorted(failed_query_ids)
+        checkpoint["planned_query_count"] = len(queries)
+        failure = _build_failure_record(
+          scenario=scenario,
           query_id=query_id,
+          query_text=str(query_info.get("query", "")),
           stage=current_stage,
-        ),
-        environment_type=env,
-        profile_name=profile_name,
-        scenario_scope=str(index_manifest.get("scenario_scope", "")),
-        dataset_scope=str(index_manifest.get("dataset_scope", "")),
-        index_manifest_ref=index_manifest_ref,
-        suite_context=suite_context,
-        replay_context=replay_context,
-        storage_sanitizer=storage_sanitizer,
-        metadata={
-          "attacker": attacker,
-          "trial_index": trial_index,
-        },
-      )
-      _append_failure_record(
-        exp_manager=exp_manager,
-        run_id=actual_run_id,
-        scenario=scenario,
-        failures=failures,
-        failure=failure,
-        checkpoint=checkpoint,
-        checkpoint_status="running",
-      )
-      console.print(
-        "[yellow]Query failed and was checkpointed:[/yellow] "
-        f"{query_id or 'unknown'} ({error})"
-      )
+          error=error,
+          attempt_index=_next_failure_attempt_index(
+            failures,
+            query_id=query_id,
+            stage=current_stage,
+          ),
+          environment_type=env,
+          profile_name=profile_name,
+          scenario_scope=str(index_manifest.get("scenario_scope", "")),
+          dataset_scope=str(index_manifest.get("dataset_scope", "")),
+          index_manifest_ref=index_manifest_ref,
+          suite_context=suite_context,
+          replay_context=replay_context,
+          storage_sanitizer=storage_sanitizer,
+          metadata={
+            "attacker": attacker,
+            "trial_index": trial_index,
+          },
+        )
+        _append_failure_record(
+          exp_manager=exp_manager,
+          run_id=actual_run_id,
+          scenario=scenario,
+          failures=failures,
+          failure=failure,
+          checkpoint=checkpoint,
+          checkpoint_status="running",
+        )
+        failed_now += 1
+        progress.update(
+          task_id,
+          advance=1,
+          description=f"{scenario} 공격 쿼리 실행 중  [yellow]✗[/yellow] {query_id or trial_index}",
+        )
+        progress.console.print(
+          f"  [yellow]쿼리 실패 (체크포인트 저장됨):[/yellow] "
+          f"{query_id or 'unknown'} — {error}"
+        )
 
-  console.print(f"  [green]Completed {executed_now} new executions[/green]")
+  fail_suffix = f"  [yellow]실패: {failed_now}건[/yellow]" if failed_now else ""
+  console.print(
+    f"  [green]완료: {executed_now}건[/green]  [dim]재개 스킵: {skipped_count}건[/dim]"
+    + fail_suffix
+  )
 
   console.print(f"\n[cyan]4. Evaluating {scenario} results[/cyan]")
   checkpoint["completed_query_ids"] = sorted(completed_query_ids)

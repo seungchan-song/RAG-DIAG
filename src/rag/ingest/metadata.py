@@ -296,6 +296,11 @@ class DocumentMetadataEnricher:
 
   def __init__(self, metadata_map: dict[str, dict[str, Any]]) -> None:
     self.metadata_map = metadata_map
+    # Haystack 컨버터(TextFileToDocument 등)가 meta["file_path"]에 파일명(basename)만
+    # 저장하는 경우가 있으므로, 보조 인덱스로 basename → metadata를 추가로 유지합니다.
+    self._basename_map: dict[str, dict[str, Any]] = {
+      Path(k).name: v for k, v in metadata_map.items()
+    }
 
   @component.output_types(documents=list[Document])
   def run(self, documents: list[Document]) -> dict[str, list[Document]]:
@@ -303,6 +308,12 @@ class DocumentMetadataEnricher:
       document.meta = document.meta or {}
       file_key = _resolve_file_key(document.meta)
       base_meta = self.metadata_map.get(file_key or "", {})
+
+      # 전체 경로로 찾지 못한 경우 basename으로 재시도합니다.
+      # (Haystack 컨버터가 절대 경로 대신 파일명만 meta에 저장할 때 발생)
+      if not base_meta and file_key:
+        base_meta = self._basename_map.get(Path(file_key).name, {})
+
       document.meta.update(base_meta)
 
       keywords = extract_keywords(document.content or "", max_keywords=3)
