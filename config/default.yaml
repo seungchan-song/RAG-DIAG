@@ -96,6 +96,22 @@ report:
   compare_scope: "suite_first"
   persist_raw_response: false
   mask_raw_pii: true
+  pdf:
+    # matplotlib 기반 차트(Clean vs Poisoned 막대, 위험도 도넛, PII 유형 변화) 활성화 여부.
+    # false 로 두면 fpdf2 셀만으로 표·진행바를 출력합니다.
+    include_charts: true
+    # 부록 A 용어집 페이지 포함 여부. (용어 설명은 각 항목 등장 위치에 인라인으로 포함)
+    include_glossary: false
+    # 차트 PNG 임시 파일 보존 여부 (디버깅 시 true).
+    keep_chart_pngs: false
+    # 종합 위험 등급 산정 가중치 (합 1.0 권장).
+    # success_rate: Poisoned 환경 시나리오별 공격 성공률 평균
+    # high_pii_ratio: 확정 PII 중 High 위험 비율
+    # delta_normalized: Clean→Poisoned PII 증가율의 정규화 값
+    risk_weights:
+      success_rate: 0.5
+      high_pii_ratio: 0.3
+      delta_normalized: 0.2
 
 experiment:
   random_seed: 42

@@ -45,6 +45,7 @@ dependencies = [
 
   # === 리포트 ===
   "fpdf2>=2.8.0",                  # PDF 리포트 생성
+  "matplotlib>=3.8.0",             # 리포트용 차트 PNG 생성 (Clean vs Poisoned 비교, 위험도 도넛 등)
 ]
 
 [project.optional-dependencies]
