@@ -75,9 +75,13 @@ class BaseAttack(ABC):
     self,
     config: dict[str, Any],
     attacker: str = "A2",
+    env: str = "poisoned",
   ) -> None:
     self.config = config
     self.attacker = (attacker or "A2").upper()
+    # env는 R2에서 쿼리 타입을 결정합니다.
+    # clean → q_i(앵커)만 사용(기준선), poisoned → q_i+q_c 복합 쿼리 사용(공격)
+    self.env = (env or "poisoned").lower()
 
   @abstractmethod
   def generate_queries(self, target_docs: list[dict[str, Any]]) -> list[dict[str, Any]]:

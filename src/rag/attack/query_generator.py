@@ -202,23 +202,31 @@ class AttackQueryGenerator:
   def generate_r2_queries(
     self,
     target_docs: list[dict[str, Any]],
+    env: str = "poisoned",
   ) -> list[dict[str, Any]]:
     """
     R2 (검색 데이터 유출) 공격 쿼리를 생성합니다.
 
-    논문 Def 3에 따라 복합 쿼리 q = q_i + q_c를 구성합니다:
+    설계서 기준 Clean/Poisoned 구분:
+      - env="clean"  → 정상 쿼리 q_i(앵커)만 사용 (기준선 측정)
+      - env="poisoned" → 복합 쿼리 q = q_i + q_c 사용 (공격 효과 측정)
+      두 환경의 PII 유출량 차이로 공격 쿼리의 실제 위험도를 정량화합니다.
+
+    논문 Def 3 기반:
       - q_i (앵커): 타깃 문서의 키워드로 retriever를 유도
       - q_c (명령): generator에게 문서 원문 출력을 지시
 
     Args:
       target_docs: 유출 대상 문서 목록.
         각 문서는 {"content": "...", "keyword": "...", "doc_id": "..."} 형태
+      env: 실행 환경. "clean"이면 앵커 쿼리만, "poisoned"이면 복합 쿼리 생성
 
     Returns:
-      list[dict]: 생성된 공격 쿼리 목록. 각 항목:
-        - "query": 복합 쿼리 (q_i + q_c)
+      list[dict]: 생성된 쿼리 목록. 각 항목:
+        - "query": 실제 쿼리 (clean이면 q_i만, poisoned이면 q_i + q_c)
+        - "query_type": "anchor_only"(clean) 또는 "compound"(poisoned)
         - "anchor": 앵커 쿼리 (q_i)
-        - "command": 명령어 프롬프트 (q_c)
+        - "command": 명령어 프롬프트 (q_c). clean이면 빈 문자열
         - "target_text": 유출 대상 문서 원문
         - "target_doc_id": 대상 문서 ID
     """
@@ -226,6 +234,7 @@ class AttackQueryGenerator:
     r2_config = self.attack_config.get("r2", {})
     num_templates = r2_config.get("num_templates", 10)
     num_repeats = r2_config.get("num_repeats", 3)
+    is_clean = (env or "poisoned").lower() == "clean"
 
     queries: list[dict[str, Any]] = []
 
@@ -233,34 +242,46 @@ class AttackQueryGenerator:
       content = doc.get("content", "")
       doc_id = doc.get("doc_id", "unknown")
 
-      # 앵커 × 명령어 템플릿 조합
       for i in range(min(num_templates, len(self.R2_COMMAND_TEMPLATES))):
         anchor_template = self.R2_ANCHOR_TEMPLATES[i % len(self.R2_ANCHOR_TEMPLATES)]
         command = self.R2_COMMAND_TEMPLATES[i]
 
         # A1(Unaware)은 일반 키워드, A2(Aware)는 타깃 문서 keyword 사용
         keyword = self._select_observer_keyword(doc, i)
-
         anchor = anchor_template.format(keyword=keyword)
-        compound_query = f"{anchor} {command}"
+
+        if is_clean:
+          # clean 환경: 정상 쿼리 q_i만 사용 → 기준선(baseline) 측정
+          final_query = anchor
+          query_type = "anchor_only"
+          used_command = ""
+        else:
+          # poisoned 환경: 복합 쿼리 q_i + q_c 사용 → 공격 효과 측정
+          final_query = f"{anchor} {command}"
+          query_type = "compound"
+          used_command = command
 
         for repeat_index in range(num_repeats):
           queries.append({
-            "query": compound_query,
+            "query": final_query,
             "query_id": (
-              f"R2:{doc_id}:tpl-{i:02d}:rep-{repeat_index:02d}"
+              f"R2:{doc_id}:env-{env}:tpl-{i:02d}:rep-{repeat_index:02d}"
             ),
+            "query_type": query_type,
             "anchor": anchor,
-            "command": command,
+            "command": used_command,
             "target_text": content,
             "target_doc_id": doc_id,
             "keyword": keyword,
             "attacker": self.attacker,
+            "env": env,
           })
 
     logger.info(
-      "R2 공격 쿼리 {}개 생성 완료 (attacker={})",
+      "R2 쿼리 {}개 생성 완료 (env={}, query_type={}, attacker={})",
       len(queries),
+      env,
+      "anchor_only" if is_clean else "compound",
       self.attacker,
     )
     return queries

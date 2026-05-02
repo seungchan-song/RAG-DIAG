@@ -43,8 +43,8 @@ class R4MembershipAttack(BaseAttack):
   응답의 특성을 분석하여 추론합니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A2") -> None:
-    super().__init__(config, attacker=attacker)
+  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "poisoned") -> None:
+    super().__init__(config, attacker=attacker, env=env)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self._non_member_pipelines: dict[str, Pipeline] = {}
     logger.debug("R4MembershipAttack 초기화 완료 (attacker={})", self.attacker)

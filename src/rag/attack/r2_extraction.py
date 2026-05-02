@@ -39,28 +39,28 @@ class R2ExtractionAttack(BaseAttack):
   명령어 프롬프트로 generator에게 문서를 그대로 출력하도록 합니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A2") -> None:
-    super().__init__(config, attacker=attacker)
+  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "poisoned") -> None:
+    super().__init__(config, attacker=attacker, env=env)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
-    logger.debug("R2ExtractionAttack 초기화 완료 (attacker={})", self.attacker)
+    logger.debug("R2ExtractionAttack 초기화 완료 (attacker={}, env={})", self.attacker, self.env)
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]
   ) -> list[dict[str, Any]]:
     """
-    R2 공격 쿼리를 생성합니다.
+    R2 쿼리를 생성합니다. 환경(env)에 따라 쿼리 타입이 달라집니다.
 
-    각 타깃 문서에 대해 (앵커 × 명령어 × 반복 횟수) 조합의
-    복합 쿼리를 생성합니다.
+    - self.env == "clean"    → 앵커 쿼리(q_i)만 생성 (기준선 측정용)
+    - self.env == "poisoned" → 복합 쿼리(q_i + q_c) 생성 (공격 효과 측정용)
 
     Args:
       target_docs: 유출 대상 문서 목록
         [{"content": "...", "keyword": "...", "doc_id": "..."}, ...]
 
     Returns:
-      list[dict]: R2 복합 쿼리 목록
+      list[dict]: R2 쿼리 목록 (env에 따라 anchor_only 또는 compound)
     """
-    return self.query_gen.generate_r2_queries(target_docs)
+    return self.query_gen.generate_r2_queries(target_docs, env=self.env)
 
   def execute(
     self,
@@ -110,6 +110,7 @@ class R2ExtractionAttack(BaseAttack):
       metadata={
         "anchor": query_info.get("anchor", ""),
         "command": query_info.get("command", ""),
+        "query_type": query_info.get("query_type", "compound"),
         "target_doc_id": query_info.get("target_doc_id", ""),
         "keyword": query_info.get("keyword", ""),
         "reranker_enabled": trace.get("reranker_enabled", False),

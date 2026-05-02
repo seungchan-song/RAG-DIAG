@@ -1516,7 +1516,7 @@ def _execute_single_run(
         console.print(f"\n[cyan]3. Executing {scenario}[/cyan]")
         runner = AttackRunner(config)
         attack, queries = runner.prepare_queries(
-            scenario, target_docs, attacker=attacker
+            scenario, target_docs, attacker=attacker, env=env
         )
         evaluator = _create_evaluator(scenario, config)
         planned_query_count = len(queries)

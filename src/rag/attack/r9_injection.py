@@ -42,8 +42,8 @@ class R9InjectionAttack(BaseAttack):
   generator가 의도하지 않은 출력을 하게 만듭니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A3") -> None:
-    super().__init__(config, attacker=attacker)
+  def __init__(self, config: dict[str, Any], attacker: str = "A3", env: str = "poisoned") -> None:
+    super().__init__(config, attacker=attacker, env=env)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self.trigger_marker = config.get("evaluator", {}).get(
       "r9", {}
