@@ -13,7 +13,10 @@ build/
 models/
 
 # === FAISS 인덱스 ===
-data/indices/
+data/indexes/
+
+# === 참고자료 ===
+참고자료/
 
 # === 실험 결과 ===
 data/results/
@@ -37,3 +40,6 @@ env/
 # === 테스트/임시 파일 ===
 .pytest_cache/
 .tmp-python/
+
+# === 아이콘 ===
+Icon
