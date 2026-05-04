@@ -43,9 +43,6 @@ dependencies = [
   "python-dotenv>=1.1.0",          # .env 환경변수 로드
   "loguru>=0.7.2",                 # 로깅 라이브러리
 
-  # === 리포트 ===
-  "fpdf2>=2.8.0",                  # PDF 리포트 생성
-  "matplotlib>=3.8.0",             # 리포트용 차트 PNG 생성 (Clean vs Poisoned 비교, 위험도 도넛 등)
 ]
 
 [project.optional-dependencies]
@@ -65,6 +62,7 @@ where = ["src"]
 line-length = 100
 indent-width = 2
 target-version = "py311"
+exclude = ["src/rag/report/dashboard_template.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

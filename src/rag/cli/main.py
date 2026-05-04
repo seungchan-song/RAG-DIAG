@@ -101,7 +101,7 @@ def _show_banner() -> None:
     )
     cmd_table.add_row(
         "report",
-        "실행 결과로 PDF/CSV 리포트 생성",
+        "실행 결과로 HTML/CSV/JSON 리포트 생성",
         "rag report --run-id <run_id>",
     )
     cmd_table.add_row(
@@ -273,7 +273,7 @@ def run(
     auto_report: bool = typer.Option(
         False,
         "--auto-report",
-        help="실험 완료 후 자동으로 PDF/CSV 리포트를 생성합니다.",
+        help="실험 완료 후 자동으로 HTML/CSV/JSON 리포트를 생성합니다.",
     ),
     config_path: Optional[str] = typer.Option(
         None,
