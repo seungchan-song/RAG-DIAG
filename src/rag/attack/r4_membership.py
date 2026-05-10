@@ -43,11 +43,33 @@ class R4MembershipAttack(BaseAttack):
   응답의 특성을 분석하여 추론합니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "poisoned") -> None:
+  def __init__(
+    self,
+    config: dict[str, Any],
+    attacker: str = "A2",
+    env: str = "poisoned",
+    probe_mode: str = "generic",
+  ) -> None:
+    """
+    R4MembershipAttack을 초기화합니다.
+
+    Args:
+      config: YAML 설정 딕셔너리
+      attacker: 공격자 유형 (A1/A2)
+      env: 실행 환경 (clean/poisoned)
+      probe_mode: 쿼리 생성 방식.
+        "generic"  — 일반 키워드 기반 탐색 (기존 동작)
+        "sensitive" — 문서 내 PII 식별자 직접 사용 (민감 프로브)
+    """
     super().__init__(config, attacker=attacker, env=env)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
+    self.probe_mode = probe_mode.lower() if probe_mode else "generic"
     self._non_member_pipelines: dict[str, Pipeline] = {}
-    logger.debug("R4MembershipAttack 초기화 완료 (attacker={})", self.attacker)
+    logger.debug(
+      "R4MembershipAttack 초기화 완료 (attacker={}, probe_mode={})",
+      self.attacker,
+      self.probe_mode,
+    )
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]
@@ -55,8 +77,11 @@ class R4MembershipAttack(BaseAttack):
     """
     R4 멤버십 추론 쿼리를 생성합니다.
 
-    각 타깃 문서에 대해 탐색적 질문을 생성합니다.
-    is_member 값은 실행 시 챌린저가 결정합니다.
+    probe_mode에 따라 두 가지 방식으로 동작합니다.
+      - "generic":   일반 키워드 기반 탐색 쿼리 (기존 방식)
+      - "sensitive": 문서 내 PII 식별자 직접 사용 쿼리 (민감 프로브)
+
+    각 타깃 문서에 대해 b=1(포함)과 b=0(미포함) 쿼리를 쌍으로 생성합니다.
 
     Args:
       target_docs: 멤버십 추론 대상 문서 목록
@@ -67,12 +92,14 @@ class R4MembershipAttack(BaseAttack):
     all_queries: list[dict[str, Any]] = []
 
     for doc in target_docs:
-      # b=1 (포함) 시나리오 쿼리
-      member_queries = self.query_gen.generate_r4_queries(doc, is_member=True)
-      all_queries.extend(member_queries)
+      if self.probe_mode == "sensitive":
+        member_queries = self.query_gen.generate_r4_sensitive_queries(doc, is_member=True)
+        non_member_queries = self.query_gen.generate_r4_sensitive_queries(doc, is_member=False)
+      else:
+        member_queries = self.query_gen.generate_r4_queries(doc, is_member=True)
+        non_member_queries = self.query_gen.generate_r4_queries(doc, is_member=False)
 
-      # b=0 (미포함) 시나리오 쿼리
-      non_member_queries = self.query_gen.generate_r4_queries(doc, is_member=False)
+      all_queries.extend(member_queries)
       all_queries.extend(non_member_queries)
 
     return all_queries

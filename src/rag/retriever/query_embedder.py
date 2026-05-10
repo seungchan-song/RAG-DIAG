@@ -45,6 +45,7 @@ def create_query_embedder(config: dict[str, Any]) -> SentenceTransformersTextEmb
     embedder = SentenceTransformersTextEmbedder(
         model=model_name,
         device=device,
+        progress_bar=False,
     )
 
     logger.debug(f"질의 임베딩기 생성 완료 (모델: {model_name})")

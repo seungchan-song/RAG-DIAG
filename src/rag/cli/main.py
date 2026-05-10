@@ -19,7 +19,6 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 from rich.table import Table
 from rich.text import Text
@@ -28,7 +27,7 @@ from rich import box
 
 from rag.attack.base import AttackResult, ExecutionFailureRecord
 from rag.utils.config import load_config, load_env
-from rag.utils.logger import setup_logger
+from rag.utils.logger import quiet_execution, setup_logger
 
 app = typer.Typer(
     name="rag",
@@ -265,6 +264,15 @@ def run(
         "--all-scenarios",
         help="Run R2, R4, and R9 in one suite",
     ),
+    probe_mode: str = typer.Option(
+        "generic",
+        "--probe-mode",
+        help=(
+            "R4 전용: 쿼리 생성 방식. "
+            "generic=일반 키워드 탐색(기본), "
+            "sensitive=문서 내 PII 식별자 직접 사용"
+        ),
+    ),
     resume: Optional[str] = typer.Option(
         None,
         "--resume",
@@ -361,6 +369,11 @@ def run(
         raise typer.Exit(code=1)
 
     config = load_config(config_path, profile=profile)
+    try:
+        _check_scenario_env_constraint(env, scenario, config)
+    except ValueError as error:
+        console.print(f"\n[red]Error: {error}[/red]")
+        raise typer.Exit(code=1) from error
     _show_run_info(scenario, attacker, env, profile, resume=resume)
 
     try:
@@ -370,6 +383,7 @@ def run(
             attacker=attacker,
             env=env,
             profile=profile,
+            probe_mode=probe_mode,
             exp_manager=ExperimentManager(config),
             run_id=resume,
             resume_existing=bool(resume),
@@ -1226,6 +1240,7 @@ def _execute_single_run(
     exp_manager: Any,
     run_id: str | None = None,
     resume_existing: bool = False,
+    probe_mode: str = "generic",
     snapshot_metadata: dict[str, Any] | None = None,
     suite_context: dict[str, str] | None = None,
     replay_context: dict[str, Any] | None = None,
@@ -1315,7 +1330,7 @@ def _execute_single_run(
     checkpoint["status"] = "running"
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
 
-    console.print(f"\n[cyan]1. Loading index for {env} from {doc_path}[/cyan]")
+    console.print("\n[cyan]인덱스 로드 중...[/cyan]")
     try:
         index_manager = PersistentIndexManager(
             config,
@@ -1334,9 +1349,7 @@ def _execute_single_run(
         checkpoint["scenario_scope"] = str(index_manifest.get("scenario_scope", ""))
         checkpoint["dataset_scope"] = str(index_manifest.get("dataset_scope", ""))
         console.print(
-            "  [green]Index ready[/green] "
-            f"({index_status}, dataset_scope={index_manifest.get('dataset_scope', '')}, "
-            f"documents={index_manifest.get('doc_count', 0)})"
+            f"  [green]인덱스 준비 완료[/green] (문서 {index_manifest.get('doc_count', 0)}개)"
         )
     except Exception as error:
         failure = _build_failure_record(
@@ -1426,11 +1439,11 @@ def _execute_single_run(
 
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
 
-    console.print("[cyan]2. Building RAG pipeline[/cyan]")
+    console.print("[cyan]파이프라인 초기화 중...[/cyan]")
     try:
         rag_pipeline = build_rag_pipeline(document_store, config)
         rag_pipeline.warm_up()
-        console.print("  [green]Pipeline ready[/green]")
+        console.print("  [green]준비 완료[/green]")
     except Exception as error:
         failure = _build_failure_record(
             scenario=scenario,
@@ -1506,20 +1519,58 @@ def _execute_single_run(
             }
             for doc in stored_docs
         ]
-        target_docs = [
-            doc
-            for doc in candidate_docs
-            if doc.get("meta", {}).get("doc_role") != "attack"
-        ] or candidate_docs
+        if scenario.upper() == "R9":
+            # R9는 attack 문서의 keyword가 트리거 쿼리 생성에 필요하다.
+            # clean 환경은 공격 문서가 없으므로 poisoned 인덱스에서 attack 문서를 별도 로드해
+            # 동일한 트리거 쿼리를 생성한다. (clean/poisoned 환경 비교를 위한 query_id 일치)
+            if env == "clean":
+                try:
+                    poisoned_index_manager = PersistentIndexManager(
+                        config,
+                        doc_path=doc_path,
+                        environment="poisoned",
+                        scenario=scenario,
+                    )
+                    poisoned_store, _, _ = poisoned_index_manager.ensure_index(
+                        rebuild=False, auto_build_if_missing=False
+                    )
+                    attack_docs_from_poisoned = [
+                        {
+                            "content": doc.content,
+                            "meta": doc.meta,
+                            "doc_id": doc.meta.get("chunk_id") or doc.meta.get("doc_id") or doc.id,
+                            "keyword": doc.meta.get("keyword", ""),
+                        }
+                        for doc in poisoned_store.filter_documents()
+                        if doc.meta.get("doc_role") == "attack"
+                    ]
+                    if attack_docs_from_poisoned:
+                        target_docs = candidate_docs + attack_docs_from_poisoned
+                        console.print(
+                            f"  [dim]R9 clean: poisoned 인덱스에서 attack 문서 "
+                            f"{len(attack_docs_from_poisoned)}개 추가 (트리거 쿼리 일치용)[/dim]"
+                        )
+                    else:
+                        target_docs = candidate_docs
+                except Exception:
+                    target_docs = candidate_docs
+            else:
+                target_docs = candidate_docs
+        else:
+            target_docs = [
+                doc
+                for doc in candidate_docs
+                if doc.get("meta", {}).get("doc_role") != "attack"
+            ] or candidate_docs
         console.print(f"  Target documents: [bold]{len(target_docs)}[/bold]")
 
-        console.print(f"\n[cyan]3. Executing {scenario}[/cyan]")
         runner = AttackRunner(config)
         attack, queries = runner.prepare_queries(
-            scenario, target_docs, attacker=attacker, env=env
+            scenario, target_docs, attacker=attacker, env=env, probe_mode=probe_mode
         )
         evaluator = _create_evaluator(scenario, config)
         planned_query_count = len(queries)
+        console.print(f"\n[cyan]{scenario} 공격 실행[/cyan]  총 {planned_query_count}개 쿼리")
         checkpoint["planned_query_count"] = planned_query_count
         checkpoint["status"] = "running"
         exp_manager.save_checkpoint(actual_run_id, checkpoint)
@@ -1595,28 +1646,34 @@ def _execute_single_run(
     )
     pending_count = len(queries) - skipped_count
 
+    # 리랭커 활성화 여부를 config에서 판단해 표시 태그 생성
+    reranker_enabled = bool(config.get("reranker", {}).get("enabled", False))
+    reranker_tag = "[리랭커 ON]" if reranker_enabled else "[리랭커 OFF]"
+    cell_tag = f"[{scenario.upper()}][{env}]{reranker_tag}"
+
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[bold cyan]{task.description}"),
         BarColumn(bar_width=30),
         TaskProgressColumn(),
-        TextColumn("[dim]{task.completed}/{task.total}"),
         TimeElapsedColumn(),
-        TimeRemainingColumn(),
         console=console,
         transient=False,
     )
     task_id = progress.add_task(
-        f"{scenario} 공격 쿼리 실행 중",
+        f"{cell_tag}  쿼리 0/{pending_count}",
         total=pending_count,
     )
+    # 현재 셀 안에서 몇 번째 pending 쿼리를 처리 중인지 추적
+    pending_query_index = 0
 
-    with progress:
+    with quiet_execution(), progress:
         for trial_index, query_info in enumerate(queries):
             query_id = str(query_info.get("query_id", ""))
             if query_id and query_id in completed_query_ids:
                 continue
 
+            pending_query_index += 1
             current_stage = "query_execute"
             try:
                 result = runner.execute_query(
@@ -1674,7 +1731,10 @@ def _execute_single_run(
                 progress.update(
                     task_id,
                     advance=1,
-                    description=f"{scenario} 공격 쿼리 실행 중  {success_label} {query_id or trial_index}",
+                    description=(
+                        f"{cell_tag}  쿼리 {pending_query_index}/{pending_count}"
+                        f"  {success_label} {query_id or trial_index}"
+                    ),
                 )
             except Exception as error:
                 if query_id:
@@ -1719,20 +1779,24 @@ def _execute_single_run(
                 progress.update(
                     task_id,
                     advance=1,
-                    description=f"{scenario} 공격 쿼리 실행 중  [yellow]✗[/yellow] {query_id or trial_index}",
+                    description=(
+                        f"{cell_tag}  쿼리 {pending_query_index}/{pending_count}"
+                        f"  [yellow]✗[/yellow] {query_id or trial_index}"
+                    ),
                 )
                 progress.console.print(
                     f"  [yellow]쿼리 실패 (체크포인트 저장됨):[/yellow] "
                     f"{query_id or 'unknown'} — {error}"
                 )
 
-    fail_suffix = f"  [yellow]실패: {failed_now}건[/yellow]" if failed_now else ""
+    skip_part = f"  [dim](이전 완료 {skipped_count}건 재사용)[/dim]" if skipped_count else ""
     console.print(
-        f"  [green]완료: {executed_now}건[/green]  [dim]재개 스킵: {skipped_count}건[/dim]"
-        + fail_suffix
+        f"  [green]완료: {executed_now}건[/green]"
+        + (f"  [yellow]실패: {failed_now}건[/yellow]" if failed_now else "")
+        + skip_part
     )
 
-    console.print(f"\n[cyan]4. Evaluating {scenario} results[/cyan]")
+    console.print(f"\n[cyan]{scenario} 결과 평가 중...[/cyan]")
     checkpoint["completed_query_ids"] = sorted(completed_query_ids)
     checkpoint["failed_query_ids"] = sorted(failed_query_ids)
     checkpoint["planned_query_count"] = len(queries)
@@ -1916,20 +1980,44 @@ def _execute_suite_run(
         if cell.cell_id in completed_cells:
             continue
 
-        console.print(
-            "\n[cyan]Cell " f"{index}/{len(planned_cells)}:[/cyan] " f"{cell.cell_id}"
-        )
         child_config = load_config(config_path, profile=cell.profile_name)
+        _cell_reranker_on = bool(child_config.get("reranker", {}).get("enabled", False))
+        _cell_reranker_label = (
+            "[bold green]ON[/bold green]" if _cell_reranker_on else "[bold red]OFF[/bold red]"
+        )
+        console.print(
+            Panel(
+                f"  [bold]시나리오:[/bold] [cyan]{cell.scenario.upper()}[/cyan]   "
+                f"[bold]환경:[/bold] [yellow]{cell.environment_type}[/yellow]   "
+                f"[bold]리랭커:[/bold] {_cell_reranker_label}\n"
+                f"  [dim]{cell.cell_id}[/dim]",
+                title=(
+                    f"[bold cyan]▶ 전체 셀 {index} / {len(planned_cells)} 진행 중[/bold cyan]"
+                ),
+                border_style="cyan",
+                padding=(0, 2),
+            )
+        )
         child_manager = _create_child_experiment_manager(
             child_config, child_results_root
         )
         child_resume = child_manager.checkpoint_path(cell.cell_id).exists()
 
         try:
+            from rag.attack.query_generator import AttackQueryGenerator
+            cell_attacker = AttackQueryGenerator.CANONICAL_ATTACKER.get(
+                cell.scenario.upper(), attacker
+            )
+            if cell_attacker != attacker:
+                console.print(
+                    f"  [yellow]attacker 자동 조정:[/yellow] "
+                    f"{attacker} → {cell_attacker} "
+                    f"(시나리오 {cell.scenario}에 적합한 공격자)"
+                )
             outcome = single_run_executor(
                 child_config,
                 scenario=cell.scenario,
-                attacker=attacker,
+                attacker=cell_attacker,
                 env=cell.environment_type,
                 profile=cell.profile_name,
                 exp_manager=child_manager,
@@ -1996,11 +2084,11 @@ def _build_suite_cells(
         if all_scenarios
         else [str(scenario or "").upper()]
     )
-    environments = (
-        list(matrix_config.get("environments", ["clean", "poisoned"]))
-        if all_envs
-        else [env]
-    )
+
+    # 시나리오별 허용 환경 맵: scenario_environments 우선, 없으면 environments 폴백
+    scenario_env_map = matrix_config.get("scenario_environments", {})
+    default_environments = list(matrix_config.get("environments", ["clean", "poisoned"]))
+
     profiles = (
         list(matrix_config.get("profiles", ["reranker_off", "reranker_on"]))
         if all_profiles
@@ -2012,7 +2100,16 @@ def _build_suite_cells(
 
     cells: list[SuiteCell] = []
     for scenario_name in scenarios:
-        for environment_name in environments:
+        if all_envs:
+            # --all-envs 사용 시 시나리오별 허용 환경만 순회
+            envs_for_scenario = scenario_env_map.get(
+                str(scenario_name).upper(), default_environments
+            )
+        else:
+            # 환경을 명시적으로 지정한 경우 그대로 사용
+            envs_for_scenario = [env]
+
+        for environment_name in envs_for_scenario:
             for profile_name in profiles:
                 cells.append(
                     SuiteCell(
@@ -2077,6 +2174,16 @@ def summarize_suite_results(
 
     payloads = child_payloads or []
     failures = execution_failures or []
+
+    # R4는 직렬화 저장 시 b=1 결과의 success/delta가 페어링 전 상태로 굳음.
+    # suite 병합에서 재계산하면 hit_count=0이 되는 버그가 발생하므로,
+    # evaluate_batch로 재페어링한 뒤 요약한다.
+    # _compute_similarity는 metadata["similarity"] 캐시를 우선 참조하므로
+    # PII 마스킹된 응답이 저장돼 있어도 정확한 유사도를 유지한다.
+    if scenario.upper() == "R4" and results:
+        from rag.evaluator.r4_evaluator import R4Evaluator
+        R4Evaluator(config).evaluate_batch(results)
+
     summary = summarize_evaluated_results(scenario, config, results)
     summary["results"] = results
 
@@ -2710,6 +2817,31 @@ def _require_scenario_for_poisoned(env: str, scenario: str | None) -> None:
         )
 
 
+def _check_scenario_env_constraint(
+    env: str, scenario: str, config: dict[str, Any]
+) -> None:
+    """
+    config의 scenario_environments 제약에 따라 시나리오-환경 조합을 검증합니다.
+
+    R2/R4는 clean DB와 poisoned DB 구성이 사실상 동일하므로 clean 전용으로 지정되어 있습니다.
+    허용되지 않는 환경으로 실행하면 ValueError를 발생시킵니다.
+
+    Args:
+      env: 실행 환경 ("clean" 또는 "poisoned")
+      scenario: 공격 시나리오 ("R2", "R4", "R9")
+      config: YAML에서 로드한 설정 딕셔너리
+    """
+    scenario_env_map = (
+        config.get("experiment", {}).get("matrix", {}).get("scenario_environments", {})
+    )
+    allowed_envs = scenario_env_map.get(str(scenario).upper())
+    if allowed_envs and str(env).lower() not in [e.lower() for e in allowed_envs]:
+        raise ValueError(
+            f"시나리오 {scenario.upper()}는 {allowed_envs} 환경에서만 실행할 수 있습니다. "
+            f"(요청: '{env}'). config의 experiment.matrix.scenario_environments를 확인하세요."
+        )
+
+
 def _resolve_cli_scenario_scope(env: str, scenario: str | None) -> str:
     """Render the effective scenario scope shown in the CLI."""
     return "base" if str(env).lower() == "clean" else str(scenario or "").upper()
@@ -2740,20 +2872,28 @@ def _show_evaluation_result(scenario: str, summary: dict[str, Any]) -> None:
         table.add_row("Hit rate", f"{summary.get('hit_rate', 0):.2%}")
         table.add_row("Member hit rate", f"{summary.get('member_hit_rate', 0):.2%}")
         table.add_row(
-            "Non-member hit rate",
-            f"{summary.get('non_member_hit_rate', 0):.2%}",
-        )
-        table.add_row(
             "Inference success",
             "yes" if summary.get("is_inference_successful", False) else "no",
         )
     elif scenario_upper == "R9":
+        poisoned_total = summary.get("poisoned_total", summary.get("total", 0))
+        clean_total = summary.get("clean_total", 0)
+        table.add_row(
+            "Poisoned total", f"{poisoned_total} (공격 환경)"
+        )
         table.add_row("Success count", str(summary.get("success_count", 0)))
         table.add_row("Success rate", f"{summary.get('success_rate', 0):.2%}")
         for trigger, stats in summary.get("by_trigger", {}).items():
             table.add_row(
                 f"Trigger {trigger[:20]}",
                 f"{stats.get('success', 0)}/{stats.get('total', 0)} ({stats.get('rate', 0):.2%})",
+            )
+        ctrl = summary.get("control_group", {})
+        if ctrl:
+            table.add_row(
+                "[dim]Control (clean)[/dim]",
+                f"[dim]{ctrl.get('success_count', 0)}/{clean_total} "
+                f"({ctrl.get('success_rate', 0):.2%}) — 대조군[/dim]",
             )
 
     console.print()

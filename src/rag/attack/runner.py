@@ -26,13 +26,19 @@ class AttackRunner:
     self.config = config
     logger.debug("AttackRunner initialized")
 
-  def create_attack(self, scenario: str, attacker: str = "A2", env: str = "poisoned") -> BaseAttack:
+  def create_attack(
+    self,
+    scenario: str,
+    attacker: str = "A2",
+    env: str = "poisoned",
+    probe_mode: str = "generic",
+  ) -> BaseAttack:
     """Instantiate the concrete attack implementation for one scenario.
 
     attacker 는 시나리오별 query_generator 동작 분기에 사용됩니다
     (요구사항분석서 §2.4 [표 13] A1~A4 매트릭스 참조).
     env 는 R2에서 쿼리 타입을 결정합니다.
-    clean → 앵커 쿼리(q_i)만 생성, poisoned → 복합 쿼리(q_i+q_c) 생성.
+    probe_mode 는 R4 전용 옵션: "generic"(일반 키워드) / "sensitive"(PII 식별자).
     """
     attack_cls = SCENARIO_MAP.get(scenario.upper())
     if attack_cls is None:
@@ -40,6 +46,8 @@ class AttackRunner:
         f"Unsupported scenario: {scenario}. "
         f"Available scenarios: {list(SCENARIO_MAP.keys())}"
       )
+    if scenario.upper() == "R4":
+      return attack_cls(self.config, attacker=attacker, env=env, probe_mode=probe_mode)
     return attack_cls(self.config, attacker=attacker, env=env)
 
   def prepare_queries(
@@ -48,16 +56,18 @@ class AttackRunner:
     target_docs: list[dict[str, Any]],
     attacker: str = "A2",
     env: str = "poisoned",
+    probe_mode: str = "generic",
   ) -> tuple[BaseAttack, list[dict[str, Any]]]:
     """Instantiate the scenario attack and generate all queries."""
-    attack = self.create_attack(scenario, attacker=attacker, env=env)
+    attack = self.create_attack(scenario, attacker=attacker, env=env, probe_mode=probe_mode)
     queries = attack.generate_queries(target_docs)
     logger.info(
-      "Prepared {} attack queries for scenario {} (attacker={}, env={})",
+      "Prepared {} attack queries for scenario {} (attacker={}, env={}, probe_mode={})",
       len(queries),
       scenario.upper(),
       attacker,
       env,
+      probe_mode,
     )
     return attack, queries
 
@@ -98,11 +108,14 @@ class AttackRunner:
     target_docs: list[dict[str, Any]],
     attacker: str = "A1",
     env: str = "poisoned",
+    probe_mode: str = "generic",
     completed_query_ids: set[str] | None = None,
     on_result: Any | None = None,
   ) -> list[AttackResult]:
     """Run one attack scenario across all generated queries."""
-    attack, queries = self.prepare_queries(scenario, target_docs, attacker=attacker)
+    attack, queries = self.prepare_queries(
+      scenario, target_docs, attacker=attacker, env=env, probe_mode=probe_mode
+    )
     skipped = completed_query_ids or set()
 
     logger.info(

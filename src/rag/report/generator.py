@@ -16,7 +16,6 @@ class ReportGenerator:
 
     def __init__(self, config: dict[str, Any]) -> None:
         report_config = config.get("report", {})
-        self.compare_scope = str(report_config.get("compare_scope", "suite_first"))
         self.output_formats = report_config.get("output_formats", ["json", "csv"])
         self.results_dir = Path(report_config.get("output_dir", "data/results"))
         self._pii_detector = None
@@ -116,6 +115,29 @@ class ReportGenerator:
         for scenario, data in scenario_results.items():
             scenario_upper = scenario.upper()
             if scenario_upper == "R2":
+                # poisoned 환경 전용 통계를 별도로 계산한다.
+                # 루트 result 파일은 clean+poisoned를 합산하기 때문에
+                # 공격이 없는 clean 쿼리(anchor_only)가 포함되어 success_rate가 희석된다.
+                # 실제 공격 성공률은 poisoned 환경 결과만으로 측정해야 한다.
+                poisoned_results = [
+                    r for r in data.get("results", [])
+                    if self._get_environment(r) == "poisoned"
+                ]
+                poisoned_successes = sum(1 for r in poisoned_results if r.get("success"))
+                poisoned_scores = [r.get("score", 0.0) for r in poisoned_results]
+                poisoned_total = len(poisoned_results)
+                poisoned_summary = {
+                    "total": poisoned_total,
+                    "success_count": poisoned_successes,
+                    "success_rate": (
+                        poisoned_successes / poisoned_total if poisoned_total else 0.0
+                    ),
+                    "avg_score": (
+                        sum(poisoned_scores) / len(poisoned_scores)
+                        if poisoned_scores else 0.0
+                    ),
+                    "max_score": max(poisoned_scores) if poisoned_scores else 0.0,
+                }
                 scenario_summaries[scenario] = {
                     "scenario": "R2",
                     "total": data.get("total", 0),
@@ -124,6 +146,7 @@ class ReportGenerator:
                     "avg_score": data.get("avg_score", 0.0),
                     "max_score": data.get("max_score", 0.0),
                     "threshold": data.get("threshold", "N/A"),
+                    "poisoned_only": poisoned_summary,
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -141,10 +164,11 @@ class ReportGenerator:
                     "hit_count": data.get("hit_count", 0),
                     "hit_rate": data.get("hit_rate", 0.0),
                     "member_hit_rate": data.get("member_hit_rate", 0.0),
-                    "non_member_hit_rate": data.get("non_member_hit_rate", 0.0),
                     "is_inference_successful": data.get(
                         "is_inference_successful", False
                     ),
+                    "delta_threshold": data.get("delta_threshold") or 0.15,
+                    "delta_histogram": self._compute_r4_delta_histogram(data),
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -159,9 +183,14 @@ class ReportGenerator:
                 scenario_summaries[scenario] = {
                     "scenario": "R9",
                     "total": data.get("total", 0),
+                    # poisoned 환경(실제 공격)만 성공률 집계
+                    "poisoned_total": data.get("poisoned_total", 0),
+                    "clean_total": data.get("clean_total", 0),
                     "success_count": data.get("success_count", 0),
                     "success_rate": data.get("success_rate", 0.0),
                     "by_trigger": data.get("by_trigger", {}),
+                    # clean 환경은 대조군으로 별도 표기
+                    "control_group": data.get("control_group", {}),
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -208,6 +237,55 @@ class ReportGenerator:
         summary["reranker_on_off_비교"] = reranker_comparison
         return summary
 
+    def _compute_r4_delta_histogram(
+        self,
+        data: dict[str, Any],
+        bin_count: int = 20,
+    ) -> dict[str, Any]:
+        """R4 결과 전체에서 Δ(delta) 분포 히스토그램을 계산합니다.
+
+        Δ = ROUGE-L(b=1 응답) − ROUGE-L(b=0 응답).
+        -1.0 ~ 1.0 범위를 bin_count개 구간으로 나누어 각 구간에 속하는 결과 수를 셉니다.
+        브라우저에서 200개 샘플을 재계산하는 대신, Python이 전체 데이터를 미리 집계해
+        summary에 넣으므로 HTML 차트가 항상 전체 기준으로 그려집니다.
+        """
+        results = data.get("results", [])
+        deltas: list[float] = []
+        for result in results:
+            raw = result.get("metadata", {}).get("delta")
+            if raw is not None:
+                try:
+                    deltas.append(float(raw))
+                except (TypeError, ValueError):
+                    pass
+
+        if not deltas:
+            return {
+                "bins": [],
+                "labels": [],
+                "threshold": data.get("delta_threshold") or 0.15,
+                "sample_count": 0,
+            }
+
+        bins: list[int] = [0] * bin_count
+        labels: list[str] = []
+        step = 2.0 / bin_count  # 구간 폭 (-1.0 ~ 1.0, 총 범위 2.0)
+        for i in range(bin_count):
+            lo = round(-1.0 + i * step, 2)
+            labels.append(f"{lo:.1f}")
+
+        for delta in deltas:
+            idx = int((delta + 1.0) / step)
+            idx = max(0, min(bin_count - 1, idx))
+            bins[idx] += 1
+
+        return {
+            "bins": bins,
+            "labels": labels,
+            "threshold": data.get("delta_threshold") or 0.15,
+            "sample_count": len(deltas),
+        }
+
     def _build_execution_reliability_summary(
         self,
         scenario_results: dict[str, dict[str, Any]],
@@ -232,7 +310,11 @@ class ReportGenerator:
                     failed_cell_ids.add(suite_cell_id)
 
             planned_query_count = int(data.get("planned_query_count", 0) or 0)
-            completed_query_count = len(data.get("completed_query_ids", []))
+            # completed_query_ids는 중복 제거된 고유 ID 목록이므로
+            # 실제 실행 건수(환경·리랭커 조합 포함)는 total 필드로 계산
+            completed_query_count = int(data.get("total", 0)) or len(
+                data.get("completed_query_ids", [])
+            )
             open_failure_count = int(data.get("open_failure_count", 0) or 0)
             execution_failure_count = int(data.get("execution_failure_count", 0) or 0)
 
@@ -517,33 +599,6 @@ class ReportGenerator:
             return "off"
         return "off"
 
-    def _load_cross_run_index(
-        self,
-        current_run_id: str,
-    ) -> dict[tuple[str, str, str, str], dict[str, Any]]:
-        index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-
-        for run_dir in sorted(self.results_dir.glob("RAG-*"), reverse=True):
-            if run_dir.name == current_run_id:
-                continue
-
-            for result_file in sorted(run_dir.glob("*_result.json")):
-                scenario = result_file.stem.replace("_result", "").upper()
-                with open(result_file, "r", encoding="utf-8") as file:
-                    scenario_data = json.load(file)
-
-                for result in scenario_data.get("results", []):
-                    environment = self._get_environment(result)
-                    query_id = self._get_query_id(result)
-                    if not environment or not query_id:
-                        continue
-
-                    reranker_state = self._get_reranker_state(result, scenario_data)
-                    key = (scenario, environment, reranker_state, query_id)
-                    index.setdefault(key, result)
-
-        return index
-
     def _build_local_index(
         self,
         scenario_results: dict[str, dict[str, Any]],
@@ -687,8 +742,13 @@ class ReportGenerator:
         run_id: str,
         scenario_results: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
+        """
+        현재 실험 내에서 clean↔poisoned 페어를 찾아 환경 비교 데이터를 생성합니다.
+
+        같은 실험(run_id)에 clean과 poisoned 결과가 모두 있을 때만 비교 항목을 만듭니다.
+        이전 실험 결과는 참조하지 않습니다. 조건 한쪽만 실행했다면 해당 섹션은 비어 있습니다.
+        """
         local_index = self._build_local_index(scenario_results)
-        cross_run_index = self._load_cross_run_index(run_id)
         comparison: dict[str, Any] = {}
 
         for scenario, data in scenario_results.items():
@@ -699,19 +759,15 @@ class ReportGenerator:
                 if not environment or not query_id:
                     continue
 
+                # clean → poisoned 단방향만 집계하여 이중 계산 방지
+                if environment != "clean":
+                    continue
+
                 reranker_state = self._get_reranker_state(result, data)
-                paired_env = "poisoned" if environment == "clean" else "clean"
+                paired_env = "poisoned"
                 counterpart = local_index.get(
                     (scenario, paired_env, reranker_state, query_id)
                 )
-                if counterpart is None and self.compare_scope == "suite_first":
-                    counterpart = cross_run_index.get(
-                        (scenario, paired_env, reranker_state, query_id)
-                    )
-                elif counterpart is None:
-                    counterpart = cross_run_index.get(
-                        (scenario, paired_env, reranker_state, query_id)
-                    )
                 if counterpart is None:
                     continue
 
@@ -739,8 +795,13 @@ class ReportGenerator:
         run_id: str,
         scenario_results: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
+        """
+        현재 실험 내에서 reranker_off↔reranker_on 페어를 찾아 리랭커 비교 데이터를 생성합니다.
+
+        같은 실험(run_id)에 reranker_off와 reranker_on 결과가 모두 있을 때만 비교 항목을 만듭니다.
+        이전 실험 결과는 참조하지 않습니다. 조건 한쪽만 실행했다면 해당 섹션은 비어 있습니다.
+        """
         local_index = self._build_local_index(scenario_results)
-        cross_run_index = self._load_cross_run_index(run_id)
         comparison: dict[str, Any] = {}
 
         for scenario, data in scenario_results.items():
@@ -752,18 +813,14 @@ class ReportGenerator:
                     continue
 
                 reranker_state = self._get_reranker_state(result, data)
-                paired_reranker_state = "off" if reranker_state == "on" else "on"
+                # reranker_off → reranker_on 단방향만 집계하여 이중 계산 방지
+                if reranker_state != "off":
+                    continue
+
+                paired_reranker_state = "on"
                 counterpart = local_index.get(
                     (scenario, environment, paired_reranker_state, query_id)
                 )
-                if counterpart is None and self.compare_scope == "suite_first":
-                    counterpart = cross_run_index.get(
-                        (scenario, environment, paired_reranker_state, query_id)
-                    )
-                elif counterpart is None:
-                    counterpart = cross_run_index.get(
-                        (scenario, environment, paired_reranker_state, query_id)
-                    )
                 if counterpart is None:
                     continue
 
@@ -984,17 +1041,36 @@ class ReportGenerator:
         """
         from rag.report.dashboard_template import render_dashboard
 
-        # final_prompt 제거한 경량 scenario_results 복사본 생성
+        # HTML embed용 경량 복사본: final_prompt 제거 + 시나리오당 최대 200개로 제한
+        # (전체 결과는 R2_result.json / R4_result.json / R9_result.json 참조)
+        MAX_EMBEDDED_RESULTS = 200
         lightweight_results: dict[str, Any] = {}
         for scenario, data in scenario_results.items():
             cleaned_data = dict(data)
             results_list = cleaned_data.get("results", [])
+            # 공격 성공한 결과를 우선 포함하고, 나머지로 채움
+            success_results = [r for r in results_list if r.get("success") or r.get("is_member_hit")]
+            fail_results = [r for r in results_list if not (r.get("success") or r.get("is_member_hit"))]
+            sampled = (success_results + fail_results)[:MAX_EMBEDDED_RESULTS]
             cleaned_results = []
-            for result in results_list:
+            for result in sampled:
                 cleaned = dict(result)
                 cleaned.pop("final_prompt", None)
+                cleaned.pop("raw_retrieved_documents", None)
+                cleaned.pop("reranked_documents", None)
+                cleaned.pop("thresholded_documents", None)
+                # 최종 삽입 문서는 source/score/rank 표시를 위해 유지하되,
+                # content는 200자로 잘라 파일 크기를 절감한다.
+                docs = cleaned.get("retrieved_documents")
+                if docs:
+                    cleaned["retrieved_documents"] = [
+                        {**d, "content": (d.get("content") or "")[:200]}
+                        for d in docs
+                    ]
                 cleaned_results.append(cleaned)
             cleaned_data["results"] = cleaned_results
+            cleaned_data["results_truncated"] = len(results_list) > MAX_EMBEDDED_RESULTS
+            cleaned_data["results_total"] = len(results_list)
             lightweight_results[scenario] = cleaned_data
 
         generated_at = summary.get("generated_at", "")
@@ -1024,7 +1100,11 @@ class ReportGenerator:
         return html_path
 
     def _assess_risk_level(self, scenario_results: dict[str, dict[str, Any]]) -> str:
-        r2_rate = scenario_results.get("R2", {}).get("success_rate", 0)
+        # R2는 실제 공격 환경인 poisoned 전용 성공률을 기준으로 위험도를 판정한다.
+        # 전체 통계(clean 포함)는 공격이 없는 baseline 쿼리가 섞여 수치가 희석된다.
+        r2_data = scenario_results.get("R2", {})
+        r2_poisoned = r2_data.get("poisoned_only", {})
+        r2_rate = r2_poisoned.get("success_rate") if r2_poisoned else r2_data.get("success_rate", 0)
         r4_success = scenario_results.get("R4", {}).get(
             "is_inference_successful", False
         )

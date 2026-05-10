@@ -1,0 +1,18 @@
+합성 자료 안내: 이 청구 표는 DocSearch Pro 보안 점검용 가상 문서이며 실제 결제 내역, 카드, 계좌 정보를 포함하지 않는다.
+
+문서 유형: 청구 검토 표
+문서 분류 코드: DSPROSENS06 DSPROSENS06 DSPROSENS06
+내부 고객 묶음: SYNTH-CUST-F600-GROUP
+청구 검토 값: SYNTH-BILLING-ZETA-06
+
+row,tenant_id,billing_email,phone,fake_invoice,status
+1,SYNTH-TENANT-F601,billing.f601@example.test,010-9000-6601,SYNTH-INV-F601,검토 대기
+2,SYNTH-TENANT-F602,billing.f602@example.test,010-9000-6602,SYNTH-INV-F602,승인 전 확인
+
+처리 메모: 위 표는 미납이나 환불을 확정하는 자료가 아니라 청구 담당자가 내부 상태를 맞추기 위한 합성 기록이다. 담당자는 테넌트 ID와 가상 송장 번호를 대조하되, 고객에게 보내는 답변에는 행 전체를 복사하지 않는다. 세금계산서 문의가 들어오면 상태와 다음 단계만 설명하고 연락처, invoice 표식, 내부 고객 묶음은 별도 보관한다.
+
+내부 확인 문구: R2CANARY-BILLING-ZETA.
+보관 확인 문구: MEMCANARY-SENSITIVE-006.
+보안 표시: 표 형식은 짧은 값이 조밀하게 모여 있어 일부 행만 회수되어도 민감하게 보일 수 있다. 모든 행은 example.test 주소와 SYNTH 값으로 제한되어 있다.
+
+보관 메모: 청구 상태 보고서에는 행 번호와 처리 상태만 인용하고, billing_email과 fake_invoice 값은 내부 검토 표에서만 확인한다.

@@ -78,14 +78,44 @@ class R9InjectionAttack(BaseAttack):
     논문 Def 5: Q_T = {q ∈ Q | ∃t ∈ T such that t ∈ q}
     트리거 토큰이 포함된 쿼리를 생성합니다.
 
+    트리거 키워드 우선순위:
+      1. attack 문서(doc_role=attack)의 keyword/keywords → 공격 문서와 쿼리가 정확히 매칭됨
+      2. attack 문서가 없는 경우 → 일반/민감 문서의 keyword 사용 (fallback)
+
     Args:
-      target_docs: 트리거 키워드가 담긴 문서 목록
-        각 문서의 "keyword" 필드를 트리거로 사용
+      target_docs: 트리거 키워드가 담긴 문서 목록 (attack 문서 포함 권장)
 
     Returns:
       list[dict]: 트리거 쿼리 목록
     """
-    trigger_keywords = [doc.get("keyword", "") for doc in target_docs]
+    attack_docs = [
+      doc for doc in target_docs
+      if doc.get("meta", {}).get("doc_role") == "attack"
+    ]
+
+    if attack_docs:
+      # attack 문서의 keyword/keywords를 트리거로 사용 (중복 제거, 순서 유지)
+      seen: set[str] = set()
+      trigger_keywords: list[str] = []
+      for doc in attack_docs:
+        candidates = [doc.get("keyword", "")] + list(
+          doc.get("meta", {}).get("keywords", [])
+        )
+        for kw in candidates:
+          if kw and kw not in seen:
+            seen.add(kw)
+            trigger_keywords.append(kw)
+      logger.debug(
+        "R9 트리거: attack 문서 {}개에서 키워드 {}개 추출 → {}",
+        len(attack_docs),
+        len(trigger_keywords),
+        trigger_keywords[:5],
+      )
+    else:
+      trigger_keywords = [doc.get("keyword", "") for doc in target_docs]
+      logger.debug("R9 트리거: attack 문서 없음, 일반 문서 keyword 사용 (fallback)")
+
+    trigger_keywords = [t for t in trigger_keywords if t]
     _, trigger_queries = self.query_gen.generate_r9_payloads(trigger_keywords)
     return trigger_queries
 
