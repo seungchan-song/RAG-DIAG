@@ -12,6 +12,9 @@ from rag.utils.experiment import ExperimentManager
 
 
 def _base_config(tmp_path) -> dict:
+  # NORMAL 도입 후 정책:
+  #   - NORMAL/R2/R4/R7 → clean DB (NORMAL 이 공통 baseline)
+  #   - R9              → poisoned DB
   return {
     "report": {
       "output_dir": str(tmp_path / "results"),
@@ -21,7 +24,14 @@ def _base_config(tmp_path) -> dict:
       "matrix": {
         "environments": ["clean", "poisoned"],
         "profiles": ["reranker_off", "reranker_on"],
-        "scenarios": ["R2", "R4", "R9"],
+        "scenarios": ["NORMAL", "R2", "R4", "R7", "R9"],
+        "scenario_environments": {
+          "NORMAL": ["clean"],
+          "R2": ["clean"],
+          "R4": ["clean"],
+          "R7": ["clean"],
+          "R9": ["poisoned"],
+        },
       }
     },
     "evaluator": {
@@ -106,7 +116,8 @@ def _fake_child_summary(
 def test_build_suite_cells_counts(tmp_path):
   config = _base_config(tmp_path)
 
-  four_cells = cli_main._build_suite_cells(
+  # R2 단독 + all_envs: R2 는 clean 만 허용 → 1 env * 2 profiles = 2 셀
+  r2_cells = cli_main._build_suite_cells(
     scenario="R2",
     env="clean",
     profile="default",
@@ -115,7 +126,9 @@ def test_build_suite_cells_counts(tmp_path):
     all_scenarios=False,
     config=config,
   )
-  twelve_cells = cli_main._build_suite_cells(
+  # all_scenarios + all_envs + all_profiles:
+  #   NORMAL/R2/R4/R7 (clean, 4시나리오) + R9 (poisoned) = 5 시나리오 × 2 profiles = 10 셀
+  ten_cells = cli_main._build_suite_cells(
     scenario=None,
     env="clean",
     profile="default",
@@ -125,8 +138,41 @@ def test_build_suite_cells_counts(tmp_path):
     config=config,
   )
 
-  assert len(four_cells) == 4
-  assert len(twelve_cells) == 12
+  assert len(r2_cells) == 2
+  assert {c.environment_type for c in r2_cells} == {"clean"}
+
+  assert len(ten_cells) == 10
+  cell_ids = {f"{c.scenario}__{c.environment_type}__{c.profile_name}" for c in ten_cells}
+  expected_cells = {
+    f"{scenario}__clean__{profile}"
+    for scenario in ("NORMAL", "R2", "R4", "R7")
+    for profile in ("reranker_off", "reranker_on")
+  } | {
+    f"R9__poisoned__{profile}"
+    for profile in ("reranker_off", "reranker_on")
+  }
+  assert cell_ids == expected_cells
+
+
+def test_check_scenario_env_constraint_rejects_invalid_combos(tmp_path):
+  """시나리오별 단일 환경 정책 위반 시 ValueError 가 발생하는지 확인한다."""
+  import pytest
+
+  config = _base_config(tmp_path)
+  # 유효한 조합은 통과
+  cli_main._check_scenario_env_constraint("clean", "NORMAL", config)
+  cli_main._check_scenario_env_constraint("clean", "R7", config)
+  cli_main._check_scenario_env_constraint("poisoned", "R9", config)
+  # 금지 조합은 거부
+  for env, scenario in [
+    ("poisoned", "NORMAL"),
+    ("poisoned", "R2"),
+    ("poisoned", "R4"),
+    ("poisoned", "R7"),
+    ("clean", "R9"),
+  ]:
+    with pytest.raises(ValueError):
+      cli_main._check_scenario_env_constraint(env, scenario, config)
 
 
 def test_run_rejects_scenario_and_all_scenarios():
@@ -140,7 +186,8 @@ def test_ingest_rejects_poisoned_without_scenario():
   runner = CliRunner()
   result = runner.invoke(cli_main.app, ["ingest", "--env", "poisoned"])
   assert result.exit_code == 1
-  assert "--scenario R2|R4|R9" in result.stdout
+  # 새 정책: poisoned 는 R9 만 허용
+  assert "--scenario R9" in result.stdout
 
 
 def test_query_rejects_poisoned_without_scenario():
@@ -150,7 +197,7 @@ def test_query_rejects_poisoned_without_scenario():
     ["query", "--question", "hello", "--env", "poisoned"],
   )
   assert result.exit_code == 1
-  assert "--scenario R2|R4|R9" in result.stdout
+  assert "--scenario R9" in result.stdout
 
 
 def test_ingest_rejects_rebuild_and_incremental_together():
@@ -314,14 +361,19 @@ def test_execute_suite_run_skips_completed_cells_on_resume(tmp_path, monkeypatch
     single_run_executor=fake_executor,
   )
 
+  # 새 정책에서 R2 단독 + all_envs 는 clean × 2 profiles = 2 셀.
+  # cells[0]=완료(스킵), cells[1]=실패(재시도) → 재실행은 1개.
   assert resumed_run_id == suite_run_id
-  assert len(executed_cells) == 3
+  assert len(executed_cells) == 1
   assert cells[0].cell_id not in [cell_id for cell_id, _ in executed_cells]
   assert (cells[1].cell_id, True) in executed_cells
 
   with open(base_manager.run_dir(suite_run_id) / "R2_result.json", "r", encoding="utf-8") as file:
     parent_summary = json.load(file)
-  assert parent_summary["total"] == 3
+  # cells[0] 은 completed_cells 에만 등록되어 있고 사전 저장된 결과 파일이 없으므로
+  # 부모 합산에는 새로 실행된 cells[1] 결과 1건만 포함된다 (원래 4셀 가정에서는 미실행
+  # 셀까지 새로 저장되어 3건이 되던 자리).
+  assert parent_summary["total"] == 1
   assert all(result["suite_run_id"] == suite_run_id for result in parent_summary["results"])
 
 

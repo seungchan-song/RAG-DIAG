@@ -8,13 +8,19 @@ from haystack import Pipeline
 from loguru import logger
 
 from rag.attack.base import AttackResult, BaseAttack
+from rag.attack.normal_baseline import NormalBaselineAttack
 from rag.attack.r2_extraction import R2ExtractionAttack
 from rag.attack.r4_membership import R4MembershipAttack
+from rag.attack.r7_prompt_disclosure import R7PromptDisclosureAttack
 from rag.attack.r9_injection import R9InjectionAttack
 
+# NORMAL 은 공격이 아닌 baseline 시나리오이지만 동일 인터페이스(BaseAttack)를 따르므로
+# 같은 매핑에 등록해 CLI/runner/저장 파이프라인을 그대로 재사용한다.
 SCENARIO_MAP: dict[str, type[BaseAttack]] = {
+  "NORMAL": NormalBaselineAttack,
   "R2": R2ExtractionAttack,
   "R4": R4MembershipAttack,
+  "R7": R7PromptDisclosureAttack,
   "R9": R9InjectionAttack,
 }
 

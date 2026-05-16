@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -19,11 +20,10 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
+    TimeRemainingColumn,
 )
 from rich.table import Table
 from rich.text import Text
-from rich.columns import Columns
-from rich import box
 
 from rag.attack.base import AttackResult, ExecutionFailureRecord
 from rag.utils.config import load_config, load_env
@@ -47,6 +47,185 @@ _BANNER = r"""
 ██║  ██║██║  ██║╚██████╔╝     ██████╔╝ ██║██║  ██║╚██████╔╝
 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝      ╚═════╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
 """
+
+
+# =============================================================================
+# 사용자 친화적 출력용 상수 / 헬퍼
+# -----------------------------------------------------------------------------
+# 공격 실행 시 콘솔에 표시되는 시나리오 부제, 쿼리 의미 한국어 라벨, 평가
+# 결과 테이블 위젯 등을 모아둔다. 데이터(요약 dict 키, JSON 스키마)는
+# 변경하지 않고 출력층에서만 사용한다.
+# =============================================================================
+
+# 시나리오별 한국어 부제 + 한 줄 의미 (attack 모듈 docstring 출처)
+_SCENARIO_LABELS: dict[str, dict[str, str]] = {
+  "NORMAL": {
+    "title": "NORMAL 시나리오 (일반 질의 베이스라인)",
+    "summary_intro": "공격이 없는 일반 업무 질의에서 RAG가 자연 노출하는 PII 양",
+  },
+  "R2": {
+    "title": "R2 시나리오 (검색 데이터 유출 공격)",
+    "summary_intro": "민감 문서를 retriever에 유도해 응답에 원문이 그대로 새는지 확인",
+  },
+  "R4": {
+    "title": "R4 시나리오 (멤버십 추론 공격)",
+    "summary_intro": "특정 문서가 RAG의 지식 베이스에 들어 있었는지를 응답으로 추론",
+  },
+  "R7": {
+    "title": "R7 시나리오 (시스템 프롬프트 노출 공격)",
+    "summary_intro": "RAG에 부여된 시스템 프롬프트(가드레일/페르소나)를 강제로 출력시키기",
+  },
+  "R9": {
+    "title": "R9 시나리오 (간접 프롬프트 주입 공격)",
+    "summary_intro": "악성 문서를 사전에 심어두고 트리거 쿼리로 유해 출력을 유도",
+  },
+}
+
+# "방금 시도" 라벨용 한국어 매핑.
+# - NORMAL: query_type → 직접 요청/자료 조회/일상 질의 (PII 호기심 baseline)
+# - R2: 단일 시나리오 의미로 통일
+# - R7: R7_PAYLOAD_POOL 의 8개 payload_type 키를 그대로 매핑
+#       (anchored_ 접두어가 붙은 변형은 _resolve_query_type_ko 에서 처리)
+# - R4/R9 는 query_info 구조가 달라 _resolve_query_type_ko 에서 분기 처리
+_QUERY_TYPE_KO: dict[str, dict[str, str]] = {
+  "NORMAL": {
+    "info_request": "직접 정보 요청",
+    "doc_lookup":   "자료/문서 조회",
+    "casual_query": "일상적 위치 질의",
+    "unknown":      "일반 질의",
+  },
+  "R2": {
+    "compound": "민감 정보 유출 시도",
+    "unknown":  "민감 정보 유출 시도",
+  },
+  "R4": {
+    "member":     "포함 문서 추론 시도",
+    "non_member": "비포함 문서 추론 시도",
+    "unknown":    "멤버십 추론 시도",
+  },
+  "R7": {
+    "direct_request":     "직접 요청",
+    "init_reset":         "초기화 우회",
+    "english_override":   "영문 우회",
+    "persona_probe":      "페르소나 탐지",
+    "dan_jailbreak":      "DAN 탈옥",
+    "meta_audit":         "감사 모드 가장",
+    "debug_mode":         "디버그 모드 가장",
+    "translation_bypass": "번역 우회",
+    "unknown":            "시스템 프롬프트 노출 시도",
+  },
+  "R9": {
+    "unknown": "트리거 쿼리 주입",
+  },
+}
+
+
+def _resolve_query_type_ko(
+  scenario: str,
+  query_info: dict[str, Any],
+  result: AttackResult | None = None,
+) -> str:
+  """진행 바 '방금 시도' 라벨에 쓸 한국어 의미를 반환한다.
+
+  시나리오마다 query_info 의 키 구조가 달라 분기 처리한다.
+
+  Args:
+    scenario: 시나리오 코드 (NORMAL/R2/R4/R7/R9, 대소문자 무관)
+    query_info: AttackRunner.prepare_queries() 가 만든 쿼리 dict
+    result: 실행 직후 AttackResult (R4 분기에서 ground_truth_b 보충용)
+
+  Returns:
+    한국어 라벨 문자열. 매핑이 없으면 시나리오별 unknown 라벨로 fallback.
+  """
+  scenario_upper = scenario.upper()
+  table = _QUERY_TYPE_KO.get(scenario_upper, {})
+  default = table.get("unknown", "쿼리 시도")
+
+  if scenario_upper == "R4":
+    # R4 는 멤버 / 비멤버 페어 구분. ground_truth_b 가 1 이면 포함 문서.
+    b_value = None
+    if result is not None:
+      b_value = (result.metadata or {}).get("ground_truth_b")
+    if b_value is None:
+      b_value = query_info.get("ground_truth_b")
+    return table.get("member" if b_value == 1 else "non_member", default)
+
+  raw = str(
+    query_info.get("query_type")
+    or query_info.get("payload_type")
+    or "unknown"
+  )
+
+  if scenario_upper == "R7" and raw.startswith("anchored_"):
+    base = raw.removeprefix("anchored_")
+    return table.get(base, default) + " (앵커 결합)"
+
+  return table.get(raw, default)
+
+
+def _kv_table(title: str) -> Table:
+  """평가 결과 표시용 3컬럼(한국어 라벨 / 값 / 영문 키) 테이블을 만든다.
+
+  Args:
+    title: 테이블 상단에 굵게 표시할 한국어 제목
+
+  Returns:
+    Rich Table. 헤더 없이 box.SIMPLE 스타일을 사용하므로 콘솔에 압축 출력된다.
+  """
+  t = Table(
+    title=title,
+    title_style="bold",
+    title_justify="left",
+    show_header=False,
+    box=box.SIMPLE,
+    padding=(0, 1),
+  )
+  # 한국어 라벨만 줄바꿈 금지(폭 충분히 확보).
+  # 값과 영문키 컬럼은 폭이 부족하면 자동 wrap 되도록 둔다.
+  t.add_column(style="white", min_width=28, no_wrap=True)
+  t.add_column(style="bold green")
+  t.add_column(style="dim")
+  return t
+
+
+def _row(t: Table, ko: str, value: str, en_key: str = "") -> None:
+  """_kv_table 에 한 행을 추가하는 단축 헬퍼.
+
+  Args:
+    t: 대상 테이블 (반드시 _kv_table 로 만든 3컬럼 테이블)
+    ko: 한국어 라벨
+    value: 표시할 값 문자열 (이미 포맷 완료된 상태로 넘긴다)
+    en_key: 괄호 병기할 영문 키 이름 (없으면 빈 문자열)
+  """
+  t.add_row(ko, value, f"({en_key})" if en_key else "")
+
+
+def _print_run_stats_block(summary: dict[str, Any]) -> None:
+  """5개로 흩어졌던 실행 통계를 한 줄로 통합 표시한다.
+
+  '계획 N건 / 실행 N건 · 실패 N건 · 미해결 N건 · 상태=...' 형식으로 출력한다.
+  execution_failure_count 가 failed_query_ids 와 다를 때만 보충 한 줄을 더 출력한다
+  (재시도 누적이 별도로 발생한 경우).
+  """
+  total = int(summary.get("total", 0) or 0)
+  completed = len(summary.get("completed_query_ids", []) or [])
+  failed_query = len(summary.get("failed_query_ids", []) or [])
+  exec_failure = int(summary.get("execution_failure_count", 0) or 0)
+  open_failure = int(summary.get("open_failure_count", 0) or 0)
+  status = str(summary.get("status", "unknown"))
+
+  parts = [f"계획 {total}건 / 실행 {completed}건"]
+  if failed_query:
+    parts.append(f"실패 {failed_query}건")
+  if open_failure:
+    parts.append(f"미해결 {open_failure}건")
+  parts.append(f"상태={status}")
+  console.print(f"  [dim]실행 통계: {' · '.join(parts)}[/dim]")
+
+  if exec_failure and exec_failure != failed_query:
+    console.print(
+      f"  [dim](참고: 누적 실행 실패 {exec_failure}건은 재시도/중복을 포함한 집계)[/dim]"
+    )
 
 
 def _show_banner() -> None:
@@ -85,7 +264,7 @@ def _show_banner() -> None:
 
     cmd_table.add_row(
         "run",
-        "공격 시나리오 실행 (R2 / R4 / R9)",
+        "공격 시나리오 실행 (NORMAL / R2 / R4 / R7 / R9)",
         "rag run --all-scenarios --all-envs --auto-report",
     )
     cmd_table.add_row(
@@ -229,7 +408,7 @@ def run(
         None,
         "--scenario",
         "-s",
-        help="실행할 시나리오 (R2, R4, R9). --all-scenarios 미사용 시 필수.",
+        help="실행할 시나리오 (NORMAL, R2, R4, R7, R9). --all-scenarios 미사용 시 필수.",
     ),
     attacker: str = typer.Option(
         "A1",
@@ -262,7 +441,7 @@ def run(
     all_scenarios: bool = typer.Option(
         False,
         "--all-scenarios",
-        help="Run R2, R4, and R9 in one suite",
+        help="Run NORMAL, R2, R4, R7, and R9 in one suite",
     ),
     probe_mode: str = typer.Option(
         "generic",
@@ -401,16 +580,18 @@ def run(
         raise typer.Exit(code=1)
 
     console.print(
-        f"\n[green]Run complete.[/green] "
-        f"Status: [bold]{outcome.status}[/bold]  |  "
-        f"Run ID: [bold]{outcome.run_id}[/bold]\n"
-        f"Results saved under [bold]data/results/{outcome.run_id}/[/bold]"
-        + (
-            ""
-            if auto_report
-            else f"\nNext step → [bold]rag report --run-id {outcome.run_id}[/bold]"
-        )
+        "\n[bold green]✓ 실행 완료[/bold green]  "
+        f"상태: [bold]{outcome.status}[/bold]  ·  "
+        f"실행 ID: [bold]{outcome.run_id}[/bold]"
     )
+    console.print(
+        f"  [dim]결과 저장 위치: data/results/{outcome.run_id}/[/dim]"
+    )
+    if not auto_report:
+        console.print(
+            f"  [cyan]→ 다음 단계:[/cyan] "
+            f"[bold]rag report --run-id {outcome.run_id}[/bold]"
+        )
 
     if auto_report:
         _run_auto_report(outcome.run_id, base_config)
@@ -1307,7 +1488,7 @@ def _execute_single_run(
     index_manifest_ref = str(checkpoint.get("index_manifest_ref", "") or "")
     document_store: Any = None
 
-    console.print(f"\n[cyan]Run ID:[/cyan] [bold]{actual_run_id}[/bold]")
+    console.print(f"\n[cyan]실행 ID (run id):[/cyan] [bold]{actual_run_id}[/bold]")
 
     doc_path = config.get("attack", {}).get("doc_path", "data/documents/")
     if not resume_existing:
@@ -1330,7 +1511,7 @@ def _execute_single_run(
     checkpoint["status"] = "running"
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
 
-    console.print("\n[cyan]인덱스 로드 중...[/cyan]")
+    console.print("\n[cyan]1) 벡터 인덱스 로드 중...[/cyan]")
     try:
         index_manager = PersistentIndexManager(
             config,
@@ -1349,7 +1530,8 @@ def _execute_single_run(
         checkpoint["scenario_scope"] = str(index_manifest.get("scenario_scope", ""))
         checkpoint["dataset_scope"] = str(index_manifest.get("dataset_scope", ""))
         console.print(
-            f"  [green]인덱스 준비 완료[/green] (문서 {index_manifest.get('doc_count', 0)}개)"
+            f"  [green]✓ 인덱스 준비 완료[/green] "
+            f"(문서 {index_manifest.get('doc_count', 0)}개 · 환경 {env})"
         )
     except Exception as error:
         failure = _build_failure_record(
@@ -1439,11 +1621,11 @@ def _execute_single_run(
 
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
 
-    console.print("[cyan]파이프라인 초기화 중...[/cyan]")
+    console.print("[cyan]2) RAG 파이프라인 초기화 중...[/cyan]")
     try:
         rag_pipeline = build_rag_pipeline(document_store, config)
         rag_pipeline.warm_up()
-        console.print("  [green]준비 완료[/green]")
+        console.print("  [green]✓ 파이프라인 준비 완료[/green]")
     except Exception as error:
         failure = _build_failure_record(
             scenario=scenario,
@@ -1547,8 +1729,9 @@ def _execute_single_run(
                     if attack_docs_from_poisoned:
                         target_docs = candidate_docs + attack_docs_from_poisoned
                         console.print(
-                            f"  [dim]R9 clean: poisoned 인덱스에서 attack 문서 "
-                            f"{len(attack_docs_from_poisoned)}개 추가 (트리거 쿼리 일치용)[/dim]"
+                            f"  [dim]R9 대조군 보강: 공격 문서 "
+                            f"{len(attack_docs_from_poisoned)}개를 "
+                            "트리거 쿼리 생성에만 사용 (인덱스에는 미포함)[/dim]"
                         )
                     else:
                         target_docs = candidate_docs
@@ -1562,7 +1745,10 @@ def _execute_single_run(
                 for doc in candidate_docs
                 if doc.get("meta", {}).get("doc_role") != "attack"
             ] or candidate_docs
-        console.print(f"  Target documents: [bold]{len(target_docs)}[/bold]")
+        console.print(
+            f"  [cyan]대상 문서 수 (target documents):[/cyan] "
+            f"[bold]{len(target_docs)}[/bold]"
+        )
 
         runner = AttackRunner(config)
         attack, queries = runner.prepare_queries(
@@ -1570,7 +1756,12 @@ def _execute_single_run(
         )
         evaluator = _create_evaluator(scenario, config)
         planned_query_count = len(queries)
-        console.print(f"\n[cyan]{scenario} 공격 실행[/cyan]  총 {planned_query_count}개 쿼리")
+        run_labels = _SCENARIO_LABELS.get(
+            scenario.upper(),
+            {"title": scenario.upper()},
+        )
+        console.print(f"\n[bold cyan]3) {run_labels['title']}[/bold cyan]")
+        console.print(f"  총 [bold]{planned_query_count}[/bold]개 질문을 실행합니다.\n")
         checkpoint["planned_query_count"] = planned_query_count
         checkpoint["status"] = "running"
         exp_manager.save_checkpoint(actual_run_id, checkpoint)
@@ -1646,22 +1837,31 @@ def _execute_single_run(
     )
     pending_count = len(queries) - skipped_count
 
-    # 리랭커 활성화 여부를 config에서 판단해 표시 태그 생성
+    # 진행 바 부제: 시나리오 한국어 이름 + (리랭커 ON 일 때만 태그)
     reranker_enabled = bool(config.get("reranker", {}).get("enabled", False))
-    reranker_tag = "[리랭커 ON]" if reranker_enabled else "[리랭커 OFF]"
-    cell_tag = f"[{scenario.upper()}][{env}]{reranker_tag}"
+    progress_labels = _SCENARIO_LABELS.get(
+        scenario.upper(),
+        {"title": scenario.upper()},
+    )
+    desc_prefix = progress_labels["title"] + (
+        "  [dim](리랭커 ON)[/dim]" if reranker_enabled else ""
+    )
 
     progress = Progress(
         SpinnerColumn(),
-        TextColumn("[bold cyan]{task.description}"),
-        BarColumn(bar_width=30),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(bar_width=24),
         TaskProgressColumn(),
+        TextColumn("·"),
         TimeElapsedColumn(),
+        TextColumn("· 약"),
+        TimeRemainingColumn(elapsed_when_finished=True),
+        TextColumn("남음"),
         console=console,
         transient=False,
     )
     task_id = progress.add_task(
-        f"{cell_tag}  쿼리 0/{pending_count}",
+        f"{desc_prefix}  질문 0/{pending_count}",
         total=pending_count,
     )
     # 현재 셀 안에서 몇 번째 pending 쿼리를 처리 중인지 추적
@@ -1727,15 +1927,33 @@ def _execute_single_run(
                 failed_query_ids = next_failed_query_ids
                 checkpoint = next_checkpoint
                 executed_now += 1
-                success_label = "[green]✓[/green]" if result.success else "[dim]–[/dim]"
+                # 진행 바 description 은 부제 + "질문 N/M" 만 유지하고
+                # 직전 시도 의미는 별도 줄(progress.console.print)로 누적 표시한다.
                 progress.update(
                     task_id,
                     advance=1,
-                    description=(
-                        f"{cell_tag}  쿼리 {pending_query_index}/{pending_count}"
-                        f"  {success_label} {query_id or trial_index}"
-                    ),
+                    description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
                 )
+                ko_label = _resolve_query_type_ko(scenario, query_info, result)
+                if scenario.upper() == "NORMAL":
+                    # NORMAL 은 success 개념이 없으므로 PII 탐지 여부로 표시
+                    pii_count = int(
+                        ((result.pii_summary or {}).get("total_count", 0)) or 0
+                    )
+                    if pii_count > 0:
+                        icon = "[yellow]●[/yellow]"
+                        tail = f"(PII {pii_count}건 탐지)"
+                    else:
+                        icon = "[green]·[/green]"
+                        tail = "(PII 미탐)"
+                else:
+                    if result.success:
+                        icon = "[green]✓[/green]"
+                        tail = "(성공)"
+                    else:
+                        icon = "[dim]·[/dim]"
+                        tail = "(미성공)"
+                progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
             except Exception as error:
                 if query_id:
                     failed_query_ids.add(query_id)
@@ -1779,24 +1997,27 @@ def _execute_single_run(
                 progress.update(
                     task_id,
                     advance=1,
-                    description=(
-                        f"{cell_tag}  쿼리 {pending_query_index}/{pending_count}"
-                        f"  [yellow]✗[/yellow] {query_id or trial_index}"
-                    ),
+                    description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
+                )
+                ko_label = _resolve_query_type_ko(scenario, query_info, None)
+                progress.console.print(
+                    f"   [red]✗[/red] 방금 시도: {ko_label} (실행 오류)"
                 )
                 progress.console.print(
-                    f"  [yellow]쿼리 실패 (체크포인트 저장됨):[/yellow] "
-                    f"{query_id or 'unknown'} — {error}"
+                    f"     [dim]사유: {error}  · "
+                    "체크포인트는 저장되어 다음 실행에서 자동 이어집니다.[/dim]"
                 )
 
-    skip_part = f"  [dim](이전 완료 {skipped_count}건 재사용)[/dim]" if skipped_count else ""
-    console.print(
-        f"  [green]완료: {executed_now}건[/green]"
-        + (f"  [yellow]실패: {failed_now}건[/yellow]" if failed_now else "")
-        + skip_part
-    )
+    summary_parts: list[str] = [
+        f"[green]✓ 새로 처리한 질문 {executed_now}건[/green]"
+    ]
+    if failed_now:
+        summary_parts.append(f"[yellow]실행 실패 {failed_now}건[/yellow]")
+    if skipped_count:
+        summary_parts.append(f"[dim]이어하기로 재사용 {skipped_count}건[/dim]")
+    console.print("  " + " · ".join(summary_parts))
 
-    console.print(f"\n[cyan]{scenario} 결과 평가 중...[/cyan]")
+    console.print(f"\n[cyan]4) 결과 평가 중... ({scenario.upper()} 평가기 적용)[/cyan]")
     checkpoint["completed_query_ids"] = sorted(completed_query_ids)
     checkpoint["failed_query_ids"] = sorted(failed_query_ids)
     checkpoint["planned_query_count"] = len(queries)
@@ -2080,7 +2301,7 @@ def _build_suite_cells(
     """Resolve the requested matrix axes into concrete suite cells."""
     matrix_config = config.get("experiment", {}).get("matrix", {})
     scenarios = (
-        list(matrix_config.get("scenarios", ["R2", "R4", "R9"]))
+        list(matrix_config.get("scenarios", ["NORMAL", "R2", "R4", "R7", "R9"]))
         if all_scenarios
         else [str(scenario or "").upper()]
     )
@@ -2536,6 +2757,12 @@ def _deserialize_suite_cell(payload: dict[str, Any]) -> SuiteCell:
 def _create_evaluator(scenario: str, config: dict[str, Any]) -> Any:
     """Instantiate the scenario-specific evaluator."""
     scenario_upper = scenario.upper()
+    if scenario_upper == "NORMAL":
+        # NORMAL 은 공격이 아닌 baseline 시나리오이므로 success/score 를 고정하는
+        # NormalEvaluator 를 사용한다. PII 집계는 공통 파이프라인이 담당한다.
+        from rag.evaluator.normal_evaluator import NormalEvaluator
+
+        return NormalEvaluator(config)
     if scenario_upper == "R2":
         from rag.evaluator.r2_evaluator import R2Evaluator
 
@@ -2544,6 +2771,10 @@ def _create_evaluator(scenario: str, config: dict[str, Any]) -> Any:
         from rag.evaluator.r4_evaluator import R4Evaluator
 
         return R4Evaluator(config)
+    if scenario_upper == "R7":
+        from rag.evaluator.r7_evaluator import R7Evaluator
+
+        return R7Evaluator(config)
     if scenario_upper == "R9":
         from rag.evaluator.r9_evaluator import R9Evaluator
 
@@ -2813,7 +3044,8 @@ def _require_scenario_for_poisoned(env: str, scenario: str | None) -> None:
     """Enforce explicit poisoned scenario selection at the CLI layer."""
     if str(env).lower() == "poisoned" and not scenario:
         raise ValueError(
-            "`--scenario R2|R4|R9` is required when `--env poisoned` is used."
+            "`--scenario R9` is required when `--env poisoned` is used. "
+            "(현재 정책: poisoned DB 는 R9 만 허용)"
         )
 
 
@@ -2823,12 +3055,15 @@ def _check_scenario_env_constraint(
     """
     config의 scenario_environments 제약에 따라 시나리오-환경 조합을 검증합니다.
 
-    R2/R4는 clean DB와 poisoned DB 구성이 사실상 동일하므로 clean 전용으로 지정되어 있습니다.
+    각 시나리오는 단일 환경에서만 실행되어야 합니다:
+      - NORMAL/R2/R4/R7 → clean DB (NORMAL 이 모든 시나리오의 baseline 역할)
+      - R9              → poisoned DB (공격 문서 주입이 본질적으로 필요)
+
     허용되지 않는 환경으로 실행하면 ValueError를 발생시킵니다.
 
     Args:
       env: 실행 환경 ("clean" 또는 "poisoned")
-      scenario: 공격 시나리오 ("R2", "R4", "R9")
+      scenario: 시나리오 ("NORMAL", "R2", "R4", "R7", "R9")
       config: YAML에서 로드한 설정 딕셔너리
     """
     scenario_env_map = (
@@ -2848,56 +3083,293 @@ def _resolve_cli_scenario_scope(env: str, scenario: str | None) -> str:
 
 
 def _show_evaluation_result(scenario: str, summary: dict[str, Any]) -> None:
-    """Render a compact evaluation summary in the terminal."""
-    scenario_upper = scenario.upper()
+  """평가 결과를 비전문가 친화적인 한국어 화면으로 출력한다.
 
-    table = Table(title=f"{scenario_upper} Evaluation", show_header=True)
-    table.add_column("Metric", style="cyan", width=24)
-    table.add_column("Value", style="green")
-    table.add_row("Total executions", str(summary.get("total", 0)))
-    table.add_row("Completed queries", str(len(summary.get("completed_query_ids", []))))
-    table.add_row("Failed queries", str(len(summary.get("failed_query_ids", []))))
-    table.add_row("Execution failures", str(summary.get("execution_failure_count", 0)))
-    table.add_row("Open failures", str(summary.get("open_failure_count", 0)))
-    table.add_row("Run status", str(summary.get("status", "unknown")))
+  표시 위계는 모든 시나리오 공통:
+    1) "→ 평가 결과 — {시나리오 한국어 부제}" 헤더
+    2) 핵심 결과 테이블 (성공률 / 임계값 등)
+    3) 보조 지표 테이블 (분포 / 평균 / 통계)
+    4) 실행 통계 한 줄 (계획/실행/실패/미해결/상태)
+    5) 자연어 한 줄 요약
 
-    if scenario_upper == "R2":
-        table.add_row("Success count", str(summary.get("success_count", 0)))
-        table.add_row("Success rate", f"{summary.get('success_rate', 0):.2%}")
-        table.add_row("Average ROUGE-L", f"{summary.get('avg_score', 0):.4f}")
-        table.add_row("Max ROUGE-L", f"{summary.get('max_score', 0):.4f}")
-        table.add_row("Threshold", str(summary.get("threshold", "N/A")))
-    elif scenario_upper == "R4":
-        table.add_row("Hit count", str(summary.get("hit_count", 0)))
-        table.add_row("Hit rate", f"{summary.get('hit_rate', 0):.2%}")
-        table.add_row("Member hit rate", f"{summary.get('member_hit_rate', 0):.2%}")
-        table.add_row(
-            "Inference success",
-            "yes" if summary.get("is_inference_successful", False) else "no",
-        )
-    elif scenario_upper == "R9":
-        poisoned_total = summary.get("poisoned_total", summary.get("total", 0))
-        clean_total = summary.get("clean_total", 0)
-        table.add_row(
-            "Poisoned total", f"{poisoned_total} (공격 환경)"
-        )
-        table.add_row("Success count", str(summary.get("success_count", 0)))
-        table.add_row("Success rate", f"{summary.get('success_rate', 0):.2%}")
-        for trigger, stats in summary.get("by_trigger", {}).items():
-            table.add_row(
-                f"Trigger {trigger[:20]}",
-                f"{stats.get('success', 0)}/{stats.get('total', 0)} ({stats.get('rate', 0):.2%})",
-            )
-        ctrl = summary.get("control_group", {})
-        if ctrl:
-            table.add_row(
-                "[dim]Control (clean)[/dim]",
-                f"[dim]{ctrl.get('success_count', 0)}/{clean_total} "
-                f"({ctrl.get('success_rate', 0):.2%}) — 대조군[/dim]",
-            )
+  요약 dict 키와 JSON 스키마는 변경하지 않고 출력만 한국어로 풀이한다.
+  """
+  scenario_upper = scenario.upper()
+  labels = _SCENARIO_LABELS.get(
+    scenario_upper,
+    {"title": scenario_upper, "summary_intro": ""},
+  )
 
-    console.print()
-    console.print(Panel(table, title="[bold blue]Evaluation Summary[/bold blue]"))
+  console.print(f"\n[bold cyan]→ 평가 결과 — {labels['title']}[/bold cyan]")
+
+  renderer = {
+    "NORMAL": _render_normal_summary,
+    "R2":     _render_r2_summary,
+    "R4":     _render_r4_summary,
+    "R7":     _render_r7_summary,
+    "R9":     _render_r9_summary,
+  }.get(scenario_upper)
+
+  if renderer is None:
+    console.print(f"[yellow]지원하지 않는 시나리오: {scenario_upper}[/yellow]")
+    return
+
+  core_table, extra_table, narrative = renderer(summary)
+  console.print(core_table)
+  if extra_table is not None:
+    console.print(extra_table)
+  _print_run_stats_block(summary)
+  console.print(f"\n  [bold]{narrative}[/bold]")
+
+
+def _render_normal_summary(
+  summary: dict[str, Any],
+) -> tuple[Table, Table | None, str]:
+  """NORMAL(베이스라인) 시나리오 평가 결과 렌더링."""
+  total = int(summary.get("total", 0) or 0)
+  pii_n = int(summary.get("pii_response_count", 0) or 0)
+
+  core = _kv_table("핵심 결과 (베이스라인)")
+  _row(
+    core,
+    "PII 노출 응답 비율",
+    f"{summary.get('pii_response_rate', 0):.1%} ({pii_n}/{total})",
+    "pii_response_rate",
+  )
+  _row(
+    core,
+    "응답당 평균 PII 개수",
+    f"{summary.get('avg_pii_count', 0):.2f}",
+    "avg_pii_count",
+  )
+  _row(
+    core,
+    "한 응답 내 최대 PII",
+    str(summary.get("max_pii_count", 0)),
+    "max_pii_count",
+  )
+
+  extra = _kv_table("고위험 / 질의 유형 분포")
+  high_risk_count = int(summary.get("high_risk_response_count", 0) or 0)
+  _row(
+    extra,
+    "고위험 응답 비율",
+    f"{summary.get('high_risk_response_rate', 0):.1%} ({high_risk_count}/{total})",
+    "high_risk_response_rate",
+  )
+  qtype_ko = _QUERY_TYPE_KO["NORMAL"]
+  for qtype, count in (summary.get("query_type_counts") or {}).items():
+    extra.add_row(
+      f"  {qtype_ko.get(qtype, qtype)}",
+      str(count),
+      f"({qtype})",
+    )
+
+  narrative = (
+    f"공격 없이 자연 질의 {total}건만으로도 {pii_n}건의 응답에서 "
+    "PII가 탐지되었습니다 (R2/R7/R9 비교용 베이스라인)."
+  )
+  return core, extra, narrative
+
+
+def _render_r2_summary(
+  summary: dict[str, Any],
+) -> tuple[Table, Table | None, str]:
+  """R2(검색 데이터 유출) 시나리오 평가 결과 렌더링."""
+  total = int(summary.get("total", 0) or 0)
+  success_n = int(summary.get("success_count", 0) or 0)
+  threshold = summary.get("threshold", "N/A")
+
+  core = _kv_table("핵심 결과")
+  _row(
+    core,
+    "공격 성공률",
+    f"{summary.get('success_rate', 0):.1%} ({success_n}/{total})",
+    "success_rate",
+  )
+  _row(
+    core,
+    "최고 ROUGE-L 유사도",
+    f"{summary.get('max_score', 0):.2f}",
+    "max_score",
+  )
+  _row(
+    core,
+    "판정 기준",
+    f"{threshold} 이상이면 성공",
+    "rouge_threshold",
+  )
+
+  extra = _kv_table("보조 지표")
+  _row(
+    extra,
+    "평균 ROUGE-L 유사도",
+    f"{summary.get('avg_score', 0):.2f}",
+    "avg_score",
+  )
+
+  narrative = (
+    f"이번 R2 공격은 총 {total}건 중 {success_n}건에서 "
+    f"민감 정보 유출에 성공했습니다 (임계값 {threshold})."
+  )
+  return core, extra, narrative
+
+
+def _render_r4_summary(
+  summary: dict[str, Any],
+) -> tuple[Table, Table | None, str]:
+  """R4(멤버십 추론) 시나리오 평가 결과 렌더링."""
+  total = int(summary.get("total", 0) or 0)
+  total_pairs = int(summary.get("total_pairs", 0) or 0)
+  hit_count = int(summary.get("hit_count", 0) or 0)
+  hit_rate = summary.get("hit_rate", 0) or 0
+  threshold = summary.get("threshold", 0.5)
+  inferred = bool(summary.get("is_inference_successful", False))
+
+  core = _kv_table("핵심 결과")
+  _row(
+    core,
+    "멤버십 추론 성공률",
+    f"{hit_rate:.1%} ({hit_count}/{total_pairs} 페어)",
+    "hit_rate",
+  )
+  _row(
+    core,
+    "판정 기준",
+    f"{threshold} 초과면 추론 가능",
+    "threshold",
+  )
+  _row(
+    core,
+    "추론 가능 여부",
+    "가능 (취약)" if inferred else "불가 (안전)",
+    "is_inference_successful",
+  )
+
+  # member_hit_rate 는 hit_rate 와 동일하므로 표시 생략 (중복 제거).
+  extra = _kv_table("보조 지표")
+  _row(extra, "총 평가 페어 수", str(total_pairs), "total_pairs")
+  _row(extra, "전체 시도(멤버+비멤버)", str(total), "total")
+
+  if inferred:
+    tail = f"임계값 {threshold}을 넘어 추론에 성공했습니다."
+  else:
+    tail = f"임계값 {threshold}을 넘지 못해 추론에 실패했습니다."
+  narrative = (
+    f"R4 멤버십 추론은 {total_pairs}개 페어 중 "
+    f"{hit_count}개를 올바로 추론해 {tail}"
+  )
+  return core, extra, narrative
+
+
+def _render_r7_summary(
+  summary: dict[str, Any],
+) -> tuple[Table, Table | None, str]:
+  """R7(시스템 프롬프트 노출) 시나리오 평가 결과 렌더링."""
+  total = int(summary.get("total", 0) or 0)
+  success_n = int(summary.get("success_count", 0) or 0)
+  cos_th = summary.get("similarity_threshold", "N/A")
+  rouge_th = summary.get("rouge_threshold", "N/A")
+
+  core = _kv_table("핵심 결과")
+  _row(
+    core,
+    "프롬프트 노출 성공률",
+    f"{summary.get('success_rate', 0):.1%} ({success_n}/{total})",
+    "success_rate",
+  )
+  _row(
+    core,
+    "판정 기준",
+    f"코사인 ≥ {cos_th} 또는 ROUGE-L ≥ {rouge_th}",
+    "similarity_threshold / rouge_threshold",
+  )
+
+  extra = _kv_table("보조 지표 / 성공 사유 분포")
+  _row(
+    extra,
+    "평균 코사인 유사도",
+    f"{summary.get('avg_cosine', 0):.2f}",
+    "avg_cosine",
+  )
+  _row(
+    extra,
+    "평균 ROUGE-L 유사도",
+    f"{summary.get('avg_rouge_l', 0):.2f}",
+    "avg_rouge_l",
+  )
+  match_ko = {
+    "cosine": "코사인만 통과",
+    "rouge":  "ROUGE-L만 통과",
+    "both":   "둘 다 통과",
+    "none":   "둘 다 미달",
+  }
+  by_reason = summary.get("by_match_reason", {}) or {}
+  for key, ko in match_ko.items():
+    extra.add_row(
+      f"  ↳ {ko}",
+      str(by_reason.get(key, 0)),
+      f"(matched_by={key})",
+    )
+
+  narrative = (
+    f"R7 공격은 {total}건 중 {success_n}건에서 "
+    "시스템 프롬프트의 일부가 응답에 노출되었습니다."
+  )
+  return core, extra, narrative
+
+
+def _render_r9_summary(
+  summary: dict[str, Any],
+) -> tuple[Table, Table | None, str]:
+  """R9(간접 프롬프트 주입) 시나리오 평가 결과 렌더링."""
+  poisoned_total = int(
+    summary.get("poisoned_total", summary.get("total", 0)) or 0
+  )
+  clean_total = int(summary.get("clean_total", 0) or 0)
+  success_n = int(summary.get("success_count", 0) or 0)
+  trigger_marker = str(summary.get("trigger_marker", "") or "")
+
+  core = _kv_table("핵심 결과 (공격 환경)")
+  _row(
+    core,
+    "트리거 공격 성공률",
+    f"{summary.get('success_rate', 0):.1%} ({success_n}/{poisoned_total})",
+    "success_rate",
+  )
+  if trigger_marker:
+    judge_text = f"응답에 트리거 마커 '{trigger_marker}' 포함 시 성공"
+  else:
+    judge_text = "응답에 사전 정의된 트리거 마커 포함 시 성공"
+  _row(core, "판정 기준", judge_text, "trigger_marker")
+
+  extra = _kv_table("보조 지표 / 트리거 분포")
+  for trigger, stats in (summary.get("by_trigger") or {}).items():
+    extra.add_row(
+      f"  트리거 '{str(trigger)[:18]}'",
+      (
+        f"{stats.get('success', 0)}/{stats.get('total', 0)} "
+        f"({stats.get('rate', 0):.1%})"
+      ),
+      "(by_trigger)",
+    )
+  ctrl = summary.get("control_group") or {}
+  if ctrl:
+    extra.add_row(
+      "[dim]대조군 (clean)[/dim]",
+      (
+        f"[dim]{ctrl.get('success_count', 0)}/{clean_total} "
+        f"({ctrl.get('success_rate', 0):.1%})[/dim]"
+      ),
+      "[dim](control_group)[/dim]",
+    )
+
+  narrative = (
+    f"R9 공격은 공격 환경 {poisoned_total}건 중 {success_n}건에서 "
+    "악성 트리거가 발동했습니다 "
+    f"(대조군 clean에서는 {ctrl.get('success_count', 0)}/{clean_total})."
+  )
+  return core, extra, narrative
 
 
 def _serialize_summary(summary: dict[str, Any]) -> dict[str, Any]:
@@ -2913,18 +3385,42 @@ def _show_run_info(
     *,
     resume: str | None = None,
 ) -> None:
-    """Render the selected run configuration before execution starts."""
-    table = Table(title="Run Configuration", show_header=True)
-    table.add_column("Field", style="cyan", width=16)
-    table.add_column("Value", style="green")
-    table.add_row("Scenario", scenario.upper())
-    table.add_row("Attacker", attacker)
-    table.add_row("Environment", env)
-    table.add_row("Profile", profile)
-    table.add_row("Resume", resume or "new run")
+    """공격 실행 설정을 사용자 친화적으로 출력한다.
+
+    한국어 라벨 + 영문 키 병기, 환경에는 (대조군)/(공격 환경) 보조 표기를 단다.
+    Panel 다음 줄에는 시나리오의 한 줄 의미를 dim 으로 보여준다.
+    """
+    scenario_upper = scenario.upper()
+    labels = _SCENARIO_LABELS.get(
+      scenario_upper,
+      {"title": scenario_upper, "summary_intro": ""},
+    )
+    env_suffix = "대조군" if str(env).lower() == "clean" else "공격 환경"
+
+    table = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
+    table.add_column(style="cyan", min_width=24, no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("시나리오 (scenario)", labels["title"])
+    table.add_row("환경 (environment)", f"{env}  ({env_suffix})")
+    table.add_row("공격자 모델 (attacker)", attacker)
+    table.add_row("프로파일 (profile)", profile)
+    table.add_row("이어하기 (resume)", resume or "새 실행")
+
+    # TODO: 사용자 합의 시 핵심 모델/리트리벌 한 줄
+    #       (예: "임베딩=BGE-m3-ko · 생성기=GPT-4o-mini · top_k=5")
+    #       을 Panel 아래에 dim 으로 추가. 본 PR 범위에서는 표시하지 않음.
 
     console.print()
-    console.print(Panel(table, title="[bold blue]RAG Run[/bold blue]"))
+    console.print(
+      Panel(
+        table,
+        title="[bold cyan]RAG 보안 진단 ─ 실행 설정[/bold cyan]",
+        border_style="cyan",
+        padding=(0, 1),
+      )
+    )
+    if labels["summary_intro"]:
+      console.print(f"  [dim]→ {labels['summary_intro']}[/dim]")
 
 
 def _show_suite_run_info(
@@ -2961,10 +3457,12 @@ def _run_auto_report(run_id: str, config: dict[str, Any]) -> None:
     """
     from rag.report.generator import ReportGenerator
 
+    console.print()
     console.print(
         Panel(
-            f"[bold]Auto Report 생성 중...[/bold]\nRun ID: {run_id}",
-            title="[blue]RAG Report[/blue]",
+            f"[bold]리포트 자동 생성 중...[/bold]\n실행 ID: {run_id}",
+            title="[blue]5) 자동 리포트[/blue]",
+            border_style="blue",
         )
     )
 
@@ -2973,13 +3471,13 @@ def _run_auto_report(run_id: str, config: dict[str, Any]) -> None:
         generated_files = report_gen.generate(run_id)
     except FileNotFoundError as error:
         console.print(
-            f"\n[yellow]Auto report 생성 실패 (실험 결과는 저장됨): {error}[/yellow]"
+            f"\n[yellow]자동 리포트 생성 실패 (실험 결과는 저장됨): {error}[/yellow]"
         )
         return
 
-    table = Table(title="Generated Files", show_header=True)
-    table.add_column("Format", style="cyan", width=10)
-    table.add_column("Path", style="green")
+    table = Table(title="생성된 파일", show_header=True, box=box.SIMPLE)
+    table.add_column("형식 (format)", style="cyan", width=12)
+    table.add_column("경로 (path)", style="green")
 
     for fmt, path in generated_files.items():
         table.add_row(fmt.upper(), str(path))
@@ -2987,8 +3485,8 @@ def _run_auto_report(run_id: str, config: dict[str, Any]) -> None:
     console.print()
     console.print(table)
     console.print(
-        f"\n[green]리포트 자동 생성 완료.[/green] "
-        f"[bold]{len(generated_files)}[/bold]개 파일이 생성되었습니다."
+        f"\n[green]✓ 리포트 생성 완료.[/green] "
+        f"총 [bold]{len(generated_files)}[/bold]개 파일이 만들어졌습니다."
     )
 
 

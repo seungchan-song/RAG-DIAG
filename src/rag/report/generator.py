@@ -41,6 +41,11 @@ class ReportGenerator:
         suite_manifest = self._load_suite_manifest(run_dir)
         env_comparison = self._build_env_comparison(run_id, scenario_results)
         reranker_comparison = self._build_reranker_comparison(run_id, scenario_results)
+        # NORMAL baseline 과 각 공격 시나리오의 PII 탐지량 비교.
+        # NORMAL 결과가 같은 suite 안에 있어야 의미가 있으며, 없으면 빈 dict 가 된다.
+        normal_attack_comparison = self._build_normal_attack_pii_comparison(
+            scenario_results
+        )
         summary = self._build_summary(
             run_id,
             scenario_results,
@@ -48,6 +53,7 @@ class ReportGenerator:
             suite_manifest,
             env_comparison,
             reranker_comparison,
+            normal_attack_comparison,
         )
 
         generated_files: dict[str, Path] = {}
@@ -109,35 +115,69 @@ class ReportGenerator:
         suite_manifest: dict[str, Any],
         env_comparison: dict[str, Any],
         reranker_comparison: dict[str, Any],
+        normal_attack_comparison: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         scenario_summaries: dict[str, dict[str, Any]] = {}
 
         for scenario, data in scenario_results.items():
             scenario_upper = scenario.upper()
-            if scenario_upper == "R2":
-                # poisoned 환경 전용 통계를 별도로 계산한다.
-                # 루트 result 파일은 clean+poisoned를 합산하기 때문에
-                # 공격이 없는 clean 쿼리(anchor_only)가 포함되어 success_rate가 희석된다.
-                # 실제 공격 성공률은 poisoned 환경 결과만으로 측정해야 한다.
-                poisoned_results = [
-                    r for r in data.get("results", [])
-                    if self._get_environment(r) == "poisoned"
-                ]
-                poisoned_successes = sum(1 for r in poisoned_results if r.get("success"))
-                poisoned_scores = [r.get("score", 0.0) for r in poisoned_results]
-                poisoned_total = len(poisoned_results)
-                poisoned_summary = {
-                    "total": poisoned_total,
-                    "success_count": poisoned_successes,
-                    "success_rate": (
-                        poisoned_successes / poisoned_total if poisoned_total else 0.0
+            if scenario_upper == "NORMAL":
+                # NORMAL 은 공격이 아닌 baseline 시나리오. summary 에 baseline 지표를 노출.
+                scenario_summaries[scenario] = {
+                    "scenario": "NORMAL",
+                    "baseline": True,
+                    "total": data.get("total", 0),
+                    "pii_response_count": data.get("pii_response_count", 0),
+                    "pii_response_rate": data.get("pii_response_rate", 0.0),
+                    "total_pii_count": data.get("total_pii_count", 0),
+                    "avg_pii_count": data.get("avg_pii_count", 0.0),
+                    "max_pii_count": data.get("max_pii_count", 0),
+                    "high_risk_response_count": data.get("high_risk_response_count", 0),
+                    "high_risk_response_rate": data.get(
+                        "high_risk_response_rate", 0.0
                     ),
-                    "avg_score": (
-                        sum(poisoned_scores) / len(poisoned_scores)
-                        if poisoned_scores else 0.0
-                    ),
-                    "max_score": max(poisoned_scores) if poisoned_scores else 0.0,
+                    "query_type_counts": data.get("query_type_counts", {}),
+                    "scenario_scope": data.get("scenario_scope", ""),
+                    "dataset_scope": data.get("dataset_scope", ""),
+                    "dataset_scopes": data.get("dataset_scopes", []),
+                    "index_manifest_ref": data.get("index_manifest_ref", ""),
+                    "index_manifest_refs": data.get("index_manifest_refs", []),
+                    "status": data.get("status", "completed"),
+                    "execution_failure_count": data.get("execution_failure_count", 0),
+                    "open_failure_count": data.get("open_failure_count", 0),
+                    "failure_stage_counts": data.get("failure_stage_counts", {}),
                 }
+                continue
+            if scenario_upper == "R7":
+                scenario_summaries[scenario] = {
+                    "scenario": "R7",
+                    "total": data.get("total", 0),
+                    "success_count": data.get("success_count", 0),
+                    "success_rate": data.get("success_rate", 0.0),
+                    "avg_score": data.get("avg_score", 0.0),
+                    "max_score": data.get("max_score", 0.0),
+                    "avg_cosine": data.get("avg_cosine", 0.0),
+                    "avg_rouge_l": data.get("avg_rouge_l", 0.0),
+                    "by_payload_type": data.get("by_payload_type", {}),
+                    "by_match_reason": data.get("by_match_reason", {}),
+                    "similarity_threshold": data.get("similarity_threshold", "N/A"),
+                    "rouge_threshold": data.get("rouge_threshold", "N/A"),
+                    "scenario_scope": data.get("scenario_scope", ""),
+                    "dataset_scope": data.get("dataset_scope", ""),
+                    "dataset_scopes": data.get("dataset_scopes", []),
+                    "index_manifest_ref": data.get("index_manifest_ref", ""),
+                    "index_manifest_refs": data.get("index_manifest_refs", []),
+                    "status": data.get("status", "completed"),
+                    "execution_failure_count": data.get("execution_failure_count", 0),
+                    "open_failure_count": data.get("open_failure_count", 0),
+                    "failure_stage_counts": data.get("failure_stage_counts", {}),
+                }
+                continue
+            if scenario_upper == "R2":
+                # R2 는 clean DB 에서 복합 쿼리(anchor + command)로만 실행되므로
+                # 루트 통계(success_rate 등)가 곧 실제 공격 성공률이다.
+                # 구버전 clean=anchor_only / poisoned=compound 비교 정책 폐기로
+                # poisoned_only 분리 계산도 제거되었다.
                 scenario_summaries[scenario] = {
                     "scenario": "R2",
                     "total": data.get("total", 0),
@@ -146,7 +186,6 @@ class ReportGenerator:
                     "avg_score": data.get("avg_score", 0.0),
                     "max_score": data.get("max_score", 0.0),
                     "threshold": data.get("threshold", "N/A"),
-                    "poisoned_only": poisoned_summary,
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -228,6 +267,7 @@ class ReportGenerator:
             "pii_leakage_profile": self._detect_pii_in_responses(scenario_results),
             "clean_vs_poisoned_comparison": env_comparison,
             "reranker_on_off_comparison": reranker_comparison,
+            "normal_vs_attack_pii_comparison": normal_attack_comparison or {},
             "risk_level": self._assess_risk_level(scenario_results),
         }
 
@@ -843,6 +883,179 @@ class ReportGenerator:
 
         return comparison
 
+    # === NORMAL vs 공격 시나리오 PII 비교 ===
+    # NORMAL baseline 과 R2/R4/R7/R9 각 공격 시나리오의 PII 탐지량을 같은 척도로 비교한다.
+    # 환경(clean/poisoned)이 다른 시나리오가 섞여 있어도 NORMAL 이 공통 기준선 역할을 한다.
+
+    def _summarize_pii_results(
+        self,
+        results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """결과 목록의 PII 탐지량을 합산해 baseline/공격 양쪽에 동일한 형태로 반환한다.
+
+        baseline 과 공격 시나리오를 같은 키 체계로 비교할 수 있도록 표준화한다.
+
+        Args:
+          results: AttackResult 직렬화 dict 목록.
+
+        Returns:
+          dict:
+            - total_responses          : 응답 수
+            - responses_with_pii       : PII 가 1건 이상 탐지된 응답 수
+            - response_rate_with_pii   : responses_with_pii / total
+            - high_risk_response_count : 고위험 PII 가 포함된 응답 수
+            - high_risk_response_rate  : high_risk / total
+            - total_pii_count          : 전체 응답 합산 PII 건수
+            - avg_pii_per_response     : total_pii_count / total
+        """
+        total = len(results)
+        responses_with_pii = 0
+        high_risk_response_count = 0
+        total_pii_count = 0
+
+        for result in results:
+            pii_summary = self._get_pii_summary(result)
+            total_pii = int(pii_summary.get("total", 0))
+            total_pii_count += total_pii
+            if total_pii > 0:
+                responses_with_pii += 1
+            if pii_summary.get("has_high_risk"):
+                high_risk_response_count += 1
+
+        return {
+            "total_responses": total,
+            "responses_with_pii": responses_with_pii,
+            "response_rate_with_pii": (
+                responses_with_pii / total if total else 0.0
+            ),
+            "high_risk_response_count": high_risk_response_count,
+            "high_risk_response_rate": (
+                high_risk_response_count / total if total else 0.0
+            ),
+            "total_pii_count": total_pii_count,
+            "avg_pii_per_response": total_pii_count / total if total else 0.0,
+        }
+
+    def _build_pii_delta_entry(
+        self,
+        baseline: dict[str, Any],
+        attack: dict[str, Any],
+    ) -> dict[str, Any]:
+        """baseline 과 공격 시나리오 PII 통계를 받아 비교용 delta 값을 계산한다.
+
+        Args:
+          baseline: NORMAL 의 `_summarize_pii_results()` 결과.
+          attack  : 공격 시나리오의 `_summarize_pii_results()` 결과.
+
+        Returns:
+          dict: baseline/attack 통계 + 차이값 / 비율.
+            - pii_delta_total           : attack.total_pii_count - baseline.total_pii_count
+            - pii_delta_avg_per_response: attack.avg - baseline.avg
+            - pii_total_ratio           : attack.total / baseline.total (분모 0 이면 0.0)
+            - response_rate_delta       : attack.rate - baseline.rate
+            - high_risk_rate_delta      : attack.high_risk_rate - baseline.high_risk_rate
+        """
+        base_total = float(baseline.get("total_pii_count", 0))
+        atk_total = float(attack.get("total_pii_count", 0))
+        return {
+            "baseline": baseline,
+            "attack": attack,
+            "pii_delta_total": atk_total - base_total,
+            "pii_delta_avg_per_response": (
+                float(attack.get("avg_pii_per_response", 0.0))
+                - float(baseline.get("avg_pii_per_response", 0.0))
+            ),
+            "pii_total_ratio": (atk_total / base_total) if base_total > 0 else 0.0,
+            "response_rate_delta": (
+                float(attack.get("response_rate_with_pii", 0.0))
+                - float(baseline.get("response_rate_with_pii", 0.0))
+            ),
+            "high_risk_rate_delta": (
+                float(attack.get("high_risk_response_rate", 0.0))
+                - float(baseline.get("high_risk_response_rate", 0.0))
+            ),
+        }
+
+    def _build_normal_attack_pii_comparison(
+        self,
+        scenario_results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """NORMAL baseline 과 각 공격 시나리오의 PII 탐지량을 비교한 보고서 데이터를 만든다.
+
+        NORMAL 결과가 없으면 빈 dict 를 반환해, 보고서 템플릿이 안내 문구로 대체할 수 있게 한다.
+        reranker off/on 하위 비교(by_reranker)도 함께 계산한다.
+
+        Args:
+          scenario_results: {scenario: result_data} 매핑. result_data["results"] 안에
+                            AttackResult 직렬화 목록이 있다고 가정.
+
+        Returns:
+          dict[scenario, comparison] — scenario 키는 R2/R4/R7/R9. comparison 값:
+            - baseline: NORMAL PII 통계
+            - attack  : 공격 시나리오 PII 통계
+            - pii_delta_total / pii_delta_avg_per_response / pii_total_ratio
+            - response_rate_delta / high_risk_rate_delta
+            - by_reranker: {"off": {...}, "on": {...}} — reranker 상태별 동일 비교
+        """
+        normal_data = scenario_results.get("NORMAL")
+        if not normal_data:
+            return {}
+
+        normal_results = list(normal_data.get("results", []))
+        if not normal_results:
+            return {}
+
+        # NORMAL 의 reranker 상태별 분할
+        normal_by_state: dict[str, list[dict[str, Any]]] = {"off": [], "on": []}
+        for r in normal_results:
+            state = self._get_reranker_state(r, normal_data)
+            if state in normal_by_state:
+                normal_by_state[state].append(r)
+
+        normal_total_summary = self._summarize_pii_results(normal_results)
+        normal_state_summary = {
+            state: self._summarize_pii_results(items)
+            for state, items in normal_by_state.items()
+            if items
+        }
+
+        comparison: dict[str, Any] = {}
+        for scenario in ("R2", "R4", "R7", "R9"):
+            attack_data = scenario_results.get(scenario)
+            if not attack_data:
+                continue
+            attack_results = list(attack_data.get("results", []))
+            if not attack_results:
+                continue
+
+            attack_total_summary = self._summarize_pii_results(attack_results)
+            entry = self._build_pii_delta_entry(normal_total_summary, attack_total_summary)
+
+            # reranker 하위 비교
+            attack_by_state: dict[str, list[dict[str, Any]]] = {"off": [], "on": []}
+            for r in attack_results:
+                state = self._get_reranker_state(r, attack_data)
+                if state in attack_by_state:
+                    attack_by_state[state].append(r)
+
+            by_reranker: dict[str, Any] = {}
+            for state, atk_items in attack_by_state.items():
+                if not atk_items:
+                    continue
+                base_for_state = normal_state_summary.get(state)
+                if not base_for_state:
+                    # 해당 reranker 상태의 NORMAL baseline 이 없으면 비교 불가
+                    continue
+                atk_summary_state = self._summarize_pii_results(atk_items)
+                by_reranker[state] = self._build_pii_delta_entry(
+                    base_for_state, atk_summary_state
+                )
+
+            entry["by_reranker"] = by_reranker
+            comparison[scenario] = entry
+
+        return comparison
+
     def _build_pair_lookup(
         self,
         comparison: dict[str, Any],
@@ -1025,6 +1238,100 @@ class ReportGenerator:
         logger.debug(f"Generated CSV report: {csv_path}")
         return csv_path
 
+    def _stratified_sample(
+        self,
+        results_list: list[dict[str, Any]],
+        max_count: int,
+        scenario: str,
+    ) -> list[dict[str, Any]]:
+        """성공 결과를 우선으로 하되 payload_type(또는 trigger) 다양성을 보장하는 샘플링.
+
+        R2: payload_type(standard/self_losing/many_shot)별 라운드로빈.
+        anchor_only 는 구버전 결과 파일 호환을 위해서만 유지된다.
+        R9: trigger 키워드별 라운드로빈.
+        기타: 기존 방식(성공 우선, 단순 잘라내기) 유지.
+
+        Args:
+          results_list: 전체 결과 목록.
+          max_count: 최대 샘플 수.
+          scenario: 시나리오 이름 ("R2", "R9" 등).
+
+        Returns:
+          list[dict]: 최대 max_count개의 다양성 보장 샘플.
+        """
+        if len(results_list) <= max_count:
+            return results_list
+
+        # 시나리오별 그룹 키 추출 함수 결정
+        def _group_key_r2(r: dict[str, Any]) -> str:
+            pt = (r.get("metadata") or {}).get("payload_type", "")
+            if pt:
+                return pt
+            # 구버전 결과: query_type으로 대체 (anchor_only vs compound)
+            return (r.get("metadata") or {}).get("query_type", "unknown")
+
+        def _group_key_r9(r: dict[str, Any]) -> str:
+            return str((r.get("metadata") or {}).get("trigger", "unknown"))
+
+        if scenario == "R2":
+            key_fn = _group_key_r2
+        elif scenario == "R9":
+            key_fn = _group_key_r9
+        else:
+            # 기타 시나리오: 성공 우선 단순 잘라내기
+            success = [r for r in results_list if r.get("success") or r.get("is_member_hit")]
+            fail = [r for r in results_list if not (r.get("success") or r.get("is_member_hit"))]
+            return (success + fail)[:max_count]
+
+        # 그룹별 성공/실패 분리
+        from collections import defaultdict
+        group_success: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        group_fail: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in results_list:
+            key = key_fn(r)
+            if r.get("success") or r.get("is_member_hit"):
+                group_success[key].append(r)
+            else:
+                group_fail[key].append(r)
+
+        # 성공 건수 내림차순으로 키 정렬 (더 많이 성공한 그룹이 앞으로 배치)
+        all_keys = list(set(group_success.keys()) | set(group_fail.keys()))
+        all_keys.sort(key=lambda k: -len(group_success.get(k, [])))
+
+        sampled: list[dict[str, Any]] = []
+
+        # 1단계: 각 그룹에서 성공 결과를 라운드로빈으로 수집
+        iters_s = {k: iter(group_success.get(k, [])) for k in all_keys}
+        while len(sampled) < max_count:
+            added = False
+            for k in all_keys:
+                if len(sampled) >= max_count:
+                    break
+                try:
+                    sampled.append(next(iters_s[k]))
+                    added = True
+                except StopIteration:
+                    pass
+            if not added:
+                break
+
+        # 2단계: 나머지 슬롯에 실패 결과를 라운드로빈으로 채움
+        iters_f = {k: iter(group_fail.get(k, [])) for k in all_keys}
+        while len(sampled) < max_count:
+            added = False
+            for k in all_keys:
+                if len(sampled) >= max_count:
+                    break
+                try:
+                    sampled.append(next(iters_f[k]))
+                    added = True
+                except StopIteration:
+                    pass
+            if not added:
+                break
+
+        return sampled
+
     def _generate_html_dashboard(
         self,
         run_dir: Path,
@@ -1048,10 +1355,9 @@ class ReportGenerator:
         for scenario, data in scenario_results.items():
             cleaned_data = dict(data)
             results_list = cleaned_data.get("results", [])
-            # 공격 성공한 결과를 우선 포함하고, 나머지로 채움
-            success_results = [r for r in results_list if r.get("success") or r.get("is_member_hit")]
-            fail_results = [r for r in results_list if not (r.get("success") or r.get("is_member_hit"))]
-            sampled = (success_results + fail_results)[:MAX_EMBEDDED_RESULTS]
+            sampled = self._stratified_sample(
+                results_list, MAX_EMBEDDED_RESULTS, scenario.upper()
+            )
             cleaned_results = []
             for result in sampled:
                 cleaned = dict(result)
@@ -1100,11 +1406,10 @@ class ReportGenerator:
         return html_path
 
     def _assess_risk_level(self, scenario_results: dict[str, dict[str, Any]]) -> str:
-        # R2는 실제 공격 환경인 poisoned 전용 성공률을 기준으로 위험도를 판정한다.
-        # 전체 통계(clean 포함)는 공격이 없는 baseline 쿼리가 섞여 수치가 희석된다.
+        # R2 는 clean DB 에서 복합 공격 쿼리로만 실행되므로 전체 success_rate 가
+        # 곧 실제 공격 성공률이다. 구버전 poisoned_only 분리 통계는 폐기되었다.
         r2_data = scenario_results.get("R2", {})
-        r2_poisoned = r2_data.get("poisoned_only", {})
-        r2_rate = r2_poisoned.get("success_rate") if r2_poisoned else r2_data.get("success_rate", 0)
+        r2_rate = r2_data.get("success_rate", 0)
         r4_success = scenario_results.get("R4", {}).get(
             "is_inference_successful", False
         )

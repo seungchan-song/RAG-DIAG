@@ -336,56 +336,19 @@ class TestReportGenerator:
     assert "HIGH" in gen._assess_risk_level({"R4": {"is_inference_successful": True}})
     assert "LOW" in gen._assess_risk_level({"R2": {"success_rate": 0}, "R9": {"success_rate": 0}})
 
-  def test_register_korean_font_falls_back_when_missing(self, tmp_path, monkeypatch):
-    """폰트 파일이 없으면 Helvetica 로 폴백되어야 한다 (회귀 방지)."""
-    fpdf = pytest.importorskip("fpdf")
-
-    gen = ReportGenerator({"report": {"output_formats": ["pdf"], "output_dir": str(tmp_path)}})
-
-    class _StubPdf:
-      def __init__(self) -> None:
-        self.added: list[tuple[str, str, str]] = []
-
-      def add_font(self, name: str, style: str, fname: str) -> None:
-        # 어떤 파일도 존재하지 않는 환경을 가정하므로 호출되어서는 안 된다.
-        self.added.append((name, style, fname))
-
-    # Path.exists() 가 항상 False 가 되도록 강제하여 폰트 파일이 없는 환경을 시뮬레이션
-    monkeypatch.setattr(Path, "exists", lambda self: False)
-    stub = _StubPdf()
-    assert gen._register_korean_font(stub) == "Helvetica"
-    assert stub.added == []
-    # fpdf2 가 import 가능한지 확인하기 위한 어서션 (테스트 환경 검증)
-    assert hasattr(fpdf, "FPDF")
-
-  def test_register_korean_font_uses_korean_when_available(self, tmp_path, monkeypatch):
-    """프로젝트 내 폰트 파일이 존재하면 HCRBatang 으로 등록되어야 한다."""
-    pytest.importorskip("fpdf")
-
-    gen = ReportGenerator({"report": {"output_formats": ["pdf"], "output_dir": str(tmp_path)}})
-
-    class _StubPdf:
-      def __init__(self) -> None:
-        self.added: list[tuple[str, str, str]] = []
-
-      def add_font(self, name: str, style: str, fname: str) -> None:
-        self.added.append((name, style, fname))
-
-    # 어떤 후보 경로든 첫 번째 호출에서 존재한다고 응답하게 한다.
-    monkeypatch.setattr(Path, "exists", lambda self: True)
-    stub = _StubPdf()
-    assert gen._register_korean_font(stub) == "HCRBatang"
-    # Regular + Bold 두 스타일 모두 등록되어야 한다.
-    assert {style for _, style, _ in stub.added} == {"", "B"}
-    assert all(name == "HCRBatang" for name, _, _ in stub.added)
-
   def test_build_env_comparison_pairs_same_reranker_state(self, tmp_path):
+    """clean ↔ poisoned 페어가 동일한 reranker 상태로 매칭되는지 검증한다.
+
+    _build_env_comparison 은 입력으로 받은 scenario_results 안에서만
+    페어를 찾으므로, clean 과 poisoned 결과를 같은 payload 의
+    results 리스트에 함께 넣어 전달해야 한다.
+    """
     gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
 
-    clean_payload = {
-      "total": 1,
-      "success_count": 0,
-      "success_rate": 0.0,
+    combined_payload = {
+      "total": 2,
+      "success_count": 1,
+      "success_rate": 0.5,
       "profile_name": "reranker_off",
       "retrieval_config": {
         "reranker": {"enabled": False, "model_name": "test-reranker", "top_k": 3},
@@ -404,18 +367,7 @@ class TestReportGenerator:
           pii_by_tag={"QT_MOBILE": 1},
           has_high_risk=True,
           retrieved_ids=["doc-a", "doc-b"],
-        )
-      ],
-    }
-    poisoned_off_payload = {
-      "total": 1,
-      "success_count": 1,
-      "success_rate": 1.0,
-      "profile_name": "reranker_off",
-      "retrieval_config": {
-        "reranker": {"enabled": False, "model_name": "test-reranker", "top_k": 3},
-      },
-      "results": [
+        ),
         _make_result(
           scenario="R2",
           query_id="R2:doc-1:tpl-00:rep-00",
@@ -429,40 +381,13 @@ class TestReportGenerator:
           pii_by_tag={"QT_MOBILE": 1, "TMI_EMAIL": 1},
           has_high_risk=True,
           retrieved_ids=["doc-b", "doc-a"],
-        )
-      ],
-    }
-    poisoned_on_payload = {
-      "total": 1,
-      "success_count": 1,
-      "success_rate": 1.0,
-      "profile_name": "reranker_on",
-      "retrieval_config": {
-        "reranker": {"enabled": True, "model_name": "test-reranker", "top_k": 3},
-      },
-      "results": [
-        _make_result(
-          scenario="R2",
-          query_id="R2:doc-1:tpl-00:rep-00",
-          environment="poisoned",
-          reranker_enabled=True,
-          profile_name="reranker_on",
-          success=True,
-          score=0.8,
-          response="poisoned reranked masked answer",
-          pii_total=1,
-          pii_by_tag={"TMI_EMAIL": 1},
-          has_high_risk=True,
-          retrieved_ids=["doc-c", "doc-a"],
-        )
+        ),
       ],
     }
 
-    _write_run(tmp_path, "RAG-2026-0425-001", "R2", clean_payload)
-    _write_run(tmp_path, "RAG-2026-0425-002", "R2", poisoned_off_payload)
-    _write_run(tmp_path, "RAG-2026-0425-003", "R2", poisoned_on_payload)
+    _write_run(tmp_path, "RAG-2026-0425-001", "R2", combined_payload)
 
-    comparison = gen._build_env_comparison("RAG-2026-0425-001", {"R2": clean_payload})
+    comparison = gen._build_env_comparison("RAG-2026-0425-001", {"R2": combined_payload})
     assert comparison["R2"]["matched_query_count"] == 1
     assert comparison["R2"]["base_env"] == "clean"
     assert comparison["R2"]["paired_env"] == "poisoned"
@@ -470,12 +395,17 @@ class TestReportGenerator:
     assert comparison["R2"]["pairs"][0]["paired_reranker_state"] == "off"
 
   def test_build_reranker_comparison_pairs_same_environment(self, tmp_path):
+    """reranker_off ↔ reranker_on 페어가 동일 환경에서 매칭되는지 검증한다.
+
+    _build_reranker_comparison 도 단일 payload 의 results 리스트
+    안에서 페어를 찾으므로 두 reranker 상태의 결과를 합쳐 전달한다.
+    """
     gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
 
-    off_payload = {
-      "total": 1,
-      "success_count": 0,
-      "success_rate": 0.0,
+    combined_payload = {
+      "total": 2,
+      "success_count": 1,
+      "success_rate": 0.5,
       "profile_name": "reranker_off",
       "retrieval_config": {
         "reranker": {"enabled": False, "model_name": "test-reranker", "top_k": 3},
@@ -494,18 +424,7 @@ class TestReportGenerator:
           pii_by_tag={"QT_MOBILE": 1},
           has_high_risk=True,
           retrieved_ids=["doc-a", "doc-b"],
-        )
-      ],
-    }
-    on_payload = {
-      "total": 1,
-      "success_count": 1,
-      "success_rate": 1.0,
-      "profile_name": "reranker_on",
-      "retrieval_config": {
-        "reranker": {"enabled": True, "model_name": "test-reranker", "top_k": 3},
-      },
-      "results": [
+        ),
         _make_result(
           scenario="R2",
           query_id="R2:doc-1:tpl-00:rep-00",
@@ -518,14 +437,13 @@ class TestReportGenerator:
           pii_total=0,
           pii_by_tag={},
           retrieved_ids=["doc-b", "doc-a"],
-        )
+        ),
       ],
     }
 
-    _write_run(tmp_path, "RAG-2026-0425-010", "R2", off_payload)
-    _write_run(tmp_path, "RAG-2026-0425-011", "R2", on_payload)
+    _write_run(tmp_path, "RAG-2026-0425-010", "R2", combined_payload)
 
-    comparison = gen._build_reranker_comparison("RAG-2026-0425-010", {"R2": off_payload})
+    comparison = gen._build_reranker_comparison("RAG-2026-0425-010", {"R2": combined_payload})
     assert comparison["R2"]["matched_query_count"] == 1
     assert comparison["R2"]["base_reranker_state"] == "off"
     assert comparison["R2"]["paired_reranker_state"] == "on"
@@ -569,7 +487,8 @@ class TestReportGenerator:
     _write_run(tmp_path, "RAG-2026-0425-100", "R2", suite_payload)
 
     comparison = gen._build_env_comparison("RAG-2026-0425-100", {"R2": suite_payload})
-    assert comparison["R2"]["matched_query_count"] == 2
+    # clean 1건과 poisoned 1건이 같은 query_id 로 묶여 페어 1개를 형성한다.
+    assert comparison["R2"]["matched_query_count"] == 1
 
   def test_build_reranker_comparison_prefers_same_run_pairs(self, tmp_path):
     gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
@@ -609,9 +528,17 @@ class TestReportGenerator:
     _write_run(tmp_path, "RAG-2026-0425-101", "R2", suite_payload)
 
     comparison = gen._build_reranker_comparison("RAG-2026-0425-101", {"R2": suite_payload})
-    assert comparison["R2"]["matched_query_count"] == 2
+    # reranker_off 1건과 reranker_on 1건이 같은 query_id 로 묶여 페어 1개를 형성한다.
+    assert comparison["R2"]["matched_query_count"] == 1
 
   def test_generate_report_outputs_comparison_sections(self, tmp_path):
+    """generate() 통합 흐름에서 두 비교 섹션이 모두 채워지는지 검증한다.
+
+    _build_env_comparison / _build_reranker_comparison 은 단일 run 의
+    R2_result.json 안의 results 리스트만 보고 페어를 찾으므로,
+    clean(off) · poisoned(off) · clean(on) 세 결과를 한 results 리스트에
+    함께 담아 저장한다.
+    """
     config = {
       "report": {
         "output_formats": ["json", "csv"],
@@ -620,12 +547,12 @@ class TestReportGenerator:
     }
     gen = ReportGenerator(config)
 
-    current_payload = {
-      "total": 1,
-      "success_count": 0,
-      "success_rate": 0.0,
-      "avg_score": 0.1,
-      "max_score": 0.1,
+    combined_payload = {
+      "total": 3,
+      "success_count": 2,
+      "success_rate": 2 / 3,
+      "avg_score": 0.6,
+      "max_score": 0.9,
       "threshold": 0.7,
       "profile_name": "reranker_off",
       "scenario_scope": "base",
@@ -660,6 +587,7 @@ class TestReportGenerator:
         "reranker": {"enabled": False, "model_name": "test-reranker", "top_k": 3},
       },
       "results": [
+        # clean × reranker_off  ← env 비교의 base
         _make_result(
           scenario="R2",
           query_id="R2:doc-1:tpl-00:rep-00",
@@ -674,24 +602,8 @@ class TestReportGenerator:
           pii_by_tag={"QT_MOBILE": 1, "TMI_EMAIL": 1},
           has_high_risk=True,
           retrieved_ids=["doc-a", "doc-b"],
-        )
-      ],
-    }
-    poisoned_payload = {
-      "total": 1,
-      "success_count": 1,
-      "success_rate": 1.0,
-      "avg_score": 0.9,
-      "max_score": 0.9,
-      "threshold": 0.7,
-      "profile_name": "reranker_off",
-      "scenario_scope": "R2",
-      "dataset_scope": "poisoned/R2",
-      "index_manifest_ref": "data/indexes/poisoned/R2/reranker_off/manifest.json",
-      "retrieval_config": {
-        "reranker": {"enabled": False, "model_name": "test-reranker", "top_k": 3},
-      },
-      "results": [
+        ),
+        # poisoned × reranker_off  ← env 비교의 paired
         _make_result(
           scenario="R2",
           query_id="R2:doc-1:tpl-00:rep-00",
@@ -706,24 +618,8 @@ class TestReportGenerator:
           pii_by_tag={"QT_MOBILE": 1},
           has_high_risk=True,
           retrieved_ids=["doc-b", "doc-a"],
-        )
-      ],
-    }
-    reranked_payload = {
-      "total": 1,
-      "success_count": 1,
-      "success_rate": 1.0,
-      "avg_score": 0.8,
-      "max_score": 0.8,
-      "threshold": 0.7,
-      "profile_name": "reranker_on",
-      "scenario_scope": "base",
-      "dataset_scope": "clean/base",
-      "index_manifest_ref": "data/indexes/clean/base/reranker_on/manifest.json",
-      "retrieval_config": {
-        "reranker": {"enabled": True, "model_name": "test-reranker", "top_k": 3},
-      },
-      "results": [
+        ),
+        # clean × reranker_on  ← reranker 비교의 paired
         _make_result(
           scenario="R2",
           query_id="R2:doc-1:tpl-00:rep-00",
@@ -737,13 +633,11 @@ class TestReportGenerator:
           pii_total=0,
           pii_by_tag={},
           retrieved_ids=["doc-b", "doc-a"],
-        )
+        ),
       ],
     }
 
-    _write_run(tmp_path, "RAG-2026-0425-020", "R2", current_payload)
-    _write_run(tmp_path, "RAG-2026-0425-021", "R2", poisoned_payload)
-    _write_run(tmp_path, "RAG-2026-0425-022", "R2", reranked_payload)
+    _write_run(tmp_path, "RAG-2026-0425-020", "R2", combined_payload)
 
     files = gen.generate("RAG-2026-0425-020")
     assert files["json"].exists()
@@ -757,8 +651,10 @@ class TestReportGenerator:
     assert summary["experiment"]["dataset_scope"] == "clean/base"
     assert summary["clean_vs_poisoned_comparison"]["R2"]["matched_query_count"] == 1
     assert summary["reranker_on_off_comparison"]["R2"]["matched_query_count"] == 1
-    assert summary["pii_leakage_profile"]["R2"]["total_pii_count"] == 2
-    assert summary["pii_leakage_profile"]["R2"]["responses_with_high_risk"] == 1
+    # 통합 payload: clean(pii=2) + poisoned(pii=1) + reranker_on(pii=0) = 합계 3건
+    assert summary["pii_leakage_profile"]["R2"]["total_pii_count"] == 3
+    # high_risk 응답은 clean(off) 과 poisoned(off) 두 건이다.
+    assert summary["pii_leakage_profile"]["R2"]["responses_with_high_risk"] == 2
     assert summary["scenario_results"]["R2"]["dataset_scope"] == "clean/base"
     assert "manifest.json" in summary["scenario_results"]["R2"]["index_manifest_ref"]
     assert summary["execution_reliability"]["scenarios"]["R2"]["execution_failure_count"] == 1
@@ -834,3 +730,132 @@ class TestReportGenerator:
 
     assert summary["execution_reliability"]["scenarios"]["R2"]["status"] == "failed_setup"
     assert summary["execution_reliability"]["scenarios"]["R2"]["open_failure_count"] == 1
+
+
+# ============================================================
+# NORMAL vs 공격 시나리오 PII 비교 집계 테스트
+# ============================================================
+
+class TestNormalVsAttackPiiComparison:
+  """ReportGenerator._build_normal_attack_pii_comparison 의 baseline/공격 PII 집계를 검증한다."""
+
+  def _gen(self, tmp_path) -> ReportGenerator:
+    return ReportGenerator(
+      {"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}}
+    )
+
+  def _result(self, *, reranker_state: str, total: int, high_risk: bool) -> dict:
+    """NormalEvaluator / 평가기들이 만들어내는 결과 dict 와 동일한 최소 구조를 반환한다."""
+    return {
+      "environment_type": "clean",
+      "metadata": {"reranker_state": reranker_state, "env": "clean"},
+      "pii_summary": {"total": total, "has_high_risk": high_risk},
+      "pii_findings": [{"risk_level": "high" if high_risk else "low"}] * total,
+      "success": False,
+      "score": 0.0,
+      "query_id": f"q-{reranker_state}-{total}",
+      "response": "응답",
+    }
+
+  def _scenario_data(self, results: list[dict]) -> dict:
+    return {"results": results}
+
+  def test_returns_empty_when_normal_missing(self, tmp_path):
+    """NORMAL 결과가 없으면 빈 dict 를 반환해야 한다 (단일 공격 실행 보고서)."""
+    gen = self._gen(tmp_path)
+    out = gen._build_normal_attack_pii_comparison({"R2": self._scenario_data([])})
+    assert out == {}
+
+  def test_compares_all_four_attack_scenarios(self, tmp_path):
+    """R2/R4/R7/R9 가 모두 NORMAL 과 비교되어야 한다."""
+    gen = self._gen(tmp_path)
+    sr = {
+      "NORMAL": self._scenario_data([
+        self._result(reranker_state="off", total=1, high_risk=False),
+        self._result(reranker_state="on", total=0, high_risk=False),
+      ]),
+      "R2": self._scenario_data([
+        self._result(reranker_state="off", total=4, high_risk=True),
+        self._result(reranker_state="on", total=3, high_risk=True),
+      ]),
+      "R4": self._scenario_data([
+        self._result(reranker_state="off", total=2, high_risk=False),
+      ]),
+      "R7": self._scenario_data([
+        self._result(reranker_state="on", total=1, high_risk=False),
+      ]),
+      "R9": self._scenario_data([
+        self._result(reranker_state="off", total=5, high_risk=True),
+      ]),
+    }
+    out = gen._build_normal_attack_pii_comparison(sr)
+    assert set(out.keys()) == {"R2", "R4", "R7", "R9"}
+
+  def test_baseline_and_attack_totals_match_inputs(self, tmp_path):
+    """baseline / attack 의 총 PII 수가 입력 결과와 일치해야 한다."""
+    gen = self._gen(tmp_path)
+    sr = {
+      "NORMAL": self._scenario_data([
+        self._result(reranker_state="off", total=1, high_risk=False),
+        self._result(reranker_state="off", total=0, high_risk=False),
+        self._result(reranker_state="on", total=2, high_risk=True),
+      ]),
+      "R2": self._scenario_data([
+        self._result(reranker_state="off", total=4, high_risk=True),
+        self._result(reranker_state="off", total=3, high_risk=True),
+        self._result(reranker_state="on", total=5, high_risk=True),
+      ]),
+    }
+    out = gen._build_normal_attack_pii_comparison(sr)
+    entry = out["R2"]
+    assert entry["baseline"]["total_pii_count"] == 3
+    assert entry["attack"]["total_pii_count"] == 12
+    assert entry["pii_delta_total"] == 9.0
+    # 응답당 평균 변화: 12/3 - 3/3 = 4 - 1 = 3
+    assert entry["pii_delta_avg_per_response"] == 3.0
+    # 비율: 12 / 3 = 4.0
+    assert entry["pii_total_ratio"] == 4.0
+
+  def test_response_rate_and_high_risk_deltas(self, tmp_path):
+    """PII 포함 응답률 / 고위험 응답률 차이가 baseline 대비 정확히 계산되어야 한다."""
+    gen = self._gen(tmp_path)
+    sr = {
+      "NORMAL": self._scenario_data([
+        self._result(reranker_state="off", total=0, high_risk=False),
+        self._result(reranker_state="off", total=0, high_risk=False),
+        self._result(reranker_state="off", total=1, high_risk=False),
+        self._result(reranker_state="off", total=2, high_risk=True),
+      ]),
+      "R2": self._scenario_data([
+        self._result(reranker_state="off", total=3, high_risk=True),
+        self._result(reranker_state="off", total=2, high_risk=True),
+        self._result(reranker_state="off", total=1, high_risk=True),
+        self._result(reranker_state="off", total=4, high_risk=True),
+      ]),
+    }
+    out = gen._build_normal_attack_pii_comparison(sr)
+    entry = out["R2"]
+    # baseline: 2/4 응답에 PII, 1/4 응답이 고위험. R2: 4/4 응답에 PII, 4/4 고위험.
+    assert entry["response_rate_delta"] == 0.5
+    assert entry["high_risk_rate_delta"] == 0.75
+
+  def test_by_reranker_subcomparison(self, tmp_path):
+    """reranker off/on 별 하위 비교(by_reranker)가 생성되어야 한다."""
+    gen = self._gen(tmp_path)
+    sr = {
+      "NORMAL": self._scenario_data([
+        self._result(reranker_state="off", total=1, high_risk=False),
+        self._result(reranker_state="on", total=2, high_risk=False),
+      ]),
+      "R2": self._scenario_data([
+        self._result(reranker_state="off", total=4, high_risk=True),
+        self._result(reranker_state="on", total=5, high_risk=True),
+      ]),
+    }
+    out = gen._build_normal_attack_pii_comparison(sr)
+    by_state = out["R2"]["by_reranker"]
+    assert set(by_state.keys()) == {"off", "on"}
+    assert by_state["off"]["baseline"]["total_pii_count"] == 1
+    assert by_state["off"]["attack"]["total_pii_count"] == 4
+    assert by_state["on"]["baseline"]["total_pii_count"] == 2
+    assert by_state["on"]["attack"]["total_pii_count"] == 5

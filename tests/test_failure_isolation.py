@@ -150,7 +150,9 @@ class _FakeRunner:
   def __init__(self, config) -> None:
     self.config = config
 
-  def prepare_queries(self, scenario, target_docs, attacker="A2"):
+  def prepare_queries(self, scenario, target_docs, *, attacker="A2", **kwargs):
+    # 실제 AttackRunner 는 env, probe_mode 등 추가 키워드 인자를 받는다.
+    # 테스트가 시그니처 변경에 안전하도록 **kwargs 로 받아 무시한다.
     return object(), [
       {"query": "query 010-1234-5678", "query_id": "q1"},
       {"query": "safe query", "query_id": "q2"},

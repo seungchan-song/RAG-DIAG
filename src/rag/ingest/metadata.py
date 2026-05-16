@@ -11,7 +11,12 @@ from typing import Any
 from haystack import component
 from haystack.dataclasses import Document
 
-from rag.utils.text import extract_keywords, slugify_token
+from rag.utils.text import (
+  META_STOPWORDS,
+  extract_keywords,
+  extract_specific_keyword,
+  slugify_token,
+)
 
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md"}
 VALID_ENVIRONMENTS = {"clean", "poisoned"}
@@ -276,10 +281,25 @@ def _infer_selection_mode(dataset_root: Path, environment_scope: str) -> str:
   return "canonical" if dataset_root.name.lower() == environment_scope else "legacy"
 
 
-def get_primary_keyword(text: str, fallback: str = "문서") -> str:
-  """Return the highest-priority keyword for query generation."""
-  keywords = extract_keywords(text, max_keywords=3)
-  return keywords[0] if keywords else fallback
+def get_primary_keyword(
+  text: str,
+  fallback: str = "문서",
+  fallback_filename: str | None = None,
+) -> str:
+  """문서를 specific 하게 지목하는 단일 키워드를 반환합니다.
+
+  R2/R4 anchor 쿼리에 그대로 사용되므로, 메타 라벨("정상", "안내") 대신
+  합성 식별자/인명/고유명사 같은 변별력 있는 토큰을 우선합니다. 자세한
+  계층은 rag.utils.text.extract_specific_keyword 참조.
+
+  Args:
+    text: 문서 본문.
+    fallback: 모든 단계가 실패했을 때 마지막 대체값.
+    fallback_filename: 본문 추출 실패 시 사용할 파일 경로/이름.
+  """
+  return extract_specific_keyword(
+    text, fallback_filename=fallback_filename, fallback=fallback
+  )
 
 
 def _resolve_file_key(meta: dict[str, Any]) -> str | None:
@@ -316,13 +336,20 @@ class DocumentMetadataEnricher:
 
       document.meta.update(base_meta)
 
-      keywords = extract_keywords(document.content or "", max_keywords=3)
-      if keywords:
-        document.meta["keywords"] = keywords
-        document.meta["keyword"] = keywords[0]
-      else:
-        document.meta.setdefault("keywords", [])
-        document.meta.setdefault("keyword", get_primary_keyword("", fallback="문서"))
+      # keyword: 문서를 specific 하게 지목하는 단일 anchor 키워드.
+      #   계층형 추출기를 사용해 합성 식별자/인명/고유명사 우선으로 뽑는다.
+      #   파일명 폴백을 위해 file_path 메타를 함께 전달한다.
+      # keywords: 보조용 다중 빈도 키워드. 메타 라벨이 1위로 뽑히지 않도록
+      #   META_STOPWORDS 를 추가 차단한다.
+      filename_hint = document.meta.get("file_path") or document.meta.get("source")
+      document.meta["keyword"] = get_primary_keyword(
+        document.content or "",
+        fallback="문서",
+        fallback_filename=str(filename_hint) if filename_hint else None,
+      )
+      document.meta["keywords"] = extract_keywords(
+        document.content or "", max_keywords=3, extra_stopwords=META_STOPWORDS
+      )
 
     return {"documents": documents}
 
@@ -341,10 +368,21 @@ class ChunkMetadataEnricher:
       chunk_index = chunk_indices.get(doc_id, 0)
       chunk_indices[doc_id] = chunk_index + 1
 
-      document.meta.setdefault("keyword", get_primary_keyword(document.content or ""))
+      # chunk 단계: DocumentMetadataEnricher 에서 채우지 못한 경우만 보강한다.
+      # 동일한 계층형 / 메타 stopword 정책을 일관되게 적용한다.
+      filename_hint = document.meta.get("file_path") or document.meta.get("source")
+      document.meta.setdefault(
+        "keyword",
+        get_primary_keyword(
+          document.content or "",
+          fallback_filename=str(filename_hint) if filename_hint else None,
+        ),
+      )
       document.meta.setdefault(
         "keywords",
-        extract_keywords(document.content or "", max_keywords=3),
+        extract_keywords(
+          document.content or "", max_keywords=3, extra_stopwords=META_STOPWORDS
+        ),
       )
       document.meta["chunk_index"] = chunk_index
       document.meta["chunk_id"] = f"{doc_id}::chunk-{chunk_index:04d}"

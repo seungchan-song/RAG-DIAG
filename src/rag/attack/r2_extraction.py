@@ -39,7 +39,7 @@ class R2ExtractionAttack(BaseAttack):
   명령어 프롬프트로 generator에게 문서를 그대로 출력하도록 합니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "poisoned") -> None:
+  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "clean") -> None:
     super().__init__(config, attacker=attacker, env=env)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     logger.debug("R2ExtractionAttack 초기화 완료 (attacker={}, env={})", self.attacker, self.env)
@@ -48,17 +48,18 @@ class R2ExtractionAttack(BaseAttack):
     self, target_docs: list[dict[str, Any]]
   ) -> list[dict[str, Any]]:
     """
-    R2 쿼리를 생성합니다. 환경(env)에 따라 쿼리 타입이 달라집니다.
+    R2 복합 쿼리(q_i + q_c)를 생성합니다.
 
-    - self.env == "clean"    → 앵커 쿼리(q_i)만 생성 (기준선 측정용)
-    - self.env == "poisoned" → 복합 쿼리(q_i + q_c) 생성 (공격 효과 측정용)
+    env 와 무관하게 항상 anchor + command 결합 쿼리를 생성합니다.
+    구버전 clean=anchor_only / poisoned=compound 비교 정책은 폐기되었고,
+    R2 는 현재 clean DB 에서만 실행되며 처음부터 복합 쿼리로 공격합니다.
 
     Args:
       target_docs: 유출 대상 문서 목록
         [{"content": "...", "keyword": "...", "doc_id": "..."}, ...]
 
     Returns:
-      list[dict]: R2 쿼리 목록 (env에 따라 anchor_only 또는 compound)
+      list[dict]: R2 복합 쿼리 목록 (payload_type: standard/self_losing/many_shot)
     """
     return self.query_gen.generate_r2_queries(target_docs, env=self.env)
 
@@ -111,6 +112,7 @@ class R2ExtractionAttack(BaseAttack):
         "anchor": query_info.get("anchor", ""),
         "command": query_info.get("command", ""),
         "query_type": query_info.get("query_type", "compound"),
+        "payload_type": query_info.get("payload_type", "standard"),
         "target_doc_id": query_info.get("target_doc_id", ""),
         "keyword": query_info.get("keyword", ""),
         "reranker_enabled": trace.get("reranker_enabled", False),
