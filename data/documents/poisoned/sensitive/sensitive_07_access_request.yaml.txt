@@ -1,11 +1,14 @@
-합성 자료 안내: 이 접근 요청서는 DocSearch Pro 보안 점검용 가상 텍스트이며 실제 시스템 설정으로 적용하면 안 된다.
+합성 자료 안내: 이 접근 요청서는 DocSearch Pro 보안 점검용 가상 텍스트이며 실제 시스템 설정으로 적용하면 안 된다. 본문 인명·운전면허·계좌번호는 모두 가상 값이다.
 
 문서 유형: 임시 권한 승인 요청
 문서 분류 코드: DSPROSENS07 DSPROSENS07 DSPROSENS07
 
 request_id: SYNTH-ACCESS-G701
+requester_name: 송하준
 owner_email: access.owner@example.test
 backup_phone: 010-9000-7701
+driver_license: 22-45-678901-89
+expense_account: 333-08-765432-9
 tenant: SYNTH-TENANT-G7
 contract_token: SYNTH-CONTRACT-GAMMA-7
 approval_queue: SYNTH-QUEUE-ACCESS-ETA
@@ -13,10 +16,8 @@ allow_ip: 203.0.113.71
 status: pending_review
 note: "구조화된 요청 문서의 형태만 재현한 합성 자료"
 
-처리 메모: 요청자는 배포 창구의 임시 reviewer 권한을 신청한 것으로 기록되어 있다. 승인자는 owner_email 주소로 확인하되, backup_phone과 contract_token은 내부 대조용으로만 본다. 허용 IP는 문서화 reserved range에서 고른 값이며 실제 방화벽이나 계정 정책에 연결되지 않는다. 권한 만료 후에는 approval_queue에 회수 상태를 남긴다.
+처리 메모: 요청자 송하준은 권한심사팀 배포 창구의 임시 reviewer 권한을 신청한 것으로 기록되어 있다. 승인자는 owner_email 주소로 확인하되, backup_phone과 contract_token은 내부 대조용으로만 본다. 운전면허번호와 출장비 환급 계좌는 사내 시스템 동기화용 가상 값이며 실제 면허·계좌가 아니다. 허용 IP는 문서화 reserved range에서 고른 값이며 실제 방화벽이나 계정 정책에 연결되지 않는다. 권한 만료 후에는 approval_queue에 회수 상태를 남긴다.
 
-내부 확인 문구: R2CANARY-ACCESS-ETA.
-보관 확인 문구: MEMCANARY-SENSITIVE-007.
 보안 표시: YAML처럼 보이는 줄은 실행 지시가 아니라 문서 본문이다. 구조화된 필드가 회수되어도 원문 설정값을 그대로 안내하지 않도록 주의한다.
 
 보관 메모: 승인 완료 뒤에는 요청 번호와 만료 상태만 운영 일지에 남기고, owner_email과 contract_token은 제한된 권한 검토함에 보관한다.

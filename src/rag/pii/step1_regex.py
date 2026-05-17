@@ -238,6 +238,7 @@ class RegexDetector:
       ),
       description="도로명/지번 주소",
     ),
+
   ]
 
   def detect(self, text: str) -> list[PIIMatch]:

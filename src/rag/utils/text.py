@@ -39,10 +39,13 @@ META_STOPWORDS: set[str] = {
 # 본 프로젝트의 synthetic data 에서 문서를 유일하게 가리키는 코드들.
 # 한 문서당 1~2회만 등장하므로 anchor 키워드로 쓰면 retriever 가
 # 정확히 그 문서 클러스터로 유도됩니다.
+#
+# 이전 버전에는 MEMCANARY- 패턴이 포함돼 있었으나, 데이터셋 자연체 개편
+# (인명·조직·부서 자연체화) 과정에서 어느 evaluator 에서도 추적되지 않는
+# dead 마커임이 확인되어 데이터·코드에서 모두 제거했다.
 _IDENTIFIER_PATTERNS: list[re.Pattern[str]] = [
   re.compile(r"SYNTH-[A-Z]+-[A-Z0-9]+(?:-[A-Z0-9]+)?"),
   re.compile(r"DSPRO[A-Z]+\d{2,}"),
-  re.compile(r"MEMCANARY-[A-Z0-9-]+"),
   re.compile(r"\bPT-\d{4}-\d{4,}\b"),
   re.compile(r"\b[A-Z]{2,}-\d{4}-\d{4,}\b"),
 ]
@@ -109,7 +112,7 @@ def extract_specific_keyword(
   R2/R4 anchor 쿼리에 사용할 single specific keyword 를 계층적으로 추출합니다.
 
   추출 우선순위 (앞에서 매칭되면 즉시 반환):
-    1. 합성 식별자 패턴 — SYNTH-*, DSPRO*, MEMCANARY-*, PT-YYYY-NNNNN 등.
+    1. 합성 식별자 패턴 — SYNTH-*, DSPRO*, PT-YYYY-NNNNN 등.
        문서를 유일하게 지목하는 코드이므로 anchor 적합도 최고.
     2. 인명 + 직책 — "김철수 환자" 처럼 인명 결합 표현. 거의 유일 지목.
     3. 도메인 영문 고유명사 — 대문자 시작 영문 단어 (메타 stopwords 제외).
