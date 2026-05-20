@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from haystack import Pipeline
@@ -67,7 +68,7 @@ class AttackRunner:
     """Instantiate the scenario attack and generate all queries."""
     attack = self.create_attack(scenario, attacker=attacker, env=env, probe_mode=probe_mode)
     queries = attack.generate_queries(target_docs)
-    logger.info(
+    logger.debug(
       "Prepared {} attack queries for scenario {} (attacker={}, env={}, probe_mode={})",
       len(queries),
       scenario.upper(),
@@ -87,8 +88,16 @@ class AttackRunner:
     env: str,
     trial_index: int,
   ) -> AttackResult:
-    """Execute one query and attach the shared metadata fields."""
+    """Execute one query and attach the shared metadata fields.
+
+    개별 쿼리의 전체 실행 시간을 perf_counter()로 측정해 metadata.elapsed_seconds
+    필드에 소수점 4자리 단위로 기록한다. 이 값은 리포트 생성 시 시나리오별
+    총 소요 시간·평균 처리 시간·처리량 계산의 원천 데이터로 사용된다.
+    """
+    start_time = time.perf_counter()
     result = attack.execute(query_info, rag_pipeline)
+    elapsed_seconds = round(time.perf_counter() - start_time, 4)
+
     result.query_id = result.query_id or query_info.get("query_id", "")
     result.environment_type = env
     result.profile_name = result.profile_name or self.config.get("profile_name", "default")
@@ -105,6 +114,7 @@ class AttackRunner:
     result.metadata["profile_name"] = result.profile_name
     result.metadata["reranker_enabled"] = reranker_enabled
     result.metadata["reranker_state"] = "on" if reranker_enabled else "off"
+    result.metadata["elapsed_seconds"] = elapsed_seconds
     return result
 
   def run(
@@ -124,7 +134,7 @@ class AttackRunner:
     )
     skipped = completed_query_ids or set()
 
-    logger.info(
+    logger.debug(
       "Starting attack run: scenario={}, attacker={}, env={}, target_docs={}",
       scenario,
       attacker,
@@ -151,7 +161,7 @@ class AttackRunner:
       if on_result is not None:
         on_result(result)
 
-    logger.info(
+    logger.debug(
       "Attack run finished: executions={}, successes={}",
       len(results),
       sum(1 for item in results if item.success),

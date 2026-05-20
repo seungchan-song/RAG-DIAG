@@ -68,6 +68,7 @@ def apply_similarity_threshold(
 def build_rag_pipeline(
   document_store: InMemoryDocumentStore | PersistentFaissDocumentStore,
   config: dict[str, Any],
+  prompt_template: str | None = None,
 ) -> Pipeline:
   """
   RAG 질의 파이프라인을 구성합니다.
@@ -100,7 +101,7 @@ def build_rag_pipeline(
   query_embedder = create_query_embedder(config)
   retriever = create_retriever(document_store, config)
   reranker = create_reranker(config)
-  prompt_builder = create_prompt_builder()
+  prompt_builder = create_prompt_builder(template=prompt_template)
   generator = create_generator(config)
   retrieval_config = build_retrieval_config(config)
 
@@ -122,14 +123,14 @@ def build_rag_pipeline(
   # query_embedder(SentenceTransformersTextEmbedder)는 run() 전에
   # warm_up()으로 모델을 로드해야 합니다.
   # 호출하지 않으면 쿼리 임베딩이 None이 되어 검색 결과가 0개 나옵니다.
-  logger.info("RAG 질의 파이프라인 워밍업 시작 (임베딩 모델 로드)...")
+  logger.debug("RAG 질의 파이프라인 워밍업 시작 (임베딩 모델 로드)...")
   pipeline.warm_up()
   pipeline._rag_runtime = {
     "profile_name": config.get("profile_name", "default"),
     "retrieval_config": retrieval_config,
     "reranker": reranker,
   }
-  logger.info("RAG 질의 파이프라인 구성 완료")
+  logger.debug("RAG 질의 파이프라인 구성 완료")
   return pipeline
 
 
@@ -158,7 +159,7 @@ def run_query(
     answer = result["generator"]["replies"][0]
     sources = result["retriever"]["documents"]
   """
-  logger.info(f"질의 실행: {query[:50]}...")
+  logger.debug(f"질의 실행: {query[:50]}...")
 
   # STEP 1: 질의를 벡터로 변환합니다
   query_embedder = pipeline.get_component("query_embedder")
@@ -215,7 +216,7 @@ def run_query(
 
   replies = gen_result.get("replies", [])
   if replies:
-    logger.info(f"답변 생성 완료 (길이: {len(replies[0])}자)")
+    logger.debug(f"답변 생성 완료 (길이: {len(replies[0])}자)")
   else:
     logger.warning("답변이 생성되지 않았습니다")
 

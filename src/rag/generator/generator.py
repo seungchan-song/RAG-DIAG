@@ -102,7 +102,7 @@ def create_generator(config: dict[str, Any]) -> Any:
   system_prompt: str | None = generator_config.get("system_prompt") or None
 
   if system_prompt:
-    logger.info(
+    logger.debug(
       "시스템 프롬프트 적용됨 (길이={}자, provider={})",
       len(system_prompt),
       provider,

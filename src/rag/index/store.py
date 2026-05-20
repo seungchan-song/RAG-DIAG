@@ -92,7 +92,7 @@ class PersistentFaissDocumentStore:
       raise FileNotFoundError(f"FAISS index file not found: {artifacts.index_path}")
     else:
       store._index = None
-    logger.info("Loaded persisted FAISS index from {}", artifacts.root_dir)
+    logger.debug("Loaded persisted FAISS index from {}", artifacts.root_dir)
     return store
 
   def write_documents(

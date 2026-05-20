@@ -129,7 +129,7 @@ class PersistentIndexManager:
       existing_manifest = self.load_manifest()
       self._validate_manifest(existing_manifest, expected_manifest)
       store = PersistentFaissDocumentStore.load(self.index_dir)
-      logger.info("Reusing persisted index from {}", self.index_dir)
+      logger.debug("Reusing persisted index from {}", self.index_dir)
       return store, existing_manifest, "reused"
 
     if not allow_auto_build:

@@ -179,7 +179,7 @@ class NERDetector:
       )
       self.load_status = "ready"
       self.error_message = ""
-      logger.info(
+      logger.debug(
         "Step 3 NER model ready from {}: {} (max_input_tokens={})",
         self.model_source,
         self.resolved_model_identifier,
