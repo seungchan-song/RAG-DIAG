@@ -766,8 +766,13 @@ class TestNormalVsAttackPiiComparison:
     out = gen._build_normal_attack_pii_comparison({"R2": self._scenario_data([])})
     assert out == {}
 
-  def test_compares_all_four_attack_scenarios(self, tmp_path):
-    """R2/R4/R7/R9 가 모두 NORMAL 과 비교되어야 한다."""
+  def test_compares_only_pii_scenarios(self, tmp_path):
+    """응답 PII 가 본질인 R2/R4 만 NORMAL 과 비교되어야 한다.
+
+    R7 은 시스템 프롬프트 유출(`r7_leakage_analysis` 별도 블록),
+    R9 는 트리거 마커 출력(`r9_potential_pii_exposure` 별도 블록)으로 분리되어
+    본 PII 응답 비교에서는 제외된다.
+    """
     gen = self._gen(tmp_path)
     sr = {
       "NORMAL": self._scenario_data([
@@ -789,7 +794,9 @@ class TestNormalVsAttackPiiComparison:
       ]),
     }
     out = gen._build_normal_attack_pii_comparison(sr)
-    assert set(out.keys()) == {"R2", "R4", "R7", "R9"}
+    assert set(out.keys()) == {"R2", "R4"}
+    assert "R7" not in out, "R7 은 시스템 프롬프트 유출이라 PII 응답 비교에서 제외"
+    assert "R9" not in out, "R9 는 트리거 마커 출력이라 PII 응답 비교에서 제외"
 
   def test_baseline_and_attack_totals_match_inputs(self, tmp_path):
     """baseline / attack 의 총 PII 수가 입력 결과와 일치해야 한다."""

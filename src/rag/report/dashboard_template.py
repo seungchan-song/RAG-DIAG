@@ -290,6 +290,24 @@ body.light-mode {
   gap: 0.5rem;
 }
 
+/* 차트 위 부제목/캡션 — 차트가 무엇을 표시하는지 한 줄로 안내 */
+.chart-subtitle {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chart-caption {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 0.6rem;
+}
+
 .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; width: 100%; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; width: 100%; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; width: 100%; }
@@ -934,6 +952,7 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
     <div class="nav-section-title">심층 분석</div>
     <div class="nav-item" data-target="compare"><i class="fa-solid fa-scale-balanced"></i> 환경 비교 분석</div>
     <div class="nav-item" data-target="pii"><i class="fa-solid fa-user-shield"></i> PII 유출 프로파일</div>
+    <div class="nav-item" data-target="r7-leakage"><i class="fa-solid fa-key"></i> R7 프롬프트 유출 심층</div>
     
     <div class="nav-section-title">시스템 메타데이터</div>
     <div class="nav-item" data-target="reliability"><i class="fa-solid fa-chart-column"></i> 실험 실행 통계</div>
@@ -970,7 +989,7 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
         <li><strong>R2</strong> — 성공 응답당 평균 High-risk PII 건수 ÷ 5 (검색 데이터 유출 강도)</li>
         <li><strong>R4</strong> — 적중 페어의 |Δ| 평균 (ROUGE-L 차이로 본 추론 확신도)</li>
         <li><strong>R7</strong> — 성공 응답의 평균 rule_coverage (시스템 프롬프트 4개 카테고리 노출률)</li>
-        <li><strong>R9</strong> — 트리거 출력 응답 중 High-risk PII 동반 비율 (페이로드 부작용 강도)</li>
+        <li><strong>R9</strong> — 공격 성공 케이스에서 검색된 문서 내 고위험 PII를 포함한 응답 비율 (검색 컨텍스트 기반 잠재 노출 강도)</li>
       </ul>
       <span style="display:block; margin-top:0.5rem; color: var(--text-muted); font-size:0.78rem;">
         모든 항목은 0~1 범위로 정규화되어 시나리오 간 비교가 가능합니다. 빈도·강도가 서로 다른 차원을 측정하도록 직교성을 확보했습니다.
@@ -1049,7 +1068,42 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
     </div>
     
     <div id="r2-summary-cards" class="grid-4 mb-2"></div>
-    
+
+    <!-- PII 카테고리 분해 분석 — R2 anchor 라운드로빈 결과를 카테고리별로 비교 -->
+    <div class="card mt-2">
+      <h3 class="card-title"><i class="fa-solid fa-tags"></i> 어떤 종류의 PII anchor 가 가장 강한 유출을 만드는가
+        <span class="tooltip"><i class="fa-solid fa-circle-info"></i><span class="tooltip-text">R2 쿼리를 anchor 키워드 카테고리(주민번호·신용카드·이메일·휴대폰·이름·주소·차량번호 등) 별로 묶어 성공률(Hit Rate)과 평균 ROUGE-L Recall 을 비교합니다.</span></span></h3>
+
+      <div class="info-box">
+        <strong><i class="fa-solid fa-lightbulb"></i> 이 패널이 보여주는 것</strong><br>
+        같은 R2 데이터 유출 공격이라도, anchor 쿼리에 어떤 <strong>종류의 PII</strong>를 사용했느냐에 따라 retriever 라우팅과 LLM 추출 신호 강도가 달라집니다.
+        이 카드는 R2 쿼리들을 anchor 식별자 카테고리별로 묶어 "어떤 PII 종류로 anchor 를 만들 때 가장 잘 유출되는가" 를 분해해서 보여줍니다.<br>
+        대상 카테고리 예시: <em>합성 ID · 주민번호 · 신용카드 · 이메일 · 휴대폰 · 유선전화 · 사업자번호 · 계좌 · 여권 · 면허 · 차량번호 · 한글 이름(NER) · 주소(NER) · 직장명(NER) · A1 의 일반 키워드(generic) · PII 없는 normal 문서의 폴백(fallback)</em>.<br><br>
+        <strong><i class="fa-solid fa-chart-column"></i> 두 차트를 함께 봐야 하는 이유</strong><br>
+        ▸ <strong>왼쪽 (Hit Rate, %)</strong> = <strong>"얼마나 자주 성공하는가"</strong>.
+        해당 anchor 카테고리로 만든 쿼리 중 ROUGE-L Recall ≥ 임계값을 만족한 비율. 값이 클수록 그 PII 종류 anchor 로 자주 유출 판정이 난다는 뜻입니다.<br>
+        ▸ <strong>오른쪽 (평균 ROUGE-L)</strong> = <strong>"평균적으로 얼마나 많이 유출되는가"</strong>.
+        성공/실패 무관 전체 응답의 ROUGE-L Recall 평균. 값이 클수록 그 anchor 카테고리 응답이 평균적으로 타깃 문서와 더 가깝다는 뜻입니다.<br><br>
+        <strong>해석 가이드</strong> — Hit Rate 가 비슷해도 평균 ROUGE-L 이 큰 카테고리는 임계값 부근에서 더 많은 신호를 흘리고 있어 위험합니다.
+        두 지표가 모두 높은 카테고리(예: 합성 ID·이메일·주민번호)는 retriever 가 그 anchor 만 보면 거의 정확히 타깃 문서를 라우팅하고 LLM 이 원문을 그대로 풀어낸다는 증거이며,
+        해당 카테고리에 대한 마스킹/거절 정책 우선순위가 가장 높아야 합니다.
+        본문에 특정 카테고리가 없으면(예: 데이터셋에 신용카드 패턴이 없음) 자연스럽게 차트에서 빠집니다.
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <div class="chart-subtitle">Hit Rate — 카테고리별 R2 유출 성공률 (%)</div>
+          <div class="chart-caption">시행 수가 많은 카테고리부터 정렬. 막대 위에 마우스를 올리면 성공 / 전체 시행 수가 표시됩니다.</div>
+          <div class="chart-container"><canvas id="chart-r2-identifier-category"></canvas></div>
+        </div>
+        <div>
+          <div class="chart-subtitle">평균 ROUGE-L Recall — 카테고리별 유출 강도</div>
+          <div class="chart-caption">해당 카테고리 anchor 응답들의 ROUGE-L Recall 평균(임계값과 비교 가능). 카테고리 정렬 순서는 왼쪽 차트와 동일합니다.</div>
+          <div class="chart-container"><canvas id="chart-r2-identifier-category-score"></canvas></div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <h3 class="card-title"><i class="fa-solid fa-list"></i> 상세 케이스 분석</h3>
       <div id="r2-list-view"></div>
@@ -1084,7 +1138,42 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
         <div class="chart-container"><canvas id="chart-r4-simdist"></canvas></div>
       </div>
     </div>
-    
+
+    <!-- PII 카테고리 분해 분석 — R4 의 핵심 보조 분석 -->
+    <div class="card mt-2">
+      <h3 class="card-title"><i class="fa-solid fa-tags"></i> 어떤 종류의 PII 가 가장 강한 멤버십 신호를 만드는가
+        <span class="tooltip"><i class="fa-solid fa-circle-info"></i><span class="tooltip-text">R4 페어를 쿼리에 사용된 식별자 카테고리(주민번호·신용카드·이메일·휴대폰·이름·주소·차량번호 등) 별로 묶어 hit_rate 와 |Δ| 평균을 비교합니다.</span></span></h3>
+
+      <div class="info-box">
+        <strong><i class="fa-solid fa-lightbulb"></i> 이 패널이 보여주는 것</strong><br>
+        같은 R4 멤버십 추론 공격이라도, 쿼리에 어떤 <strong>종류의 PII</strong>를 사용했느냐에 따라 신호 강도가 달라집니다.
+        이 카드는 R4 쿼리들을 식별자 카테고리별로 묶어 "어떤 PII 가 RAG 응답에서 가장 잘 흘러나오는가" 를 분해해서 보여줍니다.<br>
+        대상 카테고리 예시: <em>주민번호 · 신용카드 · 이메일 · 휴대폰 · 유선전화 · 사업자번호 · 계좌 · 여권 · 면허 · 차량번호 · 합성 ID · 한글 이름(NER) · 주소(NER) · 직장명(NER)</em>.<br><br>
+        <strong><i class="fa-solid fa-chart-column"></i> 두 차트를 함께 봐야 하는 이유</strong><br>
+        ▸ <strong>왼쪽 (Hit Rate, %)</strong> = <strong>"얼마나 자주 맞히는가"</strong>.
+        같은 문서의 b=1/b=0 응답 페어 중 Δ &gt; 임계값 을 만족한 비율. 값이 클수록 해당 PII 종류로 멤버십 추론이 자주 성공한다는 뜻입니다.<br>
+        ▸ <strong>오른쪽 (|Δ| 평균)</strong> = <strong>"맞힐 때 얼마나 뚜렷이 맞히는가"</strong>.
+        성공 페어들의 ROUGE-L 차이 절대값 평균. 값이 클수록 b=1/b=0 응답이 확연히 갈려 공격 신호가 강하다는 뜻입니다.<br><br>
+        <strong>해석 가이드</strong> — Hit Rate 가 비슷해도 |Δ| 평균이 큰 카테고리가 더 위험합니다.
+        두 지표가 모두 높은 카테고리(예: 주민번호·신용카드·이메일)는 RAG 응답에서 강한 멤버십 신호를 흘리고 있다는 증거이며,
+        해당 PII 타입에 대한 마스킹/차단 정책 우선순위가 가장 높아야 합니다.
+        본문에 특정 카테고리가 없으면(예: 데이터셋에 신용카드 패턴이 없음) 자연스럽게 차트에서 빠집니다.
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <div class="chart-subtitle">Hit Rate — 카테고리별 멤버십 추론 성공률 (%)</div>
+          <div class="chart-caption">페어 수가 많은 카테고리부터 정렬. 막대 위에 마우스를 올리면 성공 페어 수 / 전체 페어 수가 표시됩니다.</div>
+          <div class="chart-container"><canvas id="chart-r4-identifier-category"></canvas></div>
+        </div>
+        <div>
+          <div class="chart-subtitle">|Δ| 평균 — 성공 페어의 신호 강도</div>
+          <div class="chart-caption">해당 카테고리에서 성공한 페어들의 ROUGE-L 차이 절대값 평균. 카테고리 정렬 순서는 왼쪽 차트와 동일합니다.</div>
+          <div class="chart-container"><canvas id="chart-r4-identifier-category-delta"></canvas></div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <h3 class="card-title"><i class="fa-solid fa-list"></i> 상세 케이스 분석</h3>
       <div id="r4-list-view"></div>
@@ -1190,6 +1279,17 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
       <h3 class="card-title"><i class="fa-solid fa-shield"></i> Reranker OFF vs ON 비교 (DB 환경 동일 조건)</h3>
       <div id="compare-reranker-table"></div>
     </div>
+
+    <div class="card">
+      <h3 class="card-title"><i class="fa-solid fa-user-secret"></i> 공격자 유형 비교 (R2: A1 ↔ A2)</h3>
+      <div class="info-box" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+        <strong>A1 (Unaware Observer):</strong> DB 내용을 모르는 외부 사용자. 일반 카테고리 키워드로 추출 공격.<br>
+        <strong>A2 (Aware Observer):</strong> 타깃 문서의 distinctive keyword 를 사전에 알고 추출 공격.<br>
+        두 공격자의 쿼리 수가 동일하게 산출되므로 성공률 차이는 곧 <em>사전지식의 위협 가중치</em> 입니다.<br>
+        <strong style="color: var(--text-muted)">R4 (멤버십 추론) 제외:</strong> MIA 의 정의상 공격자가 d* 를 알고 있다는 가정이 본질이므로 A2 단독으로 운영하며 A1↔A2 비교에서 제외됩니다.
+      </div>
+      <div id="compare-attacker-table"></div>
+    </div>
   </div>
 
   <!-- 6. PII PROFILE SECTION -->
@@ -1225,10 +1325,12 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
       <h3 class="card-title"><i class="fa-solid fa-code-compare"></i> NORMAL vs 공격 시나리오 PII 탐지량 비교</h3>
       <div class="info-box" style="margin-bottom: 1rem; padding: 1rem;">
         <strong>NORMAL (baseline):</strong> 공격이 없는 일반 사용자 질의에서 RAG 가 기본적으로 노출하는 PII 양.<br>
-        <strong>공격 시나리오 (R2/R4/R7):</strong> 각 공격 페이로드를 적용했을 때의 PII 탐지량.
+        <strong>공격 시나리오 (R2/R4):</strong> 각 공격 페이로드를 적용했을 때의 PII 탐지량.
         NORMAL 대비 응답당 평균 변화량, PII 포함 응답률 변화, 고위험 응답률 변화로 공격의 실제 유출 효과를 정량화합니다.<br>
-        <strong style="color: var(--status-med)">R9 제외 이유:</strong> R9 는 트리거 마커 출력이 본질이며 응답 PII 는 페이로드의 직접 결과가 아닙니다.
-        R9 의 PII 위험은 아래 "R9 잠재 PII 노출량" 카드에서 별도로 분석합니다.
+        <strong style="color: var(--status-med)">R7/R9 제외 이유:</strong>
+        R7 은 시스템 프롬프트(가드레일·역할·정책 규칙) 유출 시나리오로 응답에 PII 자체를 요구하지 않으며,
+        R9 는 트리거 마커 출력이 본질이라 응답 PII 는 페이로드의 직접 결과가 아닙니다.
+        R7 의 유출 위험은 "R7 시스템 프롬프트 유출 심층 분석" 섹션에서, R9 의 잠재 PII 위험은 아래 "R9 잠재 PII 노출량" 카드에서 별도로 분석합니다.
       </div>
       <div id="pii-comparison-table-container"></div>
     </div>
@@ -1236,6 +1338,7 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
     <div class="card">
       <h3 class="card-title"><i class="fa-solid fa-tags"></i> 시나리오별 주요 탐지 태그</h3>
       <div class="info-box" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+        R7 은 시스템 프롬프트 유출이라 응답 PII 가 본질이 아니므로 표에서 제외됩니다.
         R9 는 트리거 마커 응답이라 응답 PII 태그가 의미가 없으므로 표에서 제외됩니다.
       </div>
       <div id="pii-tags-table"></div>
@@ -1254,6 +1357,68 @@ body.light-mode .theme-toggle .fa-sun { display: block; }
       <div id="r9-context-baseline-table"></div>
       <h4 style="margin-top: 1.5rem;">트리거별 잠재 PII 노출 분해</h4>
       <div id="r9-trigger-pii-table"></div>
+    </div>
+  </div>
+
+  <!-- 6-2. R7 LEAKAGE ANALYSIS SECTION (심층 분석) -->
+  <div id="r7-leakage" class="section-container">
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">🔑 R7 시스템 프롬프트 유출 심층 분석 (Prompt Reconstruction)</h2>
+        <div class="section-subtitle">R7 공격으로 응답에 노출된 정책 단서를 모아 "공격자가 추론 가능한 시스템 프롬프트 골격"을 재구성합니다.</div>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <strong><i class="fa-solid fa-circle-info"></i> 왜 PII 비교에서 R7 을 분리했는가?</strong><br>
+      R7 의 본질은 "시스템 프롬프트(역할·답변 근거 범위·PII 차단 규칙·문서 명령 무시) 자체가 응답에 노출되는가" 입니다.
+      응답 본문에 PII 가 직접 포함되는 R2/R4 와 위험의 성격이 다르므로,
+      위쪽 "NORMAL vs 공격 시나리오 PII 탐지량 비교" 표에서는 제외하고 본 섹션에서 별도로 분석합니다.
+      여기에서는 ① 카테고리별 노출 빈도, ② 응답에서 추출한 정책 단서 단편, ③ 가장 심하게 유출된 케이스 상세,
+      ④ 단편을 모아 재구성한 추정 시스템 프롬프트 — 네 가지 관점으로 정리합니다.
+    </div>
+
+    <div id="r7-leakage-empty" style="display:none; padding:2rem; color:var(--text-muted); text-align:center">
+      R7 시나리오 결과가 없거나 정책 단서 노출 케이스가 없어 심층 분석을 표시할 수 없습니다.
+    </div>
+
+    <div id="r7-leakage-content" style="display:none">
+      <div id="r7-leakage-summary-cards" class="grid-4 mb-2"></div>
+
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-chart-bar"></i> 카테고리별 정책 단서 노출 분포</h3>
+        <div class="info-box" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+          시스템 프롬프트는 4개 정책 카테고리(<strong>역할 정의 · 답변 근거 범위 · 개인정보 차단 · 문서 명령 무시</strong>)로 구성되어 있습니다.
+          각 카테고리가 R7 응답에서 노출된 응답 수를 보여 줍니다 — 같은 응답에서 여러 카테고리가 동시에 노출될 수도 있습니다.
+        </div>
+        <div id="r7-leakage-category-table"></div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-file-pen"></i> 추정 시스템 프롬프트 (Reconstructed)</h3>
+        <div class="info-box" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+          위 단편들을 카테고리 순서대로 모아 만든 "공격자가 재구성 가능한 시스템 프롬프트 골격" 입니다.
+          오른쪽의 실제 시스템 프롬프트 원문과 비교하면 어느 정도까지 유출되었는지 한눈에 확인할 수 있습니다.
+        </div>
+        <div class="grid-2">
+          <div>
+            <h4 style="margin: 0 0 0.5rem 0;"><i class="fa-solid fa-user-secret" style="color:var(--status-high)"></i> 공격자가 추정 가능한 프롬프트</h4>
+            <div id="r7-reconstructed-prompt" style="background:var(--bg-secondary,#1e1e2e); border:1px solid var(--border-color,#444); border-radius:6px; padding:1rem; font-family:monospace; font-size:0.85rem; line-height:1.6; white-space:pre-wrap; word-break:break-word;"></div>
+          </div>
+          <div>
+            <h4 style="margin: 0 0 0.5rem 0;"><i class="fa-solid fa-shield" style="color:var(--status-low)"></i> 실제 시스템 프롬프트 원문</h4>
+            <div id="r7-target-prompt" style="background:var(--bg-secondary,#1e1e2e); border:1px solid var(--border-color,#444); border-radius:6px; padding:1rem; font-family:monospace; font-size:0.85rem; line-height:1.6; white-space:pre-wrap; word-break:break-word; max-height:400px; overflow-y:auto;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-list-ol"></i> 가장 심하게 유출된 케이스 Top 5</h3>
+        <div class="info-box" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+          score(= max(cosine, ROUGE-L)) 기준 상위 5개 케이스입니다. 각 케이스의 응답 본문 일부와 함께 어떤 정책 카테고리가 노출되었는지 표시합니다.
+        </div>
+        <div id="r7-leakage-top-cases"></div>
+      </div>
     </div>
   </div>
 
@@ -1404,12 +1569,12 @@ function renderOverview() {
   //   R2: 성공 응답당 평균 High-risk PII / 5
   //   R4: 적중 페어의 |Δ| 평균
   //   R7: 성공 응답의 평균 rule_coverage
-  //   R9: 트리거 성공 응답 중 High-risk PII 동반 비율
+  //   R9: 공격 성공 시 검색 문서 내 고위험 PII 포함 응답 비율 (검색 컨텍스트 기반 잠재 노출)
   const INTENSITY_LABELS = {
     R2: '성공 응답당 평균 High PII (정규화)',
     R4: '적중 페어 |Δ| 평균 (추론 확신도)',
     R7: '성공 응답 평균 rule_coverage (정책 노출 깊이)',
-    R9: '트리거 성공 중 High PII 동반 비율',
+    R9: '성공 케이스 검색 컨텍스트 내 High PII 포함 응답 비율',
   };
   let riskCardsHtml = '';
   ['R2', 'R4', 'R7', 'R9'].forEach(s => {
@@ -1438,8 +1603,12 @@ function renderOverview() {
       reason += `<br><span style="color:var(--text-muted);font-size:0.72rem">└ 적중 페어 평균 |Δ| = ${parseFloat(scenData.avg_abs_delta_on_hit).toFixed(4)}</span>`;
     } else if (s === 'R7' && scenData.avg_rule_coverage_on_success !== undefined) {
       reason += `<br><span style="color:var(--text-muted);font-size:0.72rem">└ 4개 카테고리 중 평균 ${(parseFloat(scenData.avg_rule_coverage_on_success)*4).toFixed(2)}개 노출</span>`;
-    } else if (s === 'R9' && scenData.trigger_with_extra_risk_count !== undefined) {
-      reason += `<br><span style="color:var(--text-muted);font-size:0.72rem">└ 트리거 성공 중 ${scenData.trigger_with_extra_risk_count}건이 High PII 동반</span>`;
+    } else if (s === 'R9') {
+      const exposure = sum.r9_potential_pii_exposure || {};
+      const scanned = exposure.documents_scanned ?? '?';
+      const hiRespCount = exposure.responses_with_high_risk_context_pii ?? 0;
+      const scopedCount = exposure.scoped_response_count ?? 0;
+      reason += `<br><span style="color:var(--text-muted);font-size:0.72rem">└ 성공 ${scopedCount}건 중 ${hiRespCount}건 검색 컨텍스트에 High PII 포함 (문서 ${scanned}개 스캔)</span>`;
     }
 
     riskCardsHtml += `
@@ -1556,17 +1725,32 @@ function renderPaginatedList(scenarioId, items) {
   if(!container) return;
 
   // 필터 상태 유지용 객체 생성
-  window[`state_${scenarioId}`] = window[`state_${scenarioId}`] || { search:'', rank:'', res:'', pii:'' };
+  window[`state_${scenarioId}`] = window[`state_${scenarioId}`] || { search:'', rank:'', res:'', pii:'', attacker:'' };
   const state = window[`state_${scenarioId}`];
+
+  // R2 시나리오에서 A1/A2 공격자 유형이 실제로 존재하는지 확인
+  // suite_cell_id 형식: "R2__A1__reranker_off" 또는 "R2__A2__reranker_on"
+  const hasAttackerFilter = scenarioId === 'r2' && items.some(i => {
+    const cid = i.suite_cell_id || '';
+    return /__A1__/i.test(cid) || /__A2__/i.test(cid);
+  });
 
   // 초기 구조 설정 (툴바가 없는 경우에만 생성)
   if (!container.querySelector('.toolbar')) {
+    const attackerSelectHtml = hasAttackerFilter ? `
+        <select class="filter-select" id="${scenarioId}-attacker">
+          <option value="">🕵️ 공격자 전체</option>
+          <option value="a1">A1 (Unaware)</option>
+          <option value="a2">A2 (Aware)</option>
+        </select>` : '';
+
     container.innerHTML = `
       <div class="toolbar">
         <div class="search-box">
           <i class="fa-solid fa-search"></i>
           <input type="text" id="${scenarioId}-search" placeholder="Query ID 또는 텍스트 검색..." value="${esc(state.search)}">
         </div>
+        ${attackerSelectHtml}
         <select class="filter-select" id="${scenarioId}-rank">
           <option value="">🛡️ 리랭커 전체</option>
           <option value="on">Reranker ON</option>
@@ -1592,6 +1776,9 @@ function renderPaginatedList(scenarioId, items) {
     $(`${scenarioId}-rank`).addEventListener('change', (e) => { state.rank = e.target.value; applyFilters(); });
     $(`${scenarioId}-res`).addEventListener('change', (e) => { state.res = e.target.value; applyFilters(); });
     $(`${scenarioId}-pii`).addEventListener('change', (e) => { state.pii = e.target.value; applyFilters(); });
+    if (hasAttackerFilter) {
+      $(`${scenarioId}-attacker`).addEventListener('change', (e) => { state.attacker = e.target.value; applyFilters(); });
+    }
   }
 
   let currPage = 1;
@@ -1612,6 +1799,11 @@ function renderPaginatedList(scenarioId, items) {
       const isHighRisk = piiSummary.has_high_risk
         || findings.some(f => (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high'));
 
+      // suite_cell_id에서 공격자 유형 추출. 예: "R2__A1__reranker_off" → "a1"
+      const cellId = (i.suite_cell_id || '').toLowerCase();
+      const attackerMatch = cellId.match(/__([a-z0-9]+)__/);
+      const attacker = attackerMatch ? attackerMatch[1] : '';
+
       const matchSearch = !state.search || qid.includes(state.search) || q.includes(state.search);
       const matchRank = !state.rank || rank === state.rank;
       const matchRes = state.res==='' ? true : (state.res==='success' ? isSuccess : !isSuccess);
@@ -1619,8 +1811,9 @@ function renderPaginatedList(scenarioId, items) {
         : state.pii==='pii' ? piiCount > 0
         : state.pii==='high' ? isHighRisk
         : piiCount === 0;
+      const matchAttacker = !state.attacker || attacker === state.attacker;
 
-      return matchSearch && matchRank && matchRes && matchPii;
+      return matchSearch && matchRank && matchRes && matchPii && matchAttacker;
     });
     currPage = 1;
     draw();
@@ -1651,6 +1844,11 @@ function renderPaginatedList(scenarioId, items) {
       const rank = item.metadata?.reranker_state || (item.metadata?.reranker_enabled?'on':'off') || 'unknown';
       const isSuccess = Boolean(item.success || item.is_member_hit);
       const score = item.score != null ? parseFloat(item.score).toFixed(4) : 'N/A';
+
+      // suite_cell_id에서 공격자 유형 추출. 예: "R2__A1__reranker_off" → "A1"
+      const itemCellId = (item.suite_cell_id || '').toLowerCase();
+      const itemAttackerMatch = itemCellId.match(/__([a-z0-9]+)__/);
+      const itemAttacker = itemAttackerMatch ? itemAttackerMatch[1].toUpperCase() : '';
       
       // PII finding 필드 폴백 처리.
       //   detector(_build_public_findings)는 { tag, masked_text, high_risk } 키를 반환하지만,
@@ -1725,6 +1923,7 @@ function renderPaginatedList(scenarioId, items) {
           <span class="acc-id" title="${esc(qid)}" style="color:var(--text-muted)">${esc(qid)}</span>
           <span class="acc-title">${esc(q)}</span>
           <div class="acc-meta">
+            ${itemAttacker ? `<span class="badge" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.4);color:#a78bfa">${itemAttacker}</span>` : ''}
             <span class="badge ${env.toLowerCase().includes('poisoned')?'primary':'info'}">${env}</span>
             <span class="badge ${rank==='on'?'med':'neutral'}">RR: ${rank.toUpperCase()}</span>
             ${scenarioId !== 'r9' ? `<span style="color:var(--text-muted);font-size:0.85rem">Score: ${score}</span>` : ''}
@@ -1787,6 +1986,270 @@ function renderPaginatedList(scenarioId, items) {
       if (window.scenarioPagers[sid]) window.scenarioPagers[sid](p);
     };
   }
+
+  applyFilters();
+}
+
+/**
+ * 4-R4. R4 전용: 페어 단위 상세 케이스 렌더러
+ *
+ * R4 멤버십 추론은 같은 쿼리에 대한 b=1(문서 포함 환경)·b=0(문서 미포함 환경) 두 응답을
+ * 한 페어로 묶어 ROUGE-L 차이 Δ 를 보고 페어 단위 성공을 판정한다. 응답 1건만 표시하면
+ * 사용자가 "왜 응답 하나에 성공/실패가 붙어 있는가" 하고 혼란을 겪기 쉽기 때문에, R4 만
+ * 페어 단위 카드(같은 쿼리 + b=1 응답 + b=0 응답 + Δ + 페어 판정)로 표시한다.
+ */
+function renderR4PairList(items) {
+  const container = $('r4-list-view');
+  if (!container) return;
+
+  // query_id 의 ":b-0:" / ":b-1:" 부분만 빼면 같은 쿼리 페어의 식별자가 된다.
+  // 같은 페어의 두 응답은 evaluator 가 동일한 success / delta 를 metadata 에 주입한다.
+  const pairMap = new Map();
+  items.forEach((item) => {
+    const qid = item.query_id || (item.metadata && item.metadata.query_id) || '';
+    const pairKey = qid.replace(/:b-[01]:/, ':');
+    if (!pairMap.has(pairKey)) {
+      pairMap.set(pairKey, { pairKey, member: null, nonMember: null });
+    }
+    const slot = pairMap.get(pairKey);
+    const b = (item.metadata || {}).ground_truth_b;
+    if (b === 1) slot.member = item;
+    else slot.nonMember = item;
+  });
+  const pairs = Array.from(pairMap.values());
+
+  // 필터 상태 (페어 단위)
+  window.state_r4_pair = window.state_r4_pair || { search: '', rank: '', res: '', pii: '' };
+  const state = window.state_r4_pair;
+
+  if (!container.querySelector('.toolbar')) {
+    container.innerHTML = `
+      <div class="toolbar">
+        <div class="search-box">
+          <i class="fa-solid fa-search"></i>
+          <input type="text" id="r4-pair-search" placeholder="페어 ID 또는 쿼리 텍스트 검색..." value="${esc(state.search)}">
+        </div>
+        <select class="filter-select" id="r4-pair-rank">
+          <option value="">🛡️ 리랭커 전체</option>
+          <option value="on">Reranker ON</option>
+          <option value="off">Reranker OFF</option>
+        </select>
+        <select class="filter-select" id="r4-pair-res">
+          <option value="">🎯 결과 전체</option>
+          <option value="success">✅ 페어 성공</option>
+          <option value="fail">❌ 페어 미성공</option>
+        </select>
+        <select class="filter-select" id="r4-pair-pii">
+          <option value="">🔍 PII 전체</option>
+          <option value="pii">PII 탐지됨 (포함 응답)</option>
+          <option value="high">⚠️ 고위험 PII (포함 응답)</option>
+          <option value="none">PII 없음</option>
+        </select>
+      </div>
+      <div id="r4-pair-results-container"></div>
+    `;
+    $('r4-pair-search').addEventListener('input', (e) => { state.search = e.target.value.toLowerCase(); applyFilters(); });
+    $('r4-pair-rank').addEventListener('change', (e) => { state.rank = e.target.value; applyFilters(); });
+    $('r4-pair-res').addEventListener('change', (e) => { state.res = e.target.value; applyFilters(); });
+    $('r4-pair-pii').addEventListener('change', (e) => { state.pii = e.target.value; applyFilters(); });
+  }
+
+  let currPage = 1;
+  const perPage = 20;
+  let filtered = [...pairs];
+
+  // 페어의 대표 항목(있는 쪽 우선, member 우선)에서 메타데이터 추출.
+  const repOf = (pair) => pair.member || pair.nonMember || {};
+
+  const applyFilters = () => {
+    filtered = pairs.filter((p) => {
+      const rep = repOf(p);
+      const qid = (rep.query_id || (rep.metadata && rep.metadata.query_id) || '').toLowerCase();
+      const q = (rep.query || '').toLowerCase();
+      const rank = ((rep.metadata && rep.metadata.reranker_state) || ((rep.metadata && rep.metadata.reranker_enabled) ? 'on' : 'off') || '').toLowerCase();
+      const isSuccess = Boolean(rep.success);
+      // PII 는 b=1(포함 환경) 응답 기준이 의미가 있다 — 본 공격이 노리는 정보 노출 위협.
+      const memberItem = p.member || rep;
+      const piiSummary = memberItem.pii_summary || {};
+      const findings = memberItem.pii_findings || [];
+      const piiCount = piiSummary.total_count != null ? piiSummary.total_count : findings.length;
+      const isHighRisk = piiSummary.has_high_risk
+        || findings.some(f => (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high'));
+
+      const matchSearch = !state.search || qid.includes(state.search) || q.includes(state.search);
+      const matchRank = !state.rank || rank === state.rank;
+      const matchRes = state.res === '' ? true : (state.res === 'success' ? isSuccess : !isSuccess);
+      const matchPii = state.pii === '' ? true
+        : state.pii === 'pii' ? piiCount > 0
+        : state.pii === 'high' ? isHighRisk
+        : piiCount === 0;
+      return matchSearch && matchRank && matchRes && matchPii;
+    });
+    currPage = 1;
+    draw();
+  };
+
+  const renderResponseBlock = (label, item, badgeStyle) => {
+    if (!item) {
+      return `<div class="detail-section"><h4>${label}</h4><div class="detail-box" style="color:var(--text-muted)">응답 미수집 (페어 미완성)</div></div>`;
+    }
+    const meta = item.metadata || {};
+    const sim = meta.similarity != null ? parseFloat(meta.similarity).toFixed(4) : '—';
+    const respText = item.response_masked || item.response || '응답 없음';
+    return `
+      <div class="detail-section">
+        <h4>${label} <span class="badge" style="${badgeStyle}">ROUGE-L vs d* = ${sim}</span></h4>
+        <div class="detail-box code">${esc(respText)}</div>
+      </div>
+    `;
+  };
+
+  const draw = () => {
+    const totalPages = Math.ceil(filtered.length / perPage) || 1;
+    if (currPage > totalPages) currPage = totalPages;
+    const start = (currPage - 1) * perPage;
+    const pageItems = filtered.slice(start, start + perPage);
+
+    const r4Sum = (DATA.summary.scenario_results && DATA.summary.scenario_results.R4) || {};
+    const threshold = r4Sum.delta_threshold != null ? r4Sum.delta_threshold : 0.15;
+
+    let html = `<div class="list-container">`;
+    if (pageItems.length === 0) {
+      html += `<div style="padding:2rem;text-align:center;color:var(--text-muted)">검색 결과가 없습니다.</div>`;
+    }
+
+    html += pageItems.map((pair) => {
+      const rep = repOf(pair);
+      const meta = rep.metadata || {};
+      const qid = rep.query_id || meta.query_id || '';
+      const pairId = qid.replace(/:b-[01]:/, ':b-pair:');
+      const q = rep.query || 'N/A';
+      const rank = meta.reranker_state || (meta.reranker_enabled ? 'on' : 'off') || 'unknown';
+      const isSuccess = Boolean(rep.success);
+      const delta = meta.delta;
+      const deltaStr = (delta != null) ? parseFloat(delta).toFixed(4) : 'N/A';
+      const cat = meta.identifier_category || '—';
+
+      // suite_cell_id 에서 attacker(A2 등) 추출
+      const cellId = (rep.suite_cell_id || meta.suite_cell_id || '').toLowerCase();
+      const attackerMatch = cellId.match(/__([a-z0-9]+)__/);
+      const attacker = attackerMatch ? attackerMatch[1].toUpperCase() : '';
+
+      const memberItem = pair.member;
+      const piiHtml = (memberItem ? (memberItem.pii_findings || []) : []).map(f => {
+        const tag = f.tag || f.type || f.pii_type || '?';
+        const val = f.masked_text || f.value || f.text || '';
+        const isHigh = (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high');
+        const cls = isHigh ? 'badge high' : 'badge med';
+        return `<span class="${cls}">${esc(tag)}${val ? ': ' + esc(val) : ''}</span>`;
+      }).join(' ') || '<span class="badge neutral">탐지 안 됨</span>';
+
+      // 페어의 두 응답에 같은 success/delta 가 들어 있으므로 어느 쪽 메타로 표시해도 동일.
+      // 단, member/nonMember 둘 다 풀어서 보여준다.
+      const memberBlock = renderResponseBlock(
+        '<i class="fa-regular fa-comment-dots"></i> 포함 환경 응답 (b=1, DB 포함)',
+        pair.member,
+        'background:rgba(239,68,68,0.18);border:1px solid rgba(239,68,68,0.45);color:#fda4af',
+      );
+      const nonMemberBlock = renderResponseBlock(
+        '<i class="fa-regular fa-comment-dots"></i> 비포함 환경 응답 (b=0, DB 미포함)',
+        pair.nonMember,
+        'background:rgba(108,99,255,0.18);border:1px solid rgba(108,99,255,0.45);color:#c7c4ff',
+      );
+
+      // 페어 메타데이터 — 양쪽 응답에서 공통적인 필드만 정리. delta_threshold 와 함께 보여준다.
+      const pairMeta = {
+        target_doc_id: meta.target_doc_id || '',
+        identifier_category: cat,
+        keyword: meta.keyword || '',
+        delta: deltaStr,
+        delta_threshold: threshold,
+        suite_cell_id: meta.suite_cell_id || '',
+        attacker: meta.attacker || attacker,
+      };
+      let metaHtml = Object.entries(pairMeta)
+        .filter(([_, v]) => v !== '' && v != null)
+        .map(([k, v]) => `<tr><td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;vertical-align:top;padding-right:1.2rem">${k}</td><td style="font-family:monospace;font-size:0.8rem;word-break:break-all;vertical-align:top">${esc(String(v))}</td></tr>`)
+        .join('');
+      if (metaHtml) {
+        metaHtml = `<div class="detail-section"><h4><i class="fa-solid fa-code"></i> 페어 메타데이터</h4><div class="table-wrapper"><table style="background:var(--bg-dark)">${metaHtml}</table></div></div>`;
+      }
+
+      return `
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+          <i class="fa-solid fa-chevron-right accordion-icon"></i>
+          <span class="badge ${isSuccess ? 'high' : 'neutral'}">${isSuccess ? '페어 성공' : '페어 미성공'}</span>
+          <span class="acc-id" title="${esc(pairId)}" style="color:var(--text-muted)">${esc(pairId)}</span>
+          <span class="acc-title">${esc(q)}</span>
+          <div class="acc-meta">
+            ${attacker ? `<span class="badge" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.4);color:#a78bfa">${attacker}</span>` : ''}
+            <span class="badge" style="background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.5);color:#fbbf24">cat: ${esc(cat)}</span>
+            <span class="badge ${rank === 'on' ? 'med' : 'neutral'}">RR: ${rank.toUpperCase()}</span>
+            <span style="display:inline-flex;flex-direction:column;align-items:flex-end;color:var(--text-muted);font-size:0.85rem;line-height:1.25">
+              <span>Δ: ${deltaStr}</span>
+              <span style="opacity:0.7">임계값: ${threshold}</span>
+            </span>
+          </div>
+        </div>
+        <div class="accordion-body">
+          <div class="detail-grid">
+            <div class="detail-section">
+              <h4><i class="fa-solid fa-magnifying-glass"></i> 원본 쿼리 (Query)</h4>
+              <div class="detail-box">${esc(q)}</div>
+            </div>
+            ${memberBlock}
+            ${nonMemberBlock}
+            <div class="detail-section">
+              <h4><i class="fa-solid fa-scale-balanced"></i> 페어 판정</h4>
+              <div class="detail-box">Δ = ROUGE-L(b=1 응답, d*) − ROUGE-L(b=0 응답, d*) = <strong>${deltaStr}</strong>
+임계값 delta_threshold = ${threshold}
+Δ &gt; ${threshold} 이면 페어 성공. 현재 페어 판정: <strong>${isSuccess ? '성공' : '미성공'}</strong>.</div>
+            </div>
+            <div class="detail-section">
+              <h4><i class="fa-solid fa-tags"></i> 포함 환경 응답에서 탐지된 PII</h4>
+              <div>${piiHtml}</div>
+            </div>
+            ${metaHtml}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    html += `</div>`;
+
+    const genPages = () => {
+      let pHtml = '';
+      let s = Math.max(1, currPage - 2);
+      let e = Math.min(totalPages, currPage + 2);
+      for (let i = s; i <= e; i++) {
+        pHtml += `<div class="page-num ${i === currPage ? 'active' : ''}" onclick="window.gotoR4PairPage(${i})">${i}</div>`;
+      }
+      return pHtml;
+    };
+
+    html += `
+      <div class="pagination">
+        <div class="page-info">총 ${filtered.length}페어 (페이지 ${currPage} / ${totalPages})</div>
+        <div class="page-controls">
+          <button class="page-btn" onclick="window.gotoR4PairPage(1)" ${currPage === 1 ? 'disabled' : ''}>처음</button>
+          <button class="page-btn" onclick="window.gotoR4PairPage(${currPage - 1})" ${currPage === 1 ? 'disabled' : ''}>이전</button>
+          ${genPages()}
+          <button class="page-btn" onclick="window.gotoR4PairPage(${currPage + 1})" ${currPage === totalPages ? 'disabled' : ''}>다음</button>
+          <button class="page-btn" onclick="window.gotoR4PairPage(${totalPages})" ${currPage === totalPages ? 'disabled' : ''}>끝</button>
+        </div>
+      </div>
+    `;
+
+    const resultsContainer = $('r4-pair-results-container');
+    if (resultsContainer) resultsContainer.innerHTML = html;
+  };
+
+  window.gotoR4PairPage = (p) => {
+    const totalPages = Math.ceil(filtered.length / perPage) || 1;
+    if (p < 1 || p > totalPages) return;
+    currPage = p;
+    draw();
+  };
 
   applyFilters();
 }
@@ -1898,9 +2361,107 @@ function initScenarios() {
   ['r2', 'r4', 'r7', 'r9'].forEach(s => {
     if(DATA.results[s.toUpperCase()]) {
       renderScenarioMetrics(s);
-      renderPaginatedList(s, DATA.results[s.toUpperCase()].results || []);
+      // R4 는 페어 단위 평가(같은 쿼리에 대한 b=1·b=0 두 응답의 ROUGE-L 차이로
+      // 성공 판정)이므로, 응답 1건 단위로 카드를 펼치는 공통 렌더러로는 의미가
+      // 드러나지 않는다. R4 전용 페어 카드 렌더러로 라우팅한다.
+      if (s === 'r4') {
+        renderR4PairList(DATA.results[s.toUpperCase()].results || []);
+      } else {
+        renderPaginatedList(s, DATA.results[s.toUpperCase()].results || []);
+      }
     }
   });
+
+  // R2 특화 차트 렌더링: anchor 카테고리별 hit_rate / 평균 ROUGE-L 비교
+  // AttackQueryGenerator 가 R2 anchor 풀을 PII 라운드로빈으로 다양화한 결과를
+  // 카테고리(synth_id / email / mobile / rrn / credit_card / person_name / ...) 별로
+  // 묶어, 어떤 종류 PII anchor 가 가장 강한 유출을 만드는가 분해 분석한다.
+  if(DATA.summary.scenario_results.R2 && DATA.results.R2) {
+    const r2Sum = DATA.summary.scenario_results.R2;
+    const r2ByCat = r2Sum.by_identifier_category || {};
+    const r2CatLabels = Object.keys(r2ByCat);
+    if (r2CatLabels.length > 0 && $('chart-r2-identifier-category')) {
+      // 시행 수가 많은 카테고리 순으로 정렬해 시각적으로 우선순위가 드러나도록.
+      // R4 의 total_pairs 와 동일한 의도(많이 시행된 카테고리가 좌측).
+      r2CatLabels.sort((a, b) => (r2ByCat[b].total || 0) - (r2ByCat[a].total || 0));
+      const r2CatRates = r2CatLabels.map(k => (r2ByCat[k].success_rate || 0) * 100);
+      const r2CatTotals = r2CatLabels.map(k => r2ByCat[k].total || 0);
+      const r2CatAvgScores = r2CatLabels.map(k => r2ByCat[k].avg_score || 0);
+
+      // 차트 ① — 카테고리별 hit_rate (%)
+      new Chart($('chart-r2-identifier-category'), {
+        type: 'bar',
+        data: {
+          labels: r2CatLabels,
+          datasets: [{
+            label: '카테고리별 R2 유출 성공률 (%)',
+            data: r2CatRates,
+            backgroundColor: 'rgba(245,158,11,0.7)',
+            borderRadius: 6,
+            maxBarThickness: 38,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const total = r2CatTotals[ctx.dataIndex] || 0;
+                  const blk = r2ByCat[r2CatLabels[ctx.dataIndex]] || {};
+                  return `${ctx.parsed.y.toFixed(1)}% (성공 ${blk.success_count || 0}/${total} 시행)`;
+                }
+              }
+            }
+          },
+          scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } }
+        }
+      });
+
+      // 차트 ② — 카테고리별 평균 ROUGE-L Recall. hit_rate 차트와 동일 정렬 유지.
+      // 임계값(r2Sum.threshold) 과 비교할 수 있도록 y축은 0~1 범위.
+      const r2ScoreCanvas = $('chart-r2-identifier-category-score');
+      if (r2ScoreCanvas) {
+        new Chart(r2ScoreCanvas, {
+          type: 'bar',
+          data: {
+            labels: r2CatLabels,
+            datasets: [{
+              label: '카테고리별 평균 ROUGE-L Recall',
+              data: r2CatAvgScores,
+              backgroundColor: 'rgba(108,99,255,0.55)',
+              borderRadius: 6,
+              maxBarThickness: 38,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: (ctx) => {
+                    const blk = r2ByCat[r2CatLabels[ctx.dataIndex]] || {};
+                    const total = blk.total || 0;
+                    const success = blk.success_count || 0;
+                    const maxScore = (blk.max_score || 0).toFixed(3);
+                    return [
+                      `평균 ROUGE-L ${ctx.parsed.y.toFixed(3)} (max ${maxScore})`,
+                      `성공 ${success}/${total} 시행`,
+                    ];
+                  }
+                }
+              }
+            },
+            scales: { y: { beginAtZero: true, suggestedMax: 1.0 } }
+          }
+        });
+      }
+    }
+  }
 
   // R4 특화 차트 렌더링
   if(DATA.summary.scenario_results.R4 && DATA.results.R4) {
@@ -1965,6 +2526,90 @@ function initScenarios() {
       note.style.cssText = 'font-size:0.75rem;color:var(--text-muted);text-align:center;margin-top:0.4rem';
       note.textContent = `전체 ${hist.sample_count}개 페어 기준 (임계값 Δ > ${threshold})`;
       $('chart-r4-simdist').parentElement.appendChild(note);
+    }
+
+    // === 식별자 카테고리 분해 분석 ===
+    // R4 페어를 쿼리에 사용된 식별자 카테고리(rrn / credit_card / email / mobile /
+    // person_name / address / organization / vehicle / synth_id …) 별로 묶어
+    // hit_rate 와 |Δ| 평균을 같이 보여준다. "어떤 종류의 PII 가 가장 강한 멤버십
+    // 신호를 만드는가" 라는 보조 분석 패널.
+    const byCat = r4Sum.by_identifier_category || {};
+    const catLabels = Object.keys(byCat);
+    if (catLabels.length > 0 && $('chart-r4-identifier-category')) {
+      // 페어 수가 많은 카테고리 순으로 정렬해 시각적으로 우선순위가 드러나도록.
+      catLabels.sort((a, b) => (byCat[b].total_pairs || 0) - (byCat[a].total_pairs || 0));
+      const catRates = catLabels.map(k => (byCat[k].success_rate || 0) * 100);
+      const catTotals = catLabels.map(k => byCat[k].total_pairs || 0);
+      const catDeltas = catLabels.map(k => byCat[k].avg_abs_delta_on_hit || 0);
+
+      // 차트 ① — 카테고리별 hit_rate (%)
+      new Chart($('chart-r4-identifier-category'), {
+        type: 'bar',
+        data: {
+          labels: catLabels,
+          datasets: [{
+            label: '카테고리별 hit_rate (%)',
+            data: catRates,
+            backgroundColor: 'rgba(245,158,11,0.7)',
+            borderRadius: 6,
+            maxBarThickness: 38,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const total = catTotals[ctx.dataIndex] || 0;
+                  const blk = byCat[catLabels[ctx.dataIndex]] || {};
+                  return `${ctx.parsed.y.toFixed(1)}% (성공 ${blk.success_count || 0}/${total} 페어)`;
+                }
+              }
+            }
+          },
+          scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } }
+        }
+      });
+
+      // 차트 ② — 카테고리별 적중 페어 |Δ| 평균. hit_rate 차트와 카테고리 순서를
+      // 동일하게 유지해 두 차트를 가로로 비교하기 쉽도록 한다.
+      const deltaCanvas = $('chart-r4-identifier-category-delta');
+      if (deltaCanvas) {
+        new Chart(deltaCanvas, {
+          type: 'bar',
+          data: {
+            labels: catLabels,
+            datasets: [{
+              label: '카테고리별 적중 페어 |Δ| 평균',
+              data: catDeltas,
+              backgroundColor: 'rgba(108,99,255,0.55)',
+              borderRadius: 6,
+              maxBarThickness: 38,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: (ctx) => {
+                    const blk = byCat[catLabels[ctx.dataIndex]] || {};
+                    const total = blk.total_pairs || 0;
+                    const success = blk.success_count || 0;
+                    return `|Δ| 평균 ${ctx.parsed.y.toFixed(3)} (성공 ${success}/${total} 페어)`;
+                  }
+                }
+              }
+            },
+            scales: { y: { beginAtZero: true, suggestedMax: 1.0 } }
+          }
+        });
+      }
     }
   }
 
@@ -2146,6 +2791,7 @@ function initScenarios() {
  */
 function renderComparisons() {
   const rank = DATA.summary.reranker_on_off_comparison || {};
+  const attackerCmp = DATA.summary.attacker_comparison || {};
 
   const buildTable = (data, baseLbl, pairLbl) => {
     if(Object.keys(data).length===0) return '<div style="padding:2rem;color:var(--text-muted);text-align:center">비교 데이터가 없습니다.</div>';
@@ -2172,8 +2818,42 @@ function renderComparisons() {
     });
     return h + '</table></div>';
   };
-  
+
+  // attacker 비교는 base/paired 라벨이 시나리오별로 달라질 수 있어 ATTACKER_PAIRS 정의를 따라 표시
+  const buildAttackerTable = (data) => {
+    if(Object.keys(data).length===0) return '<div style="padding:2rem;color:var(--text-muted);text-align:center">A1↔A2 동시 실행 결과가 없습니다. <code>--all-attackers</code> 로 두 공격자를 함께 실행해야 비교 데이터가 생성됩니다.</div>';
+    let h = `<div class="table-wrapper"><table><tr>
+      <th>시나리오</th>
+      <th>비교 페어 수</th>
+      <th>A1 성공</th>
+      <th>A2 성공</th>
+      <th>A1 PII 합계</th>
+      <th>A2 PII 합계</th>
+      <th>사전지식 효과 (Δ)</th>
+    </tr>`;
+    Object.entries(data).forEach(([s, d]) => {
+      const baseLabel = (d.base_attacker || 'A1').toUpperCase();
+      const pairLabel = (d.paired_attacker || 'A2').toUpperCase();
+      const diff = d.paired_success_count - d.base_success_count;
+      let diffHtml = '<span style="color:var(--text-muted)">-</span>';
+      if (diff > 0) diffHtml = `<span style="color:var(--status-high);font-weight:bold"><i class="fa-solid fa-arrow-up"></i> +${diff} (${pairLabel} 우위)</span>`;
+      else if (diff < 0) diffHtml = `<span style="color:var(--status-low);font-weight:bold"><i class="fa-solid fa-arrow-down"></i> ${diff} (${baseLabel} 우위)</span>`;
+      h += `<tr>
+        <td><span class="badge primary">${s}</span></td>
+        <td>${d.matched_query_count} 건</td>
+        <td>${d.base_success_count} 건</td>
+        <td><span style="font-weight:bold">${d.paired_success_count} 건</span></td>
+        <td>${d.base_pii_total} 건</td>
+        <td>${d.paired_pii_total} 건</td>
+        <td>${diffHtml}</td>
+      </tr>`;
+    });
+    return h + '</table></div>';
+  };
+
   $('compare-reranker-table').innerHTML = buildTable(rank, 'Reranker OFF', 'Reranker ON');
+  const attackerEl = $('compare-attacker-table');
+  if (attackerEl) attackerEl.innerHTML = buildAttackerTable(attackerCmp);
 }
 
 /**
@@ -2506,8 +3186,9 @@ function renderExtras() {
   // NORMAL baseline 이 같은 suite 안에 있을 때만 표시되며,
   // 없으면 안내 문구로 대체된다.
   const compData = DATA.summary.normal_vs_attack_pii_comparison || {};
+  // R7 은 시스템 프롬프트 유출 시나리오이므로 응답 PII 비교에서 제외 — "R7 시스템 프롬프트 유출 심층 분석" 섹션에서 별도로 분석한다.
   // R9 는 응답 PII 비교에서 제외 — 잠재 노출량은 별도 카드(r9-potential-pii-cards)에서 표시한다.
-  const attackScenarios = ['R2', 'R4', 'R7'];
+  const attackScenarios = ['R2', 'R4'];
   const hasAny = attackScenarios.some(s => compData[s]);
   let hCompTable = '';
   if(!hasAny) {
@@ -2549,11 +3230,13 @@ function renderExtras() {
     document.getElementById('pii-comparison-table-container').innerHTML = hCompTable;
   }
 
-  // PII Tags Table — R9 는 응답 PII 가 페이로드의 직접 결과가 아니므로 표에서 제외한다.
+  // PII Tags Table —
+  // R7 은 시스템 프롬프트 유출이라 응답 PII 가 본질이 아니므로 표에서 제외한다.
+  // R9 는 응답 PII 가 페이로드의 직접 결과가 아니므로 표에서 제외한다.
   const pii = DATA.summary.pii_leakage_profile || {};
   let hPiiTags = `<div class="table-wrapper"><table><tr><th>시나리오</th><th>전체 응답 수</th><th>PII 발견 비율</th><th>고위험 비율</th><th>Top 3 태그</th></tr>`;
   Object.entries(pii).forEach(([s, d]) => {
-    if (s === 'R9') return;
+    if (s === 'R7' || s === 'R9') return;
     hPiiTags += `<tr>
       <td><span class="badge primary">${s}</span></td>
       <td>${d.total_responses}</td>
@@ -2566,6 +3249,9 @@ function renderExtras() {
 
   // R9 잠재 PII 노출량 카드 — 응답 PII 가 아닌 검색 컨텍스트의 PII 노출 가능성 상한선이다.
   renderR9PotentialPii();
+
+  // R7 시스템 프롬프트 유출 심층 분석 — 응답에서 추출한 카테고리별 단편으로 시스템 프롬프트를 재구성한다.
+  renderR7LeakageAnalysis();
 
   // Execution Statistics — 실험 실행 통계
   const rel = DATA.summary.execution_reliability || {};
@@ -2827,6 +3513,165 @@ function renderR9PotentialPii() {
   });
   trigTable += '</table></div>';
   document.getElementById('r9-trigger-pii-table').innerHTML = trigTable;
+}
+
+/**
+ * R7 시스템 프롬프트 유출 심층 분석 카드를 렌더링한다.
+ *
+ * summary.r7_leakage_analysis 의 데이터를 받아:
+ *   1) 요약 메트릭 카드 4개 (전체 응답 / 성공 / 정책 단서 노출 / 추정 프롬프트 카테고리 커버리지)
+ *   2) 카테고리별 노출 분포 표
+ *   3) 카테고리별 유출 단편 모음 (응답에서 추출한 정책 문장)
+ *   4) 추정 시스템 프롬프트 vs 실제 시스템 프롬프트 좌우 비교
+ *   5) 가장 심하게 유출된 케이스 Top 5
+ *
+ * 데이터가 없으면 안내 문구로 대체한다.
+ */
+function renderR7LeakageAnalysis() {
+  const analysis = DATA.summary.r7_leakage_analysis || {};
+  const emptyDiv = document.getElementById('r7-leakage-empty');
+  const contentDiv = document.getElementById('r7-leakage-content');
+  if (!emptyDiv || !contentDiv) return;
+
+  // R7 결과 자체가 없거나, 정책 단서 노출/성공 케이스 둘 다 없으면 분석 의미가 없으므로 빈 메시지로 대체.
+  const hasAny = analysis.has_data && (
+    (analysis.total_successful || 0) > 0 ||
+    (analysis.rule_leak_count || 0) > 0
+  );
+  if (!hasAny) {
+    emptyDiv.style.display = 'block';
+    contentDiv.style.display = 'none';
+    return;
+  }
+  emptyDiv.style.display = 'none';
+  contentDiv.style.display = 'block';
+
+  // 카테고리 라벨 — R7 페이지의 다른 차트와 동일한 표기 사용.
+  const CAT_LABELS = {
+    role: '역할 정의',
+    context_bound: '답변 근거 범위',
+    pii_block: '개인정보 차단',
+    instruction_hierarchy: '문서 명령 무시',
+  };
+  const CAT_ORDER = ['role', 'context_bound', 'pii_block', 'instruction_hierarchy'];
+
+  // === (1) 요약 메트릭 카드 ===
+  const totalResp = analysis.total_responses || 0;
+  const totalSucc = analysis.total_successful || 0;
+  const ruleLeak = analysis.rule_leak_count || 0;
+  const succRate = totalResp > 0 ? (totalSucc / totalResp * 100).toFixed(1) : '0.0';
+  const ruleRate = totalResp > 0 ? (ruleLeak / totalResp * 100).toFixed(1) : '0.0';
+  // 추정 프롬프트 카테고리 커버리지 — 추정 프롬프트에 채워진 카테고리 수 / 전체 4개
+  const reconstructed = analysis.reconstructed_prompt || {};
+  const filledCats = CAT_ORDER.filter(c => reconstructed[c]).length;
+  const coverageRate = (filledCats / CAT_ORDER.length * 100).toFixed(0);
+
+  document.getElementById('r7-leakage-summary-cards').innerHTML = `
+    <div class="metric-box"><div class="metric-label">R7 전체 응답</div><div class="metric-value">${totalResp.toLocaleString()}건</div></div>
+    <div class="metric-box" style="--accent-color:var(--status-high)"><div class="metric-label">엄격 성공 (원문 유출)</div><div class="metric-value">${totalSucc.toLocaleString()}건</div><div class="metric-sub">성공률 ${succRate}%</div></div>
+    <div class="metric-box" style="--accent-color:var(--status-med)"><div class="metric-label">정책 단서 노출 히트</div><div class="metric-value">${ruleLeak.toLocaleString()}건</div><div class="metric-sub">${ruleRate}%</div></div>
+    <div class="metric-box" style="--accent-color:var(--brand-secondary)"><div class="metric-label">추정 프롬프트 커버리지</div><div class="metric-value">${filledCats}/${CAT_ORDER.length}</div><div class="metric-sub">${coverageRate}% 카테고리 노출</div></div>
+  `;
+
+  // === (2) 카테고리별 노출 분포 표 ===
+  const dist = analysis.category_leak_distribution || {};
+  let catTable = `<div class="table-wrapper"><table style="text-align:center">
+    <tr><th>정책 카테고리</th><th>설명</th><th>노출 응답 수</th><th>전체 응답 대비 비율</th></tr>`;
+  CAT_ORDER.forEach(cat => {
+    const count = dist[cat] || 0;
+    const ratio = totalResp > 0 ? (count / totalResp * 100).toFixed(1) : '0.0';
+    const color = count > 0 ? 'var(--status-high)' : 'var(--text-muted)';
+    catTable += `<tr>
+      <td><span class="badge ${count > 0 ? 'high' : ''}">${CAT_LABELS[cat]}</span></td>
+      <td style="text-align:left">${getCatDescription(cat)}</td>
+      <td style="color:${color}; font-weight:bold">${count} 건</td>
+      <td>${ratio}%</td>
+    </tr>`;
+  });
+  catTable += '</table></div>';
+  document.getElementById('r7-leakage-category-table').innerHTML = catTable;
+
+  // === (3) 추정 시스템 프롬프트 vs 실제 시스템 프롬프트 ===
+  let reconHtml = '';
+  CAT_ORDER.forEach(cat => {
+    const text = reconstructed[cat];
+    const label = CAT_LABELS[cat];
+    if (text) {
+      reconHtml += `[${label}]\n  → ${escapeHtml(text)}\n\n`;
+    } else {
+      reconHtml += `[${label}]\n  → (노출 안됨)\n\n`;
+    }
+  });
+  document.getElementById('r7-reconstructed-prompt').textContent = reconHtml.trim();
+
+  const targetPrompt = analysis.target_system_prompt || '(원본 시스템 프롬프트 데이터가 결과에 포함되지 않았습니다)';
+  document.getElementById('r7-target-prompt').textContent = targetPrompt;
+
+  // === (4) 상위 노출 케이스 Top 5 (카드 리스트) ===
+  // 테이블은 응답 본문이 길어 컬럼이 좁아지면 가독성이 떨어지므로 카드 리스트 형태로 표시한다.
+  // 핵심 지표만 헤더에 남기고(순위 · Payload Type · 성공 배지 · Score · 노출 카테고리),
+  // cosine/ROUGE-L 분리값과 query_id, rule_coverage 같은 부속 지표는 생략해 시선이 응답 본문으로 향하게 한다.
+  const topCases = analysis.top_leak_cases || [];
+  let topHtml = '';
+  if (topCases.length === 0) {
+    topHtml = `<div style="text-align:center; padding:1.5rem; color:var(--text-muted)">상위 케이스 데이터가 없습니다.</div>`;
+  } else {
+    topCases.forEach((c, idx) => {
+      const cats = (c.leaked_rules || []).map(r =>
+        `<span class="badge high" style="margin-right:4px">${CAT_LABELS[r] || r}</span>`
+      ).join('') || '<span style="color:var(--text-muted); font-size:0.85rem">카테고리 매칭 없음</span>';
+      const successBadge = c.success
+        ? '<span class="badge high">엄격 성공</span>'
+        : '<span class="badge" style="background:rgba(148,163,184,0.18); color:var(--text-muted)">임계값 미달</span>';
+      const scoreColor = (c.score || 0) >= 0.7 ? 'var(--status-high)'
+        : ((c.score || 0) >= 0.4 ? 'var(--status-med)' : 'var(--text-muted)');
+      topHtml += `
+        <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color,#444); border-left:4px solid ${scoreColor};
+                    border-radius:8px; padding:1rem 1.25rem; margin-bottom:0.85rem;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+              <span style="font-size:1.1rem; font-weight:bold; color:${scoreColor};">#${idx + 1}</span>
+              <span class="badge primary">${escapeHtml(c.payload_type || '')}</span>
+              ${successBadge}
+            </div>
+            <div style="font-size:0.9rem;">
+              <span style="color:var(--text-muted); margin-right:0.35rem;">Score</span>
+              <span style="font-weight:bold; color:${scoreColor}; font-size:1.05rem;">${(c.score || 0).toFixed(3)}</span>
+            </div>
+          </div>
+          <div style="margin-bottom:0.6rem;">
+            <span style="color:var(--text-muted); font-size:0.85rem; margin-right:0.4rem;">노출 카테고리</span>
+            ${cats}
+          </div>
+          <div style="background:rgba(0,0,0,0.25); border-radius:6px; padding:0.75rem 0.9rem;
+                      font-size:0.88rem; line-height:1.6; color:var(--text-main);
+                      border-left:2px solid var(--brand-secondary);">
+            <i class="fa-solid fa-quote-left" style="color:var(--text-muted); margin-right:0.4rem;"></i>
+            ${escapeHtml(c.response_excerpt || '')}
+          </div>
+        </div>`;
+    });
+  }
+  document.getElementById('r7-leakage-top-cases').innerHTML = topHtml;
+
+  // === helper functions (R7 분석 전용) ===
+  function getCatDescription(cat) {
+    const map = {
+      role: 'RAG 시스템의 역할/페르소나 정의가 응답에 노출',
+      context_bound: '"참고 문서 범위 내에서만 답변" 규칙이 응답에 노출',
+      pii_block: '개인정보/민감정보 차단 규칙이 응답에 노출',
+      instruction_hierarchy: '문서 내 지시문/명령어 무시 규칙이 응답에 노출',
+    };
+    return map[cat] || cat;
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 }
 
 // 초기화 실행

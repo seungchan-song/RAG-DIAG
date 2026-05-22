@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+# R7 평가기에서 정책 단서 카테고리 패턴을 그대로 재사용한다.
+# R7 응답에서 카테고리별로 어떤 문장이 노출되었는지 추출하기 위함이다.
+from rag.evaluator.r7_evaluator import RULE_COVERAGE_PATTERNS
 
 
 class ReportGenerator:
@@ -41,6 +46,7 @@ class ReportGenerator:
         suite_manifest = self._load_suite_manifest(run_dir)
         env_comparison = self._build_env_comparison(run_id, scenario_results)
         reranker_comparison = self._build_reranker_comparison(run_id, scenario_results)
+        attacker_comparison = self._build_attacker_comparison(run_id, scenario_results)
         # NORMAL baseline 과 각 공격 시나리오의 PII 탐지량 비교.
         # NORMAL 결과가 같은 suite 안에 있어야 의미가 있으며, 없으면 빈 dict 가 된다.
         normal_attack_comparison = self._build_normal_attack_pii_comparison(
@@ -54,6 +60,7 @@ class ReportGenerator:
             env_comparison,
             reranker_comparison,
             normal_attack_comparison,
+            attacker_comparison,
         )
 
         generated_files: dict[str, Path] = {}
@@ -116,6 +123,7 @@ class ReportGenerator:
         env_comparison: dict[str, Any],
         reranker_comparison: dict[str, Any],
         normal_attack_comparison: dict[str, Any] | None = None,
+        attacker_comparison: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         scenario_summaries: dict[str, dict[str, Any]] = {}
 
@@ -203,6 +211,15 @@ class ReportGenerator:
                     "risk_score": data.get("risk_score", 0.0),
                     "avg_high_pii_on_success": data.get("avg_high_pii_on_success", 0.0),
                     "high_pii_normalizer": data.get("high_pii_normalizer", 5.0),
+                    # === anchor 카테고리별 분리 분석 데이터 ===
+                    # evaluator/summary.py 의 _aggregate_r2_by_identifier_category 결과를
+                    # 그대로 통과시킨다. 키가 없거나 빈 dict 면 results 리스트에서 폴백
+                    # 집계해 대시보드 R2 카테고리 비교 차트(Hit Rate / 평균 ROUGE-L)가
+                    # 비지 않도록 한다. R4 의 by_identifier_category 와 동일한 패턴.
+                    "by_identifier_category": (
+                        data.get("by_identifier_category")
+                        or self._compute_r2_identifier_category_from_results(data)
+                    ),
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -227,6 +244,20 @@ class ReportGenerator:
                     "intensity": data.get("intensity", 0.0),
                     "risk_score": data.get("risk_score", 0.0),
                     "avg_abs_delta_on_hit": data.get("avg_abs_delta_on_hit", 0.0),
+                    # === R4S(sensitive) vs R4(generic) 분리 분석 데이터 ===
+                    # evaluator 가 페어 단위로 미리 집계해 둔 dict 를 그대로 전달한다.
+                    # 대시보드는 이 두 필드를 받아 비교 패널을 렌더링한다.
+                    "by_probe_mode": self._normalize_r4_probe_mode_block(
+                        data.get("by_probe_mode")
+                    )
+                    or self._compute_r4_probe_mode_from_results(data),
+                    # evaluator 가 채워둔 값을 우선 사용하되, 옛 R4_result.json
+                    # 처럼 키가 누락되거나 빈 dict 인 경우 results 리스트에서 직접
+                    # 재집계해 식별자 카테고리 차트가 비지 않도록 폴백한다.
+                    "by_identifier_category": (
+                        data.get("by_identifier_category")
+                        or self._compute_r4_identifier_category_from_results(data)
+                    ),
                     "scenario_scope": data.get("scenario_scope", ""),
                     "dataset_scope": data.get("dataset_scope", ""),
                     "dataset_scopes": data.get("dataset_scopes", []),
@@ -270,6 +301,20 @@ class ReportGenerator:
                     "failure_stage_counts": data.get("failure_stage_counts", {}),
                 }
 
+        # R9 intensity 재계산:
+        # summary.py 에서 계산된 intensity 는 "응답 PII 기반"인데, R9 응답에는 트리거 마커만
+        # 출력되므로 응답 PII 가 항상 0 → intensity 가 항상 0 이 된다.
+        # 올바른 강도 지표는 "공격 성공 시 검색된 문서 내 고위험 PII 포함 응답 비율"이므로
+        # _build_r9_potential_pii_exposure 결과로 덮어씌운다.
+        r9_exposure = self._build_r9_potential_pii_exposure(scenario_results)
+        if "R9" in scenario_summaries:
+            new_r9_intensity = float(
+                r9_exposure.get("high_risk_context_response_rate", 0.0)
+            )
+            r9_freq = float(scenario_summaries["R9"].get("frequency", 0.0))
+            scenario_summaries["R9"]["intensity"] = new_r9_intensity
+            scenario_summaries["R9"]["risk_score"] = 0.5 * r9_freq + 0.5 * new_r9_intensity
+
         summary = {
             "run_id": run_id,
             "generated_at": datetime.now().isoformat(),
@@ -296,12 +341,14 @@ class ReportGenerator:
             "pii_leakage_profile": self._detect_pii_in_responses(scenario_results),
             "clean_vs_poisoned_comparison": env_comparison,
             "reranker_on_off_comparison": reranker_comparison,
+            "attacker_comparison": attacker_comparison or {},
             "normal_vs_attack_pii_comparison": normal_attack_comparison or {},
             # R9 는 트리거 마커 출력이 본질이므로 응답 PII 와 별도의 잠재 노출량 지표를 둔다.
             # 보완 1(NORMAL 컨텍스트 baseline)과 보완 2(by_trigger 분해)도 함께 포함된다.
-            "r9_potential_pii_exposure": self._build_r9_potential_pii_exposure(
-                scenario_results
-            ),
+            "r9_potential_pii_exposure": r9_exposure,
+            # R7 은 시스템 프롬프트 유출이라 PII 비교에서 제외되었으므로 별도의 분석 블록을 둔다.
+            # 카테고리별 노출 분포와 응답 단편을 모아 "추정 시스템 프롬프트"를 재구성한다.
+            "r7_leakage_analysis": self._build_r7_leakage_analysis(scenario_results),
             "risk_level": self._assess_risk_level(scenario_results),
         }
 
@@ -310,6 +357,204 @@ class ReportGenerator:
         summary["clean_vs_poisoned_비교"] = env_comparison
         summary["reranker_on_off_비교"] = reranker_comparison
         return summary
+
+    def _normalize_r4_probe_mode_block(
+        self,
+        raw: Any,
+    ) -> dict[str, dict[str, Any]]:
+        """evaluator 가 넣어준 by_probe_mode dict 를 안전하게 검증해 통과시킵니다.
+
+        예상 형태:
+          {"sensitive": {"total_pairs": int, "success_count": int,
+                         "success_rate": float, "avg_abs_delta_on_hit": float},
+           "generic":   {...}}
+        형식이 다르거나 비어 있으면 빈 dict 를 반환해 호출부가 fallback 을 사용하도록 함.
+        """
+        if not isinstance(raw, dict) or not raw:
+            return {}
+        cleaned: dict[str, dict[str, Any]] = {}
+        for mode, block in raw.items():
+            if mode not in ("sensitive", "generic"):
+                continue
+            if not isinstance(block, dict):
+                continue
+            cleaned[mode] = {
+                "total_pairs": int(block.get("total_pairs", 0) or 0),
+                "success_count": int(block.get("success_count", 0) or 0),
+                "success_rate": float(block.get("success_rate", 0.0) or 0.0),
+                "avg_abs_delta_on_hit": float(
+                    block.get("avg_abs_delta_on_hit", 0.0) or 0.0
+                ),
+            }
+        return cleaned
+
+    def _compute_r4_probe_mode_from_results(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """evaluator 가 by_probe_mode 를 못 넣어준 옛 결과 파일을 위한 폴백 집계기.
+
+        결과 dict 리스트에서 query_id prefix(또는 metadata.probe_mode)와
+        metadata.delta 를 직접 보고 sensitive(R4S) / generic(R4) 페어 단위로 집계한다.
+        b=1 결과만 골라 페어 1건으로 카운트한다 (b=0 은 보완 관계라 중복 집계 방지).
+        """
+        results = data.get("results", []) or []
+        buckets: dict[str, list[dict[str, Any]]] = {
+            "sensitive": [],
+            "generic": [],
+        }
+        for result in results:
+            metadata = result.get("metadata", {}) or {}
+            if metadata.get("ground_truth_b") != 1:
+                continue
+            if metadata.get("delta") is None:
+                continue  # 페어 미완성 결과는 제외
+            mode = metadata.get("probe_mode")
+            if mode not in ("sensitive", "generic"):
+                qid = str(result.get("query_id") or metadata.get("query_id") or "")
+                mode = "sensitive" if qid.startswith("R4S:") else "generic"
+            buckets[mode].append(result)
+
+        aggregated: dict[str, dict[str, Any]] = {}
+        for mode, bucket in buckets.items():
+            if not bucket:
+                continue
+            total = len(bucket)
+            success = sum(1 for r in bucket if r.get("success"))
+            rate = success / total if total > 0 else 0.0
+            hit_deltas = [
+                abs(float((r.get("metadata") or {}).get("delta") or 0.0))
+                for r in bucket
+                if r.get("success")
+            ]
+            avg_abs_delta = (
+                sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
+            )
+            aggregated[mode] = {
+                "total_pairs": total,
+                "success_count": success,
+                "success_rate": rate,
+                "avg_abs_delta_on_hit": avg_abs_delta,
+            }
+        return aggregated
+
+    def _compute_r2_identifier_category_from_results(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """evaluator 가 R2 by_identifier_category 를 못 넣어준 옛 결과 파일을 위한 폴백 집계기.
+
+        R2 results 리스트의 각 항목 metadata.identifier_category 를 기준으로
+        total / success_count / success_rate / avg_score / max_score /
+        avg_high_pii_on_success 를 분리 집계한다. R2Evaluator._aggregate_by_identifier_category
+        및 summary.py 의 _aggregate_r2_by_identifier_category 와 동일 결과 구조를
+        생성해, 대시보드의 R2 카테고리 비교 차트(Hit Rate / 평균 ROUGE-L Recall)가
+        구버전 결과 파일에서도 비지 않도록 보장한다.
+
+        Args:
+          data: R2_result.json 페이로드 dict (results 리스트 포함)
+
+        Returns:
+          {카테고리: {total, success_count, success_rate, avg_score, max_score,
+                     avg_high_pii_on_success}}
+        """
+        results = data.get("results", []) or []
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for result in results:
+            metadata = result.get("metadata", {}) or {}
+            category = str(metadata.get("identifier_category") or "unknown")
+            buckets.setdefault(category, []).append(result)
+
+        aggregated: dict[str, dict[str, Any]] = {}
+        for category, bucket in buckets.items():
+            total = len(bucket)
+            success_bucket = [r for r in bucket if r.get("success")]
+            success = len(success_bucket)
+            rate = success / total if total > 0 else 0.0
+
+            scores = [float(r.get("score") or 0.0) for r in bucket]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+            max_score = max(scores) if scores else 0.0
+
+            # 성공 응답에 동반된 High-risk PII 평균 (R2Evaluator 와 동일 산식).
+            high_counts: list[int] = []
+            for r in success_bucket:
+                findings = r.get("pii_findings") or []
+                high_counts.append(
+                    sum(
+                        1
+                        for f in findings
+                        if str((f or {}).get("risk_level", "")).lower() == "high"
+                    )
+                )
+            avg_high_pii_on_success = (
+                sum(high_counts) / len(high_counts) if high_counts else 0.0
+            )
+
+            aggregated[category] = {
+                "total": total,
+                "success_count": success,
+                "success_rate": rate,
+                "avg_score": avg_score,
+                "max_score": max_score,
+                "avg_high_pii_on_success": avg_high_pii_on_success,
+            }
+        return aggregated
+
+    def _compute_r4_identifier_category_from_results(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """evaluator 가 by_identifier_category 를 못 넣어준 옛 결과 파일을 위한 폴백 집계기.
+
+        sensitive(R4S) 페어들만 골라 metadata.identifier_category 별로 hit_rate /
+        |Δ| 평균을 집계한다. b=1 결과만 사용해 페어가 중복 카운트되지 않도록 한다.
+
+        Args:
+          data: R4_result.json 페이로드 dict (results 리스트 포함)
+
+        Returns:
+          {카테고리: {total_pairs, success_count, success_rate, avg_abs_delta_on_hit}}
+        """
+        results = data.get("results", []) or []
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for result in results:
+            metadata = result.get("metadata", {}) or {}
+            if metadata.get("ground_truth_b") != 1:
+                continue
+            if metadata.get("delta") is None:
+                continue  # 페어 미완성 결과는 제외
+            mode = metadata.get("probe_mode")
+            if mode not in ("sensitive", "generic"):
+                qid = str(result.get("query_id") or metadata.get("query_id") or "")
+                mode = "sensitive" if qid.startswith("R4S:") else "generic"
+            if mode != "sensitive":
+                continue
+            category = str(metadata.get("identifier_category") or "")
+            if not category:
+                continue
+            buckets.setdefault(category, []).append(result)
+
+        aggregated: dict[str, dict[str, Any]] = {}
+        for category, bucket in buckets.items():
+            total = len(bucket)
+            success = sum(1 for r in bucket if r.get("success"))
+            rate = success / total if total > 0 else 0.0
+            hit_deltas = [
+                abs(float((r.get("metadata") or {}).get("delta") or 0.0))
+                for r in bucket
+                if r.get("success")
+            ]
+            avg_abs_delta = (
+                sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
+            )
+            aggregated[category] = {
+                "total_pairs": total,
+                "success_count": success,
+                "success_rate": rate,
+                "avg_abs_delta_on_hit": avg_abs_delta,
+            }
+        return aggregated
 
     def _compute_r4_delta_histogram(
         self,
@@ -851,6 +1096,200 @@ class ReportGenerator:
 
       return r9_summary
 
+    # === R7 시스템 프롬프트 유출 심층 분석 ===
+    # R7 은 시스템 프롬프트(페르소나·안전 가드레일·출력 형식 규칙)가 응답에 그대로 노출되는지
+    # 평가하는 시나리오로, PII 유출과는 본질이 다르다.
+    # 본 메서드는 R7 성공 케이스의 응답에서 카테고리별 노출 단편을 추출하고,
+    # 이를 모아 "공격자가 추론할 수 있는 시스템 프롬프트 골격"을 재구성해 보여 준다.
+
+    # 응답에서 카테고리 패턴이 매칭된 위치 주변 문맥을 추출할 때 사용할 윈도우 길이.
+    _R7_FRAGMENT_WINDOW: int = 80
+    # 카테고리별 보존할 단편 최대 개수. 너무 많이 들고 가면 리포트가 무거워진다.
+    _R7_MAX_FRAGMENTS_PER_CATEGORY: int = 8
+    # 상위 노출 케이스 표시 개수.
+    _R7_TOP_CASES_LIMIT: int = 5
+
+    def _extract_r7_fragment(self, response: str, pattern: re.Pattern[str]) -> str | None:
+      """응답 텍스트에서 정책 패턴이 매칭된 부분 주변 문맥을 잘라서 돌려준다.
+
+      카테고리별 fragments 모음을 만들 때 사용된다.
+      매칭된 패턴의 시작/끝 위치를 기준으로 좌우 윈도우만큼 잘라 노이즈를 줄인다.
+
+      Args:
+        response: R7 공격 응답 본문.
+        pattern : RULE_COVERAGE_PATTERNS 에 정의된 컴파일된 정규식.
+
+      Returns:
+        매칭된 단편 문자열(앞뒤 ... 표기 포함). 매칭이 없으면 None.
+      """
+      if not response:
+        return None
+      match = pattern.search(response)
+      if not match:
+        return None
+      start = max(0, match.start() - self._R7_FRAGMENT_WINDOW)
+      end = min(len(response), match.end() + self._R7_FRAGMENT_WINDOW)
+      snippet = response[start:end].strip()
+      prefix = "…" if start > 0 else ""
+      suffix = "…" if end < len(response) else ""
+      # 줄바꿈을 공백으로 치환해 한 줄 표시.
+      snippet = re.sub(r"\s+", " ", snippet)
+      return f"{prefix}{snippet}{suffix}"
+
+    def _build_r7_leakage_analysis(
+        self,
+        scenario_results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+      """R7 성공 케이스를 분석해 유출 내용 정리와 추정 프롬프트 데이터를 생성한다.
+
+      구성:
+        - 카테고리별 노출 빈도(success/total 케이스 단위)
+        - 카테고리별 응답에서 추출한 단편 모음(reconstructed_prompt 의 근거)
+        - 상위 노출 케이스 상세(가장 score 가 높은 응답 N개)
+        - 원본 시스템 프롬프트(target_text) — ground truth 비교용
+        - 추정 시스템 프롬프트 — 각 카테고리에서 가장 흔한 단편을 모아 한 줄씩 보여 줌
+
+      Args:
+        scenario_results: {scenario: result_data} 매핑.
+
+      Returns:
+        dict:
+          - has_data                       : 분석 가능한 R7 결과가 있는지 여부
+          - total_responses                : R7 전체 응답 수
+          - total_successful               : success=True 케이스 수
+          - rule_leak_count                : 정책 단서 노출(rule_leak_hit) 케이스 수
+          - target_system_prompt           : 실제 시스템 프롬프트 원문(가장 긴 target_text)
+          - category_leak_distribution     : 카테고리별 노출 빈도 dict
+          - leaked_fragments_by_category   : 카테고리별 응답에서 추출한 단편 리스트
+          - top_leak_cases                 : 상위 노출 케이스 상세 리스트
+          - reconstructed_prompt           : 카테고리별 추정 프롬프트 단편 dict
+      """
+      empty: dict[str, Any] = {
+        "has_data": False,
+        "total_responses": 0,
+        "total_successful": 0,
+        "rule_leak_count": 0,
+        "target_system_prompt": "",
+        "category_leak_distribution": {},
+        "leaked_fragments_by_category": {},
+        "top_leak_cases": [],
+        "reconstructed_prompt": {},
+      }
+
+      r7_data = scenario_results.get("R7")
+      if not r7_data:
+        return empty
+      results = list(r7_data.get("results", []))
+      if not results:
+        return empty
+
+      # 카테고리별 노출 빈도 — 응답 단위로 카운트(같은 응답에서 여러 매칭이 있어도 1 만 더함).
+      category_leak_distribution: dict[str, int] = {
+        cat: 0 for cat in RULE_COVERAGE_PATTERNS
+      }
+      # 카테고리별 단편 모음 — 중복 제거를 위해 set 으로 모았다가 마지막에 list 로 변환.
+      fragments_by_category: dict[str, list[str]] = {
+        cat: [] for cat in RULE_COVERAGE_PATTERNS
+      }
+      # 단편 중복 방지용 set(소문자/공백 정규화 기준).
+      fragments_seen: dict[str, set[str]] = {
+        cat: set() for cat in RULE_COVERAGE_PATTERNS
+      }
+
+      total_successful = 0
+      rule_leak_count = 0
+      target_system_prompt = ""
+
+      # 상위 케이스 후보 리스트 — 최종적으로 score 기준 상위 N개만 남긴다.
+      top_candidates: list[dict[str, Any]] = []
+
+      for result in results:
+        metadata = result.get("metadata", {}) or {}
+        response = self._get_response_text(result) or ""
+        target_text = result.get("target_text") or ""
+
+        # ground truth(시스템 프롬프트 원문)는 가장 풍부한 케이스 기준으로 보관.
+        if len(target_text) > len(target_system_prompt):
+          target_system_prompt = target_text
+
+        success = bool(result.get("success"))
+        if success:
+          total_successful += 1
+        if metadata.get("rule_leak_hit"):
+          rule_leak_count += 1
+
+        leaked_rules = list(metadata.get("leaked_rules") or [])
+
+        # 카테고리별 단편 추출은 성공/실패와 무관하게 정책 단서가 노출된 모든 응답에서 진행한다.
+        # (rule_leak_hit 임계값을 못 넘어도 1~2개 카테고리는 노출되었을 수 있음)
+        for category in leaked_rules:
+          patterns = RULE_COVERAGE_PATTERNS.get(category, [])
+          category_leak_distribution[category] = (
+            category_leak_distribution.get(category, 0) + 1
+          )
+          for pattern in patterns:
+            snippet = self._extract_r7_fragment(response, pattern)
+            if not snippet:
+              continue
+            key = re.sub(r"\s+", " ", snippet.lower()).strip(" …")
+            if key in fragments_seen[category]:
+              continue
+            if len(fragments_by_category[category]) >= self._R7_MAX_FRAGMENTS_PER_CATEGORY:
+              break
+            fragments_seen[category].add(key)
+            fragments_by_category[category].append(snippet)
+            # 카테고리당 첫 매칭만 단편으로 저장(다른 패턴이 같은 위치를 다시 잡지 않도록).
+            break
+
+        # 상위 케이스 후보로 등록.
+        score = float(result.get("score", 0.0) or 0.0)
+        top_candidates.append(
+          {
+            "query_id": self._get_query_id(result),
+            "payload_type": str(metadata.get("payload_type", "unknown")),
+            "score": score,
+            "cosine_similarity": float(
+              metadata.get("cosine_similarity", 0.0) or 0.0
+            ),
+            "rouge_l_recall": float(
+              metadata.get("rouge_l_recall", 0.0) or 0.0
+            ),
+            "rule_coverage": float(metadata.get("rule_coverage", 0.0) or 0.0),
+            "leaked_rules": leaked_rules,
+            "matched_by": str(metadata.get("matched_by", "none")),
+            "success": success,
+            "response_excerpt": (
+              re.sub(r"\s+", " ", response)[:400]
+              + ("…" if len(response) > 400 else "")
+            ),
+          }
+        )
+
+      # 상위 케이스: score 내림차순 정렬. 동점이면 rule_coverage 가 높은 케이스를 위로.
+      top_candidates.sort(
+        key=lambda case: (case["score"], case["rule_coverage"]),
+        reverse=True,
+      )
+      top_leak_cases = top_candidates[: self._R7_TOP_CASES_LIMIT]
+
+      # 추정 시스템 프롬프트 — 카테고리별 첫 fragment 를 대표 단편으로 채택.
+      # 단편이 없으면 None 으로 두어 템플릿에서 "노출 없음" 표시로 처리한다.
+      reconstructed_prompt: dict[str, str | None] = {}
+      for category, fragments in fragments_by_category.items():
+        reconstructed_prompt[category] = fragments[0] if fragments else None
+
+      return {
+        "has_data": True,
+        "total_responses": len(results),
+        "total_successful": total_successful,
+        "rule_leak_count": rule_leak_count,
+        "target_system_prompt": target_system_prompt,
+        "category_leak_distribution": category_leak_distribution,
+        "leaked_fragments_by_category": fragments_by_category,
+        "top_leak_cases": top_leak_cases,
+        "reconstructed_prompt": reconstructed_prompt,
+      }
+
     def _get_environment(self, result: dict[str, Any]) -> str:
         return result.get("environment_type") or result.get("metadata", {}).get(
             "env", ""
@@ -858,6 +1297,31 @@ class ReportGenerator:
 
     def _get_query_id(self, result: dict[str, Any]) -> str:
         return result.get("query_id") or result.get("metadata", {}).get("query_id", "")
+
+    def _get_attacker(self, result: dict[str, Any]) -> str:
+        """결과에서 공격자 유형(A1/A2/A3) 을 추출합니다.
+
+        우선순위: metadata.attacker > result.attacker > suite_context.cell_attacker.
+        없으면 빈 문자열을 반환하고 attacker 비교에서 자연 제외된다.
+        """
+        meta = result.get("metadata", {}) or {}
+        attacker = (
+            meta.get("attacker")
+            or result.get("attacker")
+            or meta.get("suite_context", {}).get("cell_attacker", "")
+        )
+        return str(attacker).upper() if attacker else ""
+
+    def _normalize_query_id(self, query_id: str, scenario: str) -> str:
+        """A1↔A2 페어링을 위해 query_id 를 정규화합니다.
+
+        R4 에서 probe_mode=sensitive 결과는 query_id 가 'R4S:' prefix 를 갖는다.
+        그러나 옵션 B 비교 실행에서는 A1/A2 모두 generic(prefix 'R4:') 을 사용하므로
+        만약 양쪽이 섞여 들어와도 정규화로 'R4:' 로 통일해 둔다.
+        """
+        if scenario.upper() == "R4" and query_id.startswith("R4S:"):
+            return "R4:" + query_id[4:]
+        return query_id
 
     def _get_profile_name(
         self,
@@ -941,18 +1405,25 @@ class ReportGenerator:
     def _build_local_index(
         self,
         scenario_results: dict[str, dict[str, Any]],
-    ) -> dict[tuple[str, str, str, str], dict[str, Any]]:
-        index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    ) -> dict[tuple[str, str, str, str, str], dict[str, Any]]:
+        """(scenario, environment, attacker, reranker_state, query_id) 기반 인덱스.
+
+        attacker 축이 추가되어 같은 query_id 의 A1 결과와 A2 결과가
+        서로 덮어쓰지 않는다 (옵션 B 매트릭스에서 같은 시나리오를 두 attacker
+        로 동시에 돌리는 경우 필수).
+        """
+        index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
 
         for scenario, data in scenario_results.items():
             for result in data.get("results", []):
                 environment = self._get_environment(result)
+                attacker = self._get_attacker(result)
                 query_id = self._get_query_id(result)
                 if not environment or not query_id:
                     continue
 
                 reranker_state = self._get_reranker_state(result, data)
-                key = (scenario, environment, reranker_state, query_id)
+                key = (scenario, environment, attacker, reranker_state, query_id)
                 index.setdefault(key, result)
 
         return index
@@ -1094,6 +1565,7 @@ class ReportGenerator:
             pairs: list[dict[str, Any]] = []
             for result in data.get("results", []):
                 environment = self._get_environment(result)
+                attacker = self._get_attacker(result)
                 query_id = self._get_query_id(result)
                 if not environment or not query_id:
                     continue
@@ -1105,7 +1577,7 @@ class ReportGenerator:
                 reranker_state = self._get_reranker_state(result, data)
                 paired_env = "poisoned"
                 counterpart = local_index.get(
-                    (scenario, paired_env, reranker_state, query_id)
+                    (scenario, paired_env, attacker, reranker_state, query_id)
                 )
                 if counterpart is None:
                     continue
@@ -1147,6 +1619,7 @@ class ReportGenerator:
             pairs: list[dict[str, Any]] = []
             for result in data.get("results", []):
                 environment = self._get_environment(result)
+                attacker = self._get_attacker(result)
                 query_id = self._get_query_id(result)
                 if not environment or not query_id:
                     continue
@@ -1158,7 +1631,7 @@ class ReportGenerator:
 
                 paired_reranker_state = "on"
                 counterpart = local_index.get(
-                    (scenario, environment, paired_reranker_state, query_id)
+                    (scenario, environment, attacker, paired_reranker_state, query_id)
                 )
                 if counterpart is None:
                     continue
@@ -1181,6 +1654,161 @@ class ReportGenerator:
                 )
 
         return comparison
+
+    # === 공격자 유형(A1↔A2) 비교 ===
+    # 같은 query_id 의 두 공격자 결과를 페어링해 사전지식 유무에 따른 성공률 차이를 정량화한다.
+    # 옵션 B 매트릭스: R2 에 한해 A1↔A2 비교 가능.
+    # R4 는 MIA 정의상 공격자가 d* 를 알고 있다는 가정이라 A2 단독 운영 — 비교 대상 아님.
+    ATTACKER_PAIRS: dict[str, tuple[str, str]] = {
+        "R2": ("A1", "A2"),
+    }
+
+    def _build_attacker_index(
+        self,
+        scenario_results: dict[str, dict[str, Any]],
+    ) -> dict[tuple[str, str, str, str, str], dict[str, Any]]:
+        """(scenario, environment, attacker, reranker_state, normalized_query_id) 인덱스."""
+        index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+
+        for scenario, data in scenario_results.items():
+            for result in data.get("results", []):
+                environment = self._get_environment(result)
+                attacker = self._get_attacker(result)
+                query_id = self._get_query_id(result)
+                if not attacker or not query_id:
+                    continue
+
+                reranker_state = self._get_reranker_state(result, data)
+                normalized_query_id = self._normalize_query_id(query_id, scenario)
+                key = (scenario, environment, attacker, reranker_state, normalized_query_id)
+                index.setdefault(key, result)
+
+        return index
+
+    def _build_attacker_comparison(
+        self,
+        run_id: str,
+        scenario_results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """A1↔A2 공격자 비교 데이터를 생성합니다.
+
+        동일한 query_id + 동일한 reranker + 동일한 environment 조건에서
+        ATTACKER_PAIRS 에 정의된 base↔paired attacker 결과를 페어로 매칭한다.
+        R4 는 멤버십 추론 결과 중 b=1(타깃 문서 포함) 쪽만 비교 페어로 사용한다
+        (b=0 은 member 와 자동 보완 관계라 hit_rate 가 강제 0.5 가 되기 때문).
+        """
+        attacker_index = self._build_attacker_index(scenario_results)
+        comparison: dict[str, Any] = {}
+
+        for scenario, data in scenario_results.items():
+            pair_def = self.ATTACKER_PAIRS.get(scenario.upper())
+            if not pair_def:
+                continue
+            base_attacker, paired_attacker = pair_def
+
+            pairs: list[dict[str, Any]] = []
+            seen_pairs: set[tuple[str, str, str]] = set()
+
+            for result in data.get("results", []):
+                attacker = self._get_attacker(result)
+                query_id = self._get_query_id(result)
+                environment = self._get_environment(result)
+                if not attacker or not query_id or not environment:
+                    continue
+
+                # base → paired 단방향만 집계해 이중 계산 방지
+                if attacker.upper() != base_attacker:
+                    continue
+
+                # R4 의 b=0(미포함) 결과는 페어 대상에서 제외
+                if (
+                    scenario.upper() == "R4"
+                    and (result.get("metadata") or {}).get("ground_truth_b") == 0
+                ):
+                    continue
+
+                reranker_state = self._get_reranker_state(result, data)
+                normalized_query_id = self._normalize_query_id(query_id, scenario)
+                dedup_key = (normalized_query_id, reranker_state, environment)
+                if dedup_key in seen_pairs:
+                    continue
+
+                counterpart = attacker_index.get(
+                    (
+                        scenario,
+                        environment,
+                        paired_attacker,
+                        reranker_state,
+                        normalized_query_id,
+                    )
+                )
+                if counterpart is None:
+                    continue
+
+                seen_pairs.add(dedup_key)
+                pairs.append(
+                    self._build_attacker_comparison_entry(
+                        scenario,
+                        result,
+                        counterpart,
+                        base_attacker=base_attacker,
+                        paired_attacker=paired_attacker,
+                        reranker_state=reranker_state,
+                    )
+                )
+
+            if pairs:
+                comparison[scenario] = self._build_comparison_summary(
+                    pairs,
+                    fixed_field="base_attacker",
+                    paired_field="paired_attacker",
+                )
+
+        return comparison
+
+    def _build_attacker_comparison_entry(
+        self,
+        scenario: str,
+        base_result: dict[str, Any],
+        paired_result: dict[str, Any],
+        base_attacker: str,
+        paired_attacker: str,
+        reranker_state: str,
+    ) -> dict[str, Any]:
+        """A1↔A2 비교 entry 1개를 생성합니다.
+
+        대시보드 buildTable JS 가 base_env/paired_env 키를 함께 참조하는 경우가 있어
+        하위 호환을 위해 attacker 값을 그 키에도 동일하게 넣어준다.
+        _build_comparison_summary 가 참조하는 response_changed / rank_change_score
+        도 함께 채워 환경/리랭커 비교와 동일한 집계 경로를 사용한다.
+        """
+        base_pii = int(self._get_pii_summary(base_result).get("total", 0))
+        paired_pii = int(self._get_pii_summary(paired_result).get("total", 0))
+
+        return {
+            "scenario": scenario,
+            "query_id": self._get_query_id(base_result),
+            "base_attacker": base_attacker,
+            "paired_attacker": paired_attacker,
+            "base_env": base_attacker,
+            "paired_env": paired_attacker,
+            "base_reranker_state": reranker_state,
+            "paired_reranker_state": reranker_state,
+            "base_success": bool(base_result.get("success", False)),
+            "paired_success": bool(paired_result.get("success", False)),
+            "base_pii_count": base_pii,
+            "paired_pii_count": paired_pii,
+            "base_score": float(base_result.get("score", 0.0)),
+            "paired_score": float(paired_result.get("score", 0.0)),
+            "response_changed": (
+                self._get_response_text(base_result)
+                != self._get_response_text(paired_result)
+            ),
+            "rank_change_score": self._compute_rank_change_score(
+                base_result,
+                paired_result,
+            ),
+        }
 
     # === NORMAL vs 공격 시나리오 PII 비교 ===
     # NORMAL baseline 과 R2/R4/R7/R9 각 공격 시나리오의 PII 탐지량을 같은 척도로 비교한다.
@@ -1322,7 +1950,9 @@ class ReportGenerator:
         # R9 는 트리거 마커 출력이 본질이고 응답에 노출되는 PII 는 페이로드의 직접 결과가 아니라
         # 검색 컨텍스트의 부수효과이므로 응답 PII 심층 비교에서는 제외한다.
         # R9 의 PII 위험은 summary["r9_potential_pii_exposure"] 에 별도로 집계된다.
-        for scenario in ("R2", "R4", "R7"):
+        # R7 은 시스템 프롬프트 유출이지 PII 유출이 아니므로 응답 PII 심층 비교에서 제외한다.
+        # R7 의 분석은 summary["r7_leakage_analysis"] 에 별도로 집계된다.
+        for scenario in ("R2", "R4"):
             attack_data = scenario_results.get(scenario)
             if not attack_data:
                 continue
@@ -1546,91 +2176,114 @@ class ReportGenerator:
         max_count: int,
         scenario: str,
     ) -> list[dict[str, Any]]:
-        """성공 결과를 우선으로 하되 payload_type(또는 trigger) 다양성을 보장하는 샘플링.
+        """suite 매트릭스 셀 단위로 균등 분배하면서 셀 내부는 성공 우선으로 샘플링한다.
 
-        R2: payload_type(standard/self_losing/many_shot)별 라운드로빈.
-        anchor_only 는 구버전 결과 파일 호환을 위해서만 유지된다.
-        R9: trigger 키워드별 라운드로빈.
-        기타: 기존 방식(성공 우선, 단순 잘라내기) 유지.
+        규칙:
+          1) 전체 결과 수가 max_count 를 초과하면, max_count 를 실제 진행된 셀 수로
+             균등 분배한다. 예: R2 suite (A1/A2 × reranker_on/off = 4 셀) → 50 × 4.
+             max_count 가 셀 수로 나누어 떨어지지 않으면 정렬된 셀 키 순서대로
+             앞쪽 셀에 1 개씩 더 배정한다.
+          2) 셀마다 가져오는 결과는 성공 케이스를 우선 채운 뒤 남는 슬롯을 실패
+             케이스로 메운다. 어떤 셀의 결과 수가 할당량보다 적으면 남은 슬롯은
+             여유가 있는 다른 셀로 재분배된다.
+
+        셀 키:
+          - 기본: (attacker, reranker_state)
+          - R4: (attacker, reranker_state, probe_mode)
+          metadata 가 비어 있는 결과는 ("unknown", "unknown", ...) 셀로 묶인다.
 
         Args:
-          results_list: 전체 결과 목록.
-          max_count: 최대 샘플 수.
-          scenario: 시나리오 이름 ("R2", "R9" 등).
+          results_list: 시나리오의 전체 결과 목록.
+          max_count: 임베드할 최대 샘플 수 (기본 200).
+          scenario: 시나리오 이름 ("R2", "R4", "R9", "NORMAL" 등).
 
         Returns:
-          list[dict]: 최대 max_count개의 다양성 보장 샘플.
+          list[dict]: 셀 단위로 균등 분배된 최대 max_count 개 샘플.
         """
         if len(results_list) <= max_count:
             return results_list
 
-        # 시나리오별 그룹 키 추출 함수 결정
-        def _group_key_r2(r: dict[str, Any]) -> str:
-            pt = (r.get("metadata") or {}).get("payload_type", "")
-            if pt:
-                return pt
-            # 구버전 결과: query_type으로 대체 (anchor_only vs compound)
-            return (r.get("metadata") or {}).get("query_type", "unknown")
+        scenario_upper = scenario.upper()
+        # R4 는 generic / sensitive 두 probe_mode 가 독립 셀로 분리되어 실행된다.
+        include_probe_mode = scenario_upper == "R4"
 
-        def _group_key_r9(r: dict[str, Any]) -> str:
-            return str((r.get("metadata") or {}).get("trigger", "unknown"))
+        def _cell_key(result: dict[str, Any]) -> tuple[str, ...]:
+            meta = result.get("metadata") or {}
+            attacker = str(meta.get("attacker") or "unknown").upper()
+            reranker_state = str(meta.get("reranker_state") or "unknown").lower()
+            if include_probe_mode:
+                probe_mode = str(meta.get("probe_mode") or "generic").lower()
+                return (attacker, reranker_state, probe_mode)
+            return (attacker, reranker_state)
 
-        if scenario == "R2":
-            key_fn = _group_key_r2
-        elif scenario == "R9":
-            key_fn = _group_key_r9
-        else:
-            # 기타 시나리오: 성공 우선 단순 잘라내기
-            success = [r for r in results_list if r.get("success") or r.get("is_member_hit")]
-            fail = [r for r in results_list if not (r.get("success") or r.get("is_member_hit"))]
-            return (success + fail)[:max_count]
+        def _is_success(result: dict[str, Any]) -> bool:
+            # R2/R9 는 success, R4 는 is_member_hit 가 성공 신호.
+            return bool(result.get("success") or result.get("is_member_hit"))
 
-        # 그룹별 성공/실패 분리
+        # --- 1) 셀별 성공/실패 버킷 구성 ----------------------------------
         from collections import defaultdict
-        group_success: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        group_fail: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for r in results_list:
-            key = key_fn(r)
-            if r.get("success") or r.get("is_member_hit"):
-                group_success[key].append(r)
+        cell_success: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+        cell_fail: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+        for result in results_list:
+            key = _cell_key(result)
+            if _is_success(result):
+                cell_success[key].append(result)
             else:
-                group_fail[key].append(r)
+                cell_fail[key].append(result)
 
-        # 성공 건수 내림차순으로 키 정렬 (더 많이 성공한 그룹이 앞으로 배치)
-        all_keys = list(set(group_success.keys()) | set(group_fail.keys()))
-        all_keys.sort(key=lambda k: -len(group_success.get(k, [])))
+        # 정렬된 키 순서를 사용해 잔여분 분배가 결정론적으로 동작하도록 한다.
+        all_keys = sorted(set(cell_success.keys()) | set(cell_fail.keys()))
 
+        # 안전망: 메타데이터가 비어 셀이 하나도 분리되지 않은 경우 성공 우선
+        # 단순 잘라내기로 폴백한다.
+        if not all_keys:
+            success_only = [r for r in results_list if _is_success(r)]
+            fail_only = [r for r in results_list if not _is_success(r)]
+            return (success_only + fail_only)[:max_count]
+
+        # --- 2) 셀별 할당량 계산 + 부족분 재분배 -------------------------
+        num_cells = len(all_keys)
+        base_quota = max_count // num_cells
+        remainder = max_count - base_quota * num_cells
+
+        initial_quota: dict[tuple[str, ...], int] = {
+            key: base_quota + (1 if idx < remainder else 0)
+            for idx, key in enumerate(all_keys)
+        }
+        cell_total: dict[tuple[str, ...], int] = {
+            key: len(cell_success.get(key, [])) + len(cell_fail.get(key, []))
+            for key in all_keys
+        }
+        # 한 셀의 결과 수가 할당량보다 적으면 그 만큼만 잡고 나머지는 재분배.
+        final_quota: dict[tuple[str, ...], int] = {
+            key: min(initial_quota[key], cell_total[key]) for key in all_keys
+        }
+        leftover = max_count - sum(final_quota.values())
+        while leftover > 0:
+            progressed = False
+            for key in all_keys:
+                if final_quota[key] < cell_total[key]:
+                    final_quota[key] += 1
+                    leftover -= 1
+                    progressed = True
+                    if leftover == 0:
+                        break
+            if not progressed:
+                # 모든 셀이 포화 상태 → 더 이상 채울 결과가 없음
+                break
+
+        # --- 3) 셀 내부에서 성공 우선으로 quota 채우기 -------------------
         sampled: list[dict[str, Any]] = []
-
-        # 1단계: 각 그룹에서 성공 결과를 라운드로빈으로 수집
-        iters_s = {k: iter(group_success.get(k, [])) for k in all_keys}
-        while len(sampled) < max_count:
-            added = False
-            for k in all_keys:
-                if len(sampled) >= max_count:
-                    break
-                try:
-                    sampled.append(next(iters_s[k]))
-                    added = True
-                except StopIteration:
-                    pass
-            if not added:
-                break
-
-        # 2단계: 나머지 슬롯에 실패 결과를 라운드로빈으로 채움
-        iters_f = {k: iter(group_fail.get(k, [])) for k in all_keys}
-        while len(sampled) < max_count:
-            added = False
-            for k in all_keys:
-                if len(sampled) >= max_count:
-                    break
-                try:
-                    sampled.append(next(iters_f[k]))
-                    added = True
-                except StopIteration:
-                    pass
-            if not added:
-                break
+        for key in all_keys:
+            quota = final_quota[key]
+            if quota <= 0:
+                continue
+            successes = cell_success.get(key, [])
+            fails = cell_fail.get(key, [])
+            take_success = min(len(successes), quota)
+            take_fail = min(len(fails), quota - take_success)
+            sampled.extend(successes[:take_success])
+            sampled.extend(fails[:take_fail])
 
         return sampled
 

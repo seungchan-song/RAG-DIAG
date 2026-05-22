@@ -190,6 +190,7 @@ def _fake_suite_executor(
   snapshot_metadata=None,
   suite_context=None,
   replay_context=None,
+  probe_mode="generic",
 ):
   actual_run_id = str(run_id)
   exp_manager.save_snapshot(actual_run_id, config, metadata=snapshot_metadata)
@@ -272,9 +273,10 @@ def test_replay_suite_run_creates_parent_and_child_runs(tmp_path, monkeypatch):
   config = _base_config(results_dir)
   manager = ExperimentManager(config)
   source_run_id = manager.create_run()
+  # 옵션 B: SuiteCell 의 두 번째 축은 attacker. environment_type 은 property.
   cells = [
-    cli_main.SuiteCell("R2", "clean", "reranker_off"),
-    cli_main.SuiteCell("R2", "poisoned", "reranker_on"),
+    cli_main.SuiteCell("R2", "A1", "reranker_off"),
+    cli_main.SuiteCell("R2", "A2", "reranker_on"),
   ]
 
   suite_metadata = {

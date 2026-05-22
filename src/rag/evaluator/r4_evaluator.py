@@ -274,6 +274,15 @@ class R4Evaluator:
       sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
     )
 
+    # === probe_mode 분리 집계 (R4S sensitive vs R4 generic) ===
+    # 같은 R4 시나리오 안에서 sensitive(PII 식별자 직접 사용) 와 generic(추상 키워드)
+    # 두 모드가 섞여 들어올 수 있다. 리포트에서 "어느 모드가 더 강한 멤버십 신호를
+    # 만드는가" 를 비교할 수 있도록 모드별로 hit_rate 와 |Δ| 평균을 분리 집계한다.
+    by_probe_mode = self._aggregate_by_probe_mode(member_results)
+
+    # 식별자 카테고리별 sensitive 모드 분포 (예: rrn 사용 페어의 hit_rate 가 가장 높은지 등)
+    by_identifier_category = self._aggregate_by_identifier_category(member_results)
+
     summary = {
       "total": len(results),
       "total_pairs": total_pairs,
@@ -282,12 +291,114 @@ class R4Evaluator:
       "success_rate": success_rate,
       "delta_threshold": self.delta_threshold,
       "avg_abs_delta_on_hit": avg_abs_delta_on_hit,
+      # 분리 분석용 - 대시보드에서 sensitive(R4S) vs generic(R4) 비교 패널에 사용
+      "by_probe_mode": by_probe_mode,
+      "by_identifier_category": by_identifier_category,
       "results": results,
     }
 
+    sensitive_block = by_probe_mode.get("sensitive", {})
+    generic_block = by_probe_mode.get("generic", {})
     logger.info(
-      f"R4 평가 완료: 공격 성공률={success_rate:.2%} "
-      f"(성공 페어 {success_count}/{total_pairs}, "
-      f"Δ 임계값 {self.delta_threshold})"
+      "R4 평가 완료: 공격 성공률={:.2%} (성공 페어 {}/{}, Δ 임계값 {}). "
+      "[sensitive(R4S) {:.2%} ({}/{}), generic(R4) {:.2%} ({}/{})]",
+      success_rate,
+      success_count,
+      total_pairs,
+      self.delta_threshold,
+      sensitive_block.get("success_rate", 0.0),
+      sensitive_block.get("success_count", 0),
+      sensitive_block.get("total_pairs", 0),
+      generic_block.get("success_rate", 0.0),
+      generic_block.get("success_count", 0),
+      generic_block.get("total_pairs", 0),
     )
     return summary
+
+  def _resolve_probe_mode(self, result: AttackResult) -> str:
+    """member_result 1건의 probe_mode 를 판정합니다.
+
+    우선순위:
+      1) metadata.probe_mode (query_generator 가 세팅한 값)
+      2) query_id prefix ('R4S:' → sensitive, 'R4:' → generic)
+      3) 어느 것도 매칭되지 않으면 'generic' 으로 폴백
+    """
+    mode = result.metadata.get("probe_mode")
+    if mode in ("sensitive", "generic"):
+      return mode
+    qid = result.query_id or ""
+    if qid.startswith("R4S:"):
+      return "sensitive"
+    if qid.startswith("R4:"):
+      return "generic"
+    return "generic"
+
+  def _aggregate_by_probe_mode(
+    self, member_results: list[AttackResult]
+  ) -> dict[str, dict[str, Any]]:
+    """probe_mode 별로 페어 단위 hit_rate / |Δ| 평균을 분리 집계합니다.
+
+    Returns:
+      dict 키: "sensitive" / "generic" (없는 모드는 dict 에 포함되지 않음).
+      각 값: total_pairs, success_count, success_rate, avg_abs_delta_on_hit.
+    """
+    buckets: dict[str, list[AttackResult]] = {}
+    for r in member_results:
+      mode = self._resolve_probe_mode(r)
+      buckets.setdefault(mode, []).append(r)
+
+    aggregated: dict[str, dict[str, Any]] = {}
+    for mode, bucket in buckets.items():
+      total = len(bucket)
+      success = sum(1 for r in bucket if r.success)
+      rate = success / total if total > 0 else 0.0
+      hit_deltas = [
+        abs(float(r.metadata.get("delta", 0.0)))
+        for r in bucket
+        if r.success and r.metadata.get("delta") is not None
+      ]
+      avg_abs_delta = sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
+      aggregated[mode] = {
+        "total_pairs": total,
+        "success_count": success,
+        "success_rate": rate,
+        "avg_abs_delta_on_hit": avg_abs_delta,
+      }
+    return aggregated
+
+  def _aggregate_by_identifier_category(
+    self, member_results: list[AttackResult]
+  ) -> dict[str, dict[str, Any]]:
+    """sensitive 모드 결과를 식별자 카테고리별로 hit_rate 분리 집계합니다.
+
+    rrn / credit_card / email / mobile / synth_id 등 카테고리별 페어 수와
+    성공률을 돌려주어, "어떤 종류의 PII 가 멤버십 신호를 잘 만드는가" 분석에 사용한다.
+    카테고리가 비어 있는 결과(예: generic 모드)는 집계에서 제외된다.
+    """
+    buckets: dict[str, list[AttackResult]] = {}
+    for r in member_results:
+      if self._resolve_probe_mode(r) != "sensitive":
+        continue
+      category = r.metadata.get("identifier_category") or ""
+      if not category:
+        continue
+      buckets.setdefault(category, []).append(r)
+
+    aggregated: dict[str, dict[str, Any]] = {}
+    for category, bucket in buckets.items():
+      total = len(bucket)
+      success = sum(1 for r in bucket if r.success)
+      rate = success / total if total > 0 else 0.0
+      hit_deltas = [
+        abs(float(r.metadata.get("delta", 0.0)))
+        for r in bucket
+        if r.success and r.metadata.get("delta") is not None
+      ]
+      avg_abs_delta = sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
+      aggregated[category] = {
+        "total_pairs": total,
+        "success_count": success,
+        "success_rate": rate,
+        "avg_abs_delta_on_hit": avg_abs_delta,
+      }
+    return aggregated

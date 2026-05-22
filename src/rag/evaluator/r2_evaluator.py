@@ -126,6 +126,14 @@ class R2Evaluator:
       sum(high_pii_counts) / len(high_pii_counts) if high_pii_counts else 0.0
     )
 
+    # === identifier_category 분리 집계 ===
+    # query_generator 가 R2 anchor 풀을 PII 라운드로빈으로 다양화하면서
+    # 각 쿼리에 metadata.identifier_category 를 라벨링한다 (synth_id / email /
+    # mobile / rrn / credit_card / person_name / fallback ...). 이 라벨로 분리
+    # 집계해 "어떤 종류의 anchor 가 retriever 라우팅·LLM 추출 신호를 가장 잘 만드는가"
+    # 를 리포트에서 비교한다. R4 의 by_identifier_category 와 동일 컨벤션.
+    by_identifier_category = self._aggregate_by_identifier_category(results)
+
     summary = {
       "total": len(results),
       "success_count": successes,
@@ -134,12 +142,72 @@ class R2Evaluator:
       "max_score": max(scores) if scores else 0.0,
       "threshold": self.threshold,
       "avg_high_pii_on_success": avg_high_pii_on_success,
+      "by_identifier_category": by_identifier_category,
       "results": results,
     }
 
     logger.info(
       f"R2 평가 완료: {successes}/{len(results)} 성공 "
       f"(성공률: {summary['success_rate']:.2%}, "
-      f"평균 ROUGE-L: {summary['avg_score']:.4f})"
+      f"평균 ROUGE-L: {summary['avg_score']:.4f}, "
+      f"카테고리={ {k: v['success_count'] for k, v in by_identifier_category.items()} })"
     )
     return summary
+
+  def _aggregate_by_identifier_category(
+    self, results: list[AttackResult]
+  ) -> dict[str, dict[str, Any]]:
+    """R2 결과를 anchor identifier_category 별로 분리 집계합니다.
+
+    AttackQueryGenerator 가 R2 anchor 풀을 라운드로빈으로 다양화하면서 각 쿼리
+    metadata 에 identifier_category 라벨(synth_id/email/mobile/rrn/credit_card/
+    landline/voip/driver_license/business_number/bank_account/passport/vehicle/
+    person_name/address/organization/generic/fallback)을 박아둔다. 이 라벨로
+    카테고리별 hit_rate / avg_score / 성공 시 high_pii 평균을 분리 집계해서
+    리포트에서 "어떤 PII 종류가 R2 추출 공격에 가장 효과적인가" 비교를 가능케 한다.
+
+    Args:
+      results: 평가가 완료된 R2 AttackResult 목록 (score/success 채워진 상태).
+
+    Returns:
+      {카테고리: {total, success_count, success_rate, avg_score, max_score,
+                 avg_high_pii_on_success}}
+      카테고리 라벨이 비어있는 옛 결과(메타에 identifier_category 없음)는
+      "unknown" 버킷으로 모아 손실 없이 표시한다.
+    """
+    buckets: dict[str, list[AttackResult]] = {}
+    for r in results:
+      category = (r.metadata or {}).get("identifier_category") or "unknown"
+      buckets.setdefault(category, []).append(r)
+
+    aggregated: dict[str, dict[str, Any]] = {}
+    for category, bucket in buckets.items():
+      total = len(bucket)
+      success_bucket = [r for r in bucket if r.success]
+      success = len(success_bucket)
+      rate = success / total if total > 0 else 0.0
+      cat_scores = [r.score for r in bucket]
+      avg_score = sum(cat_scores) / len(cat_scores) if cat_scores else 0.0
+      max_score = max(cat_scores) if cat_scores else 0.0
+
+      # 성공 응답에 동반된 High-risk PII 평균. evaluate_batch 의 글로벌 지표와
+      # 동일 산식을 카테고리 단위로 잘라 적용한다.
+      high_counts: list[int] = []
+      for r in success_bucket:
+        findings = r.pii_findings or []
+        high_counts.append(
+          sum(1 for f in findings if str(f.get("risk_level", "")).lower() == "high")
+        )
+      avg_high_pii_on_success = (
+        sum(high_counts) / len(high_counts) if high_counts else 0.0
+      )
+
+      aggregated[category] = {
+        "total": total,
+        "success_count": success,
+        "success_rate": rate,
+        "avg_score": avg_score,
+        "max_score": max_score,
+        "avg_high_pii_on_success": avg_high_pii_on_success,
+      }
+    return aggregated

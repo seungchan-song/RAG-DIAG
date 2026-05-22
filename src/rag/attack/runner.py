@@ -43,7 +43,7 @@ class AttackRunner:
     """Instantiate the concrete attack implementation for one scenario.
 
     attacker 는 시나리오별 query_generator 동작 분기에 사용됩니다
-    (요구사항분석서 §2.4 [표 13] A1~A4 매트릭스 참조).
+    (요구사항분석서 §2.4 [표 13] A1~A3 매트릭스 참조; A4 는 제거됨).
     env 는 R2에서 쿼리 타입을 결정합니다.
     probe_mode 는 R4 전용 옵션: "generic"(일반 키워드) / "sensitive"(PII 식별자).
     """
@@ -115,6 +115,15 @@ class AttackRunner:
     result.metadata["reranker_enabled"] = reranker_enabled
     result.metadata["reranker_state"] = "on" if reranker_enabled else "off"
     result.metadata["elapsed_seconds"] = elapsed_seconds
+    # query_info 에 probe_mode / identifier_category 가 있다면 결과 메타데이터에
+    # 동기화해 둔다 (특히 R4 외 시나리오에서는 attack.execute 가 키를 모르므로
+    # 여기서 한 번 더 안전망을 둔다). 이미 attack.execute 가 세팅했다면 덮어쓰지 않음.
+    probe_mode = query_info.get("probe_mode")
+    if probe_mode and "probe_mode" not in result.metadata:
+      result.metadata["probe_mode"] = probe_mode
+    identifier_category = query_info.get("identifier_category")
+    if identifier_category and "identifier_category" not in result.metadata:
+      result.metadata["identifier_category"] = identifier_category
     return result
 
   def run(

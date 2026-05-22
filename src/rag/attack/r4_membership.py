@@ -42,7 +42,7 @@ class R4MembershipAttack(BaseAttack):
     config: dict[str, Any],
     attacker: str = "A2",
     env: str = "poisoned",
-    probe_mode: str = "generic",
+    probe_mode: str = "sensitive",
   ) -> None:
     """
     R4MembershipAttack을 초기화합니다.
@@ -52,18 +52,58 @@ class R4MembershipAttack(BaseAttack):
       attacker: 공격자 유형 (A1/A2)
       env: 실행 환경 (clean/poisoned)
       probe_mode: 쿼리 생성 방식.
-        "generic"  — 일반 키워드 기반 탐색 (기존 동작)
-        "sensitive" — 문서 내 PII 식별자 직접 사용 (민감 프로브)
+        "sensitive" — 문서 내 PII 식별자 직접 사용 + 카테고리 분해 분석 (기본).
+        "generic"  — 일반 키워드 기반 탐색 (레거시). 컨셉상 sensitive 와 동일
+                     공격의 약화된 변종이며, 대시보드 R4 패널이 이를 직접 표시
+                     하지 않으므로 호환성/디버그 용도로만 남겨둔다.
     """
     super().__init__(config, attacker=attacker, env=env)
-    self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self.probe_mode = probe_mode.lower() if probe_mode else "generic"
+    # sensitive 모드일 때만 PIIDetector 를 lazy 로 만들어 query_gen 에 주입한다.
+    # 정규식만으로 잡히지 않는 한글 이름·주소·직장명을 NER 후보로 보충해서
+    # identifier_category 다양성을 확보하기 위함. generic 모드 / 다른 시나리오에서는
+    # KPF-BERT 모델 로드 비용을 피하기 위해 None 으로 둔다.
+    # 비활성 스위치: config["attack"]["r4"]["sensitive_use_ner"] = false
+    pii_detector = self._build_optional_pii_detector(config)
+    self.query_gen = AttackQueryGenerator(
+      config,
+      attacker=self.attacker,
+      pii_detector=pii_detector,
+    )
     self._non_member_pipelines: dict[str, Pipeline] = {}
     logger.debug(
-      "R4MembershipAttack 초기화 완료 (attacker={}, probe_mode={})",
+      "R4MembershipAttack 초기화 완료 (attacker={}, probe_mode={}, pii_ner={})",
       self.attacker,
       self.probe_mode,
+      "on" if pii_detector is not None else "off",
     )
+
+  def _build_optional_pii_detector(self, config: dict[str, Any]) -> Any | None:
+    """sensitive 모드에서 NER 보충용 PIIDetector 인스턴스를 생성합니다.
+
+    sensitive 모드가 아니면 None 을 돌려주어 KPF-BERT 모델 로드를 건너뛴다.
+    config 의 `attack.r4.sensitive_use_ner` 가 false 면 강제로 비활성화한다.
+    임포트/초기화 실패 시에도 정규식만으로 동작이 가능하므로 예외를 삼키고
+    None 을 돌려준다.
+    """
+    if self.probe_mode != "sensitive":
+      return None
+
+    r4_cfg = (config.get("attack") or {}).get("r4") or {}
+    if not r4_cfg.get("sensitive_use_ner", True):
+      logger.info("R4S NER 보충 비활성화 (config.attack.r4.sensitive_use_ner=false)")
+      return None
+
+    try:
+      from rag.pii.detector import PIIDetector
+
+      return PIIDetector(config)
+    except Exception as error:
+      logger.warning(
+        "PIIDetector 초기화 실패 → 정규식 전용 R4S 로 폴백: error={}",
+        error,
+      )
+      return None
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]
@@ -148,6 +188,15 @@ class R4MembershipAttack(BaseAttack):
         "ground_truth_b": ground_truth_b,
         "target_doc_id": query_info.get("target_doc_id", ""),
         "keyword": query_info.get("keyword", ""),
+        # probe_mode 는 generic / sensitive 중 하나로 query_generator 가 직접 세팅한다.
+        # 결과 metadata 에 그대로 보존해야 R4 evaluator 와 리포트가 sensitive(R4S) /
+        # generic(R4) 분리 집계를 수행할 수 있다. query_id prefix 와 일치하지만
+        # 의미적으로는 query_id 와 무관하게 단독으로 해석 가능해야 하므로 명시적으로
+        # 메타데이터에 기록한다.
+        "probe_mode": query_info.get("probe_mode", "generic"),
+        # sensitive 모드에서만 채워지는 식별자 카테고리 (예: rrn, credit_card, email …).
+        # 리포트의 "어떤 종류 PII가 멤버십 신호를 가장 잘 만드는가" 차트에 사용된다.
+        "identifier_category": query_info.get("identifier_category", ""),
         "retrieval_mode": (
           "member"
           if ground_truth_b == 1

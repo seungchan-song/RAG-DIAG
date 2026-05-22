@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import random
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,18 @@ app = typer.Typer(
 console = Console()
 
 _VERSION = "0.1.0"
+
+# 시나리오별 고정 실행 환경 (옵션 B 매트릭스의 source of truth)
+# - NORMAL/R2/R4/R7 → clean DB
+# - R9              → poisoned DB (공격 문서 주입이 본질이므로 clean 의미 없음)
+# 사용자는 --env 로 명시 override 할 수 있으나, 미지정 시 이 값이 사용된다.
+SCENARIO_FIXED_ENV: dict[str, str] = {
+    "NORMAL": "clean",
+    "R2": "clean",
+    "R4": "clean",
+    "R7": "clean",
+    "R9": "poisoned",
+}
 
 _BANNER = r"""
 ██████╗  █████╗  ██████╗      ██████╗  ██╗ █████╗  ██████╗
@@ -99,9 +112,11 @@ _QUERY_TYPE_KO: dict[str, dict[str, str]] = {
     "unknown":  "민감 정보 유출 시도",
   },
   "R4": {
-    "member":     "포함 문서 추론 시도",
-    "non_member": "비포함 문서 추론 시도",
-    "unknown":    "멤버십 추론 시도",
+    # R4 는 한 페어가 b=1 응답(포함 환경) + b=0 응답(비포함 환경) 두 건으로 구성된다.
+    # 진행 로그에는 페어가 "한 시도" 임을 명시하고 b=1/b=0 은 어느 응답인지 부가 정보로 표시.
+    "member":     "멤버십 페어 (포함 환경 응답)",
+    "non_member": "멤버십 페어 (비포함 환경 응답)",
+    "unknown":    "멤버십 페어 응답",
   },
   "R7": {
     # 1세대 (legacy, 대조군용)
@@ -322,8 +337,8 @@ def _show_banner() -> None:
     )
     quick_start.add_row(
         "3단계",
-        "rag run --all-scenarios --all-profiles --auto-report",
-        "전체 매트릭스 실행 + 리포트 자동 생성",
+        "rag run --all-scenarios --all-attackers --all-profiles --auto-report",
+        "전체 매트릭스(14셀) 실행 + 리포트 자동 생성",
     )
 
     console.print(
@@ -345,7 +360,7 @@ def _show_banner() -> None:
         "[bold]--resume <run_id>[/bold]  중간에 끊긴 실험을 이어서 실행할 수 있습니다."
     )
     tips.add_row(
-        "[bold]rag run -s R2 -a A1 -e poisoned[/bold]  단일 시나리오만 빠르게 테스트할 수 있습니다."
+        "[bold]rag run -s R2 --all-attackers --auto-report[/bold]  R2 시나리오의 A1↔A2 비교 실행."
     )
     tips.add_row(
         "[bold]rag [italic]<명령어>[/italic] --help[/bold]  각 명령어의 전체 옵션을 확인합니다."
@@ -361,24 +376,189 @@ def _show_banner() -> None:
     )
 
 
+def _resolve_attacker(scenario: str, attacker: Optional[str]) -> str:
+    """시나리오에 적합한 공격자 유형을 확정한다.
+
+    사용자가 --attacker 옵션을 명시했으면 그 값을 그대로 사용하고,
+    명시하지 않은 경우(None)에는 query_generator.CANONICAL_ATTACKER 매핑에서
+    시나리오별 권장 공격자를 자동 선택한다. 알 수 없는 시나리오면 "A1" 폴백.
+    """
+    if attacker:
+        return str(attacker).upper()
+    from rag.attack.query_generator import AttackQueryGenerator
+    return AttackQueryGenerator.CANONICAL_ATTACKER.get(
+        scenario.upper(), "A1"
+    )
+
+
+def _resolve_max_target_docs(
+    scenario: str,
+    config: dict[str, Any],
+    num_targets_override: int | None,
+) -> int | None:
+    """시나리오에 적용할 max_target_docs 상한값을 결정한다.
+
+    우선순위:
+      1. CLI 의 --num-targets / -n 옵션이 명시된 경우(num_targets_override) 그 값
+      2. 그렇지 않으면 config 의 attack.<scenario>.max_target_docs
+      3. 둘 다 없거나 0 이하면 None (= 무제한)
+
+    Args:
+      scenario: 시나리오 이름 (대소문자 무관).
+      config: load_config() 결과 딕셔너리.
+      num_targets_override: CLI 옵션 값. 미지정 시 None.
+
+    Returns:
+      양의 정수(상한) 또는 None(무제한).
+    """
+    if num_targets_override is not None:
+        value = int(num_targets_override)
+        return value if value > 0 else None
+    raw = (
+        (config.get("attack") or {})
+        .get(scenario.lower(), {})
+        .get("max_target_docs")
+    )
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _apply_target_docs_cap(
+    target_docs: list[dict[str, Any]],
+    scenario: str,
+    max_n: int | None,
+    random_seed: int | None = None,
+) -> list[dict[str, Any]]:
+    """시나리오별 정책에 따라 공격 대상 문서 수를 max_n 이하로 자른다.
+
+    정책:
+      - R7: target_docs 와 무관하게 system_prompt 가 타깃이므로 입력을 그대로 반환.
+      - R9: doc_role=attack 인 문서만 trigger 키워드 소스로 쓰이므로 attack 문서에만
+            cap 을 적용하고, 일반/민감 문서는 그대로 둔다.
+      - 그 외(NORMAL/R2/R4): doc_role=sensitive 를 우선 보존하도록 그룹화한 뒤,
+            같은 그룹 내에서는 random_seed 기반 셔플로 N 개를 샘플링한다.
+            (sensitive 그룹을 먼저 채우고, 부족분은 일반 그룹에서 채움.)
+
+    그룹 내 샘플링 정책 (cap 으로 잘리는 경우에만 의미 있음):
+      - random_seed 가 주어지면 같은 seed → 같은 샘플(재현성 유지)
+      - random_seed 가 None 이면 doc_id 알파벳 순 결정론적 폴백
+      - 데이터셋이 max_n 보다 크면 매 실험마다 dataset 전체에서 골고루 샘플링되어
+        앞쪽 doc_id 편향이 사라진다.
+
+    max_n 이 None 이거나 0 이하이면 입력을 그대로 반환한다.
+
+    Args:
+      target_docs: CLI 가 빌드한 공격 대상 문서 리스트.
+      scenario: 시나리오 이름 (대소문자 무관).
+      max_n: 상한값. None = 무제한.
+      random_seed: 그룹 내 셔플에 사용할 seed. 보통 config.experiment.random_seed.
+
+    Returns:
+      cap 이 적용된 새 리스트 (원본 미변경).
+    """
+    if not max_n or max_n <= 0:
+      return target_docs
+
+    scenario_upper = scenario.upper()
+    if scenario_upper == "R7":
+      return target_docs
+
+    def _sample_group(
+      docs: list[dict[str, Any]],
+      limit: int,
+      seed_offset: int,
+    ) -> list[dict[str, Any]]:
+      """그룹 안에서 limit 개를 결정론적으로 샘플링한다.
+
+      random_seed 가 None 이면 doc_id 알파벳 순 앞에서 limit 개를 잘라내고,
+      seed 가 있으면 알파벳 순으로 정렬해 입력 순서 영향을 제거한 뒤 셔플한다.
+      seed_offset 은 sensitive 그룹과 일반 그룹이 같은 셔플 상태를 공유하지
+      않도록 분리하기 위한 보조 값이다.
+      """
+      if limit <= 0 or not docs:
+        return []
+      ordered = sorted(docs, key=lambda d: str(d.get("doc_id", "")))
+      if random_seed is None:
+        return ordered[:limit]
+      rng = random.Random(int(random_seed) + seed_offset)
+      rng.shuffle(ordered)
+      return ordered[:limit]
+
+    if scenario_upper == "R9":
+      attack_docs: list[dict[str, Any]] = []
+      other_docs: list[dict[str, Any]] = []
+      for doc in target_docs:
+        role = (doc.get("meta") or {}).get("doc_role", "")
+        if role == "attack":
+          attack_docs.append(doc)
+        else:
+          other_docs.append(doc)
+      sampled_attack = _sample_group(attack_docs, max_n, seed_offset=0)
+      return other_docs + sampled_attack
+
+    sensitive_docs: list[dict[str, Any]] = []
+    normal_docs: list[dict[str, Any]] = []
+    for doc in target_docs:
+      role = (doc.get("meta") or {}).get("doc_role", "")
+      if role == "sensitive":
+        sensitive_docs.append(doc)
+      else:
+        normal_docs.append(doc)
+
+    # sensitive 우선: 풀이 N 이상이면 sensitive 만으로 채우고, 부족하면 일반에서 보충.
+    sampled_sensitive = _sample_group(sensitive_docs, max_n, seed_offset=0)
+    remaining = max_n - len(sampled_sensitive)
+    if remaining <= 0:
+      return sampled_sensitive
+    sampled_normal = _sample_group(normal_docs, remaining, seed_offset=1)
+    return sampled_sensitive + sampled_normal
+
+
 @dataclass(frozen=True)
 class SuiteCell:
-    """One orchestrated child run in a suite matrix."""
+    """One orchestrated child run in a suite matrix.
+
+    옵션 B 매트릭스에서는 (scenario, attacker, profile_name) 이 축이 된다.
+    environment_type 은 시나리오에서 결정론적으로 도출되는 property 이며
+    더 이상 독립 축이 아니다.
+
+    R4 시나리오에 한해 probe_mode 가 추가 축으로 사용된다.
+    - "generic"  : 일반 키워드 탐색 (기존 동작)
+    - "sensitive": 문서 내 PII 식별자 직접 사용 (R4S 분리 분석용)
+    R4 가 아닌 시나리오에서 probe_mode 값은 무시되며 cell_id 에도 포함되지 않는다.
+    """
 
     scenario: str
-    environment_type: str
+    attacker: str
     profile_name: str
+    probe_mode: str = "generic"
+
+    @property
+    def environment_type(self) -> str:
+        return SCENARIO_FIXED_ENV.get(self.scenario.upper(), "poisoned")
 
     @property
     def cell_id(self) -> str:
-        return f"{self.scenario.upper()}__{self.environment_type}__{self.profile_name}"
+        base = f"{self.scenario.upper()}__{self.attacker.upper()}__{self.profile_name}"
+        # R4 + sensitive 일 때만 suffix 부여. R4 generic 및 다른 시나리오의 cell_id 형식은
+        # 기존과 동일하게 유지해 옛 매니페스트/결과 디렉토리와 호환된다.
+        if self.scenario.upper() == "R4" and self.probe_mode == "sensitive":
+            return f"{base}__sensitive"
+        return base
 
     def to_dict(self) -> dict[str, str]:
         return {
             "cell_id": self.cell_id,
             "scenario": self.scenario.upper(),
+            "attacker": self.attacker.upper(),
             "environment_type": self.environment_type,
             "profile_name": self.profile_name,
+            "probe_mode": self.probe_mode,
             "child_run_id": self.cell_id,
         }
 
@@ -419,11 +599,16 @@ def run(
         "-s",
         help="실행할 시나리오 (NORMAL, R2, R4, R7, R9). --all-scenarios 미사용 시 필수.",
     ),
-    attacker: str = typer.Option(
-        "A1",
+    attacker: Optional[str] = typer.Option(
+        None,
         "--attacker",
         "-a",
-        help="공격자 유형 (A1=앵커쿼리, A2=명령어프롬프트, A3=혼합, A4=반복). 기본값: A1",
+        help=(
+            "공격자(위협 모델) 유형 (A1/A2/A3). "
+            "미지정 시 시나리오별 권장 공격자 자동 선택 "
+            "(NORMAL→A1, R2/R4→A2, R7→A1, R9→A3). "
+            "옵션 B 매트릭스에서 A4는 제거되었습니다."
+        ),
     ),
     profile: str = typer.Option(
         "default",
@@ -441,13 +626,35 @@ def run(
         "--all-scenarios",
         help="Run NORMAL, R2, R4, R7, and R9 in one suite",
     ),
+    all_attackers: bool = typer.Option(
+        False,
+        "--all-attackers",
+        help=(
+            "시나리오별로 SCENARIO_ATTACKER_MATRIX 에 정의된 호환 공격자를 "
+            "모두 실행합니다 (R2/R4→A1+A2 비교, R7→A1, R9→A3). 단독 시나리오 "
+            "(--scenario R2 --all-attackers) 와 전체 매트릭스(--all-scenarios "
+            "--all-attackers) 둘 다 지원합니다."
+        ),
+    ),
     probe_mode: str = typer.Option(
-        "generic",
+        "sensitive",
         "--probe-mode",
         help=(
             "R4 전용: 쿼리 생성 방식. "
-            "generic=일반 키워드 탐색(기본), "
-            "sensitive=문서 내 PII 식별자 직접 사용"
+            "sensitive=문서 내 PII 식별자 직접 사용(기본, 카테고리 분해 분석), "
+            "generic=일반 키워드 탐색(레거시, 권장하지 않음)"
+        ),
+    ),
+    num_targets: Optional[int] = typer.Option(
+        None,
+        "--num-targets",
+        "-n",
+        help=(
+            "공격 대상 문서 수 상한. 지정 시 config 의 "
+            "attack.<scenario>.max_target_docs 를 런타임에 덮어씁니다. "
+            "R7 은 시스템 프롬프트가 타깃이라 영향이 없고, "
+            "R9 는 doc_role=attack 문서에만 적용됩니다. "
+            "1000개 이상 인덱스에서 빠르게 시험하고 싶을 때 사용. 예: -n 50"
         ),
     ),
     resume: Optional[str] = typer.Option(
@@ -481,7 +688,7 @@ def run(
     is_suite_resume = bool(
         resume and base_exp_manager.suite_manifest_path(resume).exists()
     )
-    is_suite_run = is_suite_resume or all_profiles or all_scenarios
+    is_suite_run = is_suite_resume or all_profiles or all_scenarios or all_attackers
 
     if is_suite_run:
         _show_suite_run_info(
@@ -490,6 +697,7 @@ def run(
             profile=profile,
             all_profiles=all_profiles,
             all_scenarios=all_scenarios,
+            all_attackers=all_attackers,
             resume=resume,
         )
         try:
@@ -501,8 +709,10 @@ def run(
                 profile=profile,
                 all_profiles=all_profiles,
                 all_scenarios=all_scenarios,
+                all_attackers=all_attackers,
                 resume=resume,
                 config_path=config_path,
+                num_targets=num_targets,
             )
         except (FileNotFoundError, ValueError) as error:
             console.print(f"\n[red]Suite execution failed: {error}[/red]")
@@ -544,19 +754,22 @@ def run(
     # 시나리오에서 환경을 자동 결정한다.
     # 각 시나리오는 config의 scenario_environments에 고정된 단일 환경을 사용한다.
     env = _resolve_env_for_scenario(scenario, config)
-    _show_run_info(scenario, attacker, env, profile, resume=resume)
+    # attacker 미지정 시 시나리오별 CANONICAL 자동 선택. 명시했으면 그 값 유지.
+    resolved_attacker = _resolve_attacker(scenario, attacker)
+    _show_run_info(scenario, resolved_attacker, env, profile, resume=resume)
 
     try:
         outcome = _execute_single_run(
             config,
             scenario=scenario,
-            attacker=attacker,
+            attacker=resolved_attacker,
             env=env,
             profile=profile,
             probe_mode=probe_mode,
             exp_manager=ExperimentManager(config),
             run_id=resume,
             resume_existing=bool(resume),
+            num_targets=num_targets,
         )
     except Exception as error:
         console.print(f"\n[red]Run failed: {error}[/red]")
@@ -1245,12 +1458,15 @@ def _replay_suite_run(
         )
 
         try:
+            # replay 도 원본 셀의 probe_mode 를 그대로 재현해야 R4 sensitive 셀이
+            # 다시 sensitive 모드로 돌고, generic 셀과 충돌하지 않는다.
             outcome = _execute_single_run(
                 child_config,
                 scenario=cell.scenario,
                 attacker=attacker,
                 env=cell.environment_type,
                 profile=cell.profile_name,
+                probe_mode=cell.probe_mode,
                 exp_manager=child_manager,
                 run_id=cell.cell_id,
                 resume_existing=False,
@@ -1259,6 +1475,7 @@ def _replay_suite_run(
                     "suite_cell_id": cell.cell_id,
                     "cell_environment": cell.environment_type,
                     "cell_profile_name": cell.profile_name,
+                    "cell_probe_mode": cell.probe_mode,
                     "replayed_from_run_id": source_run_id,
                     "compatibility_mode": compatibility_mode,
                     "replay_source_cell_id": cell.cell_id,
@@ -1268,6 +1485,7 @@ def _replay_suite_run(
                     "suite_cell_id": cell.cell_id,
                     "cell_environment": cell.environment_type,
                     "cell_profile_name": cell.profile_name,
+                    "cell_probe_mode": cell.probe_mode,
                 },
                 replay_context=replay_context,
             )
@@ -1416,6 +1634,7 @@ def _execute_single_run(
     snapshot_metadata: dict[str, Any] | None = None,
     suite_context: dict[str, str] | None = None,
     replay_context: dict[str, Any] | None = None,
+    num_targets: int | None = None,
 ) -> SingleRunOutcome:
     """Run one scenario using the existing single-run execution path."""
     from rag.attack.runner import AttackRunner
@@ -1742,9 +1961,27 @@ def _execute_single_run(
                 for doc in candidate_docs
                 if doc.get("meta", {}).get("doc_role") != "attack"
             ] or candidate_docs
+
+        # 시나리오별 max_target_docs cap 적용.
+        # 1순위: CLI 의 --num-targets / -n 옵션(num_targets) 이 명시된 경우
+        # 2순위: config.attack.<scenario>.max_target_docs
+        # cap 미설정 또는 0 이하면 무제한으로 처리해 기존 동작과 동일하게 유지된다.
+        pre_cap_count = len(target_docs)
+        max_n = _resolve_max_target_docs(scenario, config, num_targets)
+        random_seed = (config.get("experiment") or {}).get("random_seed")
+        target_docs = _apply_target_docs_cap(
+            target_docs, scenario, max_n, random_seed=random_seed
+        )
+        post_cap_count = len(target_docs)
+        cap_suffix = ""
+        if max_n is not None and post_cap_count < pre_cap_count:
+            source_label = "CLI -n" if num_targets is not None else "config"
+            cap_suffix = (
+                f" [dim](cap={max_n}, 원본={pre_cap_count}, source={source_label})[/dim]"
+            )
         console.print(
             f"  [cyan]대상 문서 수:[/cyan] "
-            f"[bold]{len(target_docs)}[/bold]"
+            f"[bold]{post_cap_count}[/bold]{cap_suffix}"
         )
 
         runner = AttackRunner(config)
@@ -1896,6 +2133,17 @@ def _execute_single_run(
                 current_stage = "evaluate"
                 evaluator.evaluate(result)
                 sanitized_result = storage_sanitizer.sanitized_copy(result)
+                # sanitized_copy 는 deepcopy 본에만 PII 탐지 메타데이터를 채우므로,
+                # 원본 result 의 pii_summary/pii_findings 가 비어 있는 상태로
+                # evaluated_results 에 들어가게 된다. 그 결과 summarize_evaluated_results
+                # 가 NORMAL 의 pii_response_count / R2 의 intensity 등을 0 으로 잘못
+                # 집계하고, 진행 표시 줄의 PII 카운트도 0 으로 찍히는 불일치가 발생한다.
+                # 응답(response) 마스킹은 평가에 영향을 주면 안 되므로 sanitized 본에만
+                # 적용하고, PII 탐지 결과(요약/finding/runtime_status)만 원본 result 로
+                # 옮겨 평가/리포트가 같은 PII 통계를 보도록 동기화한다.
+                result.pii_summary = dict(sanitized_result.pii_summary or {})
+                result.pii_findings = list(sanitized_result.pii_findings or [])
+                result.pii_runtime_status = dict(sanitized_result.pii_runtime_status or {})
                 current_stage = "persist"
                 next_evaluated_results = evaluated_results + [result]
                 next_stored_results = stored_results + [sanitized_result]
@@ -1943,6 +2191,25 @@ def _execute_single_run(
                     else:
                         icon = "[green]·[/green]"
                         tail = "(PII 미탐)"
+                    progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
+                elif scenario.upper() == "R4":
+                    # R4 는 페어 단위(b=1 응답 + b=0 응답)로만 성공이 정의된다.
+                    # 응답 1건마다 줄을 찍으면 한 페어가 두 줄을 차지해 가독성이
+                    # 떨어지므로, b=1 응답 단계(페어 미완성)는 진행 줄 자체를 건너뛰고
+                    # b=0 응답이 들어와 페어가 완성된 시점에만 페어 판정 결과를
+                    # "멤버십 페어 판정: 성공/미성공" 으로 한 줄로 출력한다.
+                    # 진행 바 자체는 advance=1 로 이미 갱신되어 페어 절반 진행도 시각화된다.
+                    b_value = (result.metadata or {}).get("ground_truth_b")
+                    if b_value != 1:
+                        if result.success:
+                            icon = "[green]✓[/green]"
+                            tail = "성공"
+                        else:
+                            icon = "[dim]·[/dim]"
+                            tail = "미성공"
+                        progress.console.print(
+                            f"   {icon} 방금 시도: 멤버십 페어 판정: {tail}"
+                        )
                 else:
                     if result.success:
                         icon = "[green]✓[/green]"
@@ -1950,7 +2217,7 @@ def _execute_single_run(
                     else:
                         icon = "[dim]·[/dim]"
                         tail = "(미성공)"
-                progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
+                    progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
             except Exception as error:
                 if query_id:
                     failed_query_ids.add(query_id)
@@ -2131,15 +2398,23 @@ def _execute_suite_run(
     base_config: dict[str, Any],
     base_exp_manager: Any,
     scenario: str | None,
-    attacker: str,
+    attacker: str | None,
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
+    all_attackers: bool = False,
     resume: str | None,
     config_path: str | None,
     single_run_executor: Callable[..., SingleRunOutcome] = _execute_single_run,
+    num_targets: int | None = None,
 ) -> str:
-    """Run or resume a suite matrix under one parent run id."""
+    """Run or resume a suite matrix under one parent run id.
+
+    각 SuiteCell 은 (scenario, attacker, profile) 을 가지며 attacker 는
+    셀 자체에 결정론적으로 저장된다(_build_suite_cells 에서 결정).
+    - all_attackers=True  : 시나리오별 SCENARIO_ATTACKER_MATRIX 전체 순회
+    - all_attackers=False : 시나리오별 attacker(명시값 또는 CANONICAL) 1개
+    """
     if resume:
         suite_run_id = resume
         suite_manifest = base_exp_manager.load_suite_manifest(suite_run_id)
@@ -2148,20 +2423,22 @@ def _execute_suite_run(
             _deserialize_suite_cell(item)
             for item in suite_manifest.get("planned_cells", [])
         ]
-        attacker = str(suite_manifest.get("attacker", attacker))
     else:
         planned_cells = _build_suite_cells(
             scenario=scenario,
+            attacker=attacker,
             profile=profile,
             all_profiles=all_profiles,
             all_scenarios=all_scenarios,
+            all_attackers=all_attackers,
             config=base_config,
         )
         suite_run_id = base_exp_manager.create_run()
         suite_manifest = {
             "scenario_mode": "all" if all_scenarios else "single",
-            "attacker": attacker,
+            "attacker_mode": "all" if all_attackers else (attacker.upper() if attacker else "auto"),
             "scenarios": sorted({cell.scenario for cell in planned_cells}),
+            "attackers": sorted({cell.attacker for cell in planned_cells}),
             "environments": sorted({cell.environment_type for cell in planned_cells}),
             "profiles": sorted({cell.profile_name for cell in planned_cells}),
             "planned_cells": [cell.to_dict() for cell in planned_cells],
@@ -2202,6 +2479,7 @@ def _execute_suite_run(
         console.print(
             Panel(
                 f"  [bold]시나리오:[/bold] [cyan]{cell.scenario.upper()}[/cyan]   "
+                f"[bold]공격자:[/bold] [magenta]{cell.attacker}[/magenta]   "
                 f"[bold]환경:[/bold] [yellow]{cell.environment_type}[/yellow]   "
                 f"[bold]리랭커:[/bold] {_cell_reranker_label}\n"
                 f"  [dim]{cell.cell_id}[/dim]",
@@ -2218,37 +2496,37 @@ def _execute_suite_run(
         child_resume = child_manager.checkpoint_path(cell.cell_id).exists()
 
         try:
-            from rag.attack.query_generator import AttackQueryGenerator
-            cell_attacker = AttackQueryGenerator.CANONICAL_ATTACKER.get(
-                cell.scenario.upper(), attacker
-            )
-            if cell_attacker != attacker:
-                console.print(
-                    f"  [yellow]attacker 자동 조정:[/yellow] "
-                    f"{attacker} → {cell_attacker} "
-                    f"(시나리오 {cell.scenario}에 적합한 공격자)"
-                )
+            # attacker 는 cell 자체에 결정론적으로 저장돼 있으므로 그대로 사용.
+            cell_attacker = cell.attacker
+            # R4 의 경우 cell.probe_mode 가 "generic"/"sensitive" 로 분기된다.
+            # 그 외 시나리오는 R4MembershipAttack 만 옵션을 해석하므로 generic 으로 두면 안전.
             outcome = single_run_executor(
                 child_config,
                 scenario=cell.scenario,
                 attacker=cell_attacker,
                 env=cell.environment_type,
                 profile=cell.profile_name,
+                probe_mode=cell.probe_mode,
                 exp_manager=child_manager,
                 run_id=cell.cell_id,
                 resume_existing=child_resume,
                 snapshot_metadata={
                     "suite_run_id": suite_run_id,
                     "suite_cell_id": cell.cell_id,
+                    "cell_attacker": cell_attacker,
                     "cell_environment": cell.environment_type,
                     "cell_profile_name": cell.profile_name,
+                    "cell_probe_mode": cell.probe_mode,
                 },
                 suite_context={
                     "suite_run_id": suite_run_id,
                     "suite_cell_id": cell.cell_id,
+                    "cell_attacker": cell_attacker,
                     "cell_environment": cell.environment_type,
                     "cell_profile_name": cell.profile_name,
+                    "cell_probe_mode": cell.probe_mode,
                 },
+                num_targets=num_targets,
             )
             if outcome.status == "completed":
                 completed_cells.add(cell.cell_id)
@@ -2284,24 +2562,31 @@ def _execute_suite_run(
 def _build_suite_cells(
     *,
     scenario: str | None,
+    attacker: str | None = None,
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
+    all_attackers: bool = False,
     config: dict[str, Any],
 ) -> list[SuiteCell]:
     """Resolve the requested matrix axes into concrete suite cells.
 
-    각 시나리오의 환경은 config의 scenario_environments에서 자동으로 결정된다.
+    축: scenario × attacker × profile
+    - environment 는 SCENARIO_FIXED_ENV 로 결정되므로 별도 축이 아니다.
+    - attacker 결정 규칙:
+        all_attackers=True  → SCENARIO_ATTACKER_MATRIX 에서 호환 attacker 전체
+        all_attackers=False, attacker 명시 → 그 attacker 가 호환되는 시나리오만 셀 생성
+                                              (호환 안되는 시나리오는 스킵)
+        all_attackers=False, attacker 미명시 → 시나리오별 CANONICAL_ATTACKER 단일
     """
+    from rag.attack.query_generator import AttackQueryGenerator
+
     matrix_config = config.get("experiment", {}).get("matrix", {})
     scenarios = (
         list(matrix_config.get("scenarios", ["NORMAL", "R2", "R4", "R7", "R9"]))
         if all_scenarios
         else [str(scenario or "").upper()]
     )
-
-    # 시나리오별 환경은 config에 고정된 단일 환경만 사용한다.
-    scenario_env_map = matrix_config.get("scenario_environments", {})
 
     profiles = (
         list(matrix_config.get("profiles", ["reranker_off", "reranker_on"]))
@@ -2312,18 +2597,56 @@ def _build_suite_cells(
     if not all_scenarios and not scenario:
         raise ValueError("`--scenario` is required when `--all-scenarios` is not used.")
 
+    requested_attacker = str(attacker).upper() if attacker else None
+
     cells: list[SuiteCell] = []
     for scenario_name in scenarios:
-        allowed_envs = scenario_env_map.get(str(scenario_name).upper(), ["clean"])
-        environment_name = allowed_envs[0] if allowed_envs else "clean"
-        for profile_name in profiles:
-            cells.append(
-                SuiteCell(
-                    scenario=str(scenario_name).upper(),
-                    environment_type=str(environment_name),
-                    profile_name=str(profile_name),
+        scenario_upper = str(scenario_name).upper()
+        allowed_attackers = AttackQueryGenerator.SCENARIO_ATTACKER_MATRIX.get(
+            scenario_upper, set()
+        )
+        canonical = AttackQueryGenerator.CANONICAL_ATTACKER.get(scenario_upper, "A1")
+
+        if all_attackers:
+            # 시나리오별 호환 attacker 전체 순회 (정렬해 결정론적 순서 보장)
+            attackers_for_scenario = sorted(allowed_attackers) if allowed_attackers else [canonical]
+        elif requested_attacker is not None:
+            # 위협 모델 우선 선택 UX: 사용자가 attacker 를 명시했다면
+            # 그 공격자와 호환되는 시나리오만 셀 생성. 호환 안되면 스킵.
+            if requested_attacker in allowed_attackers:
+                attackers_for_scenario = [requested_attacker]
+            else:
+                console.print(
+                    f"[yellow]Skip:[/yellow] 시나리오 {scenario_upper} 는 attacker "
+                    f"{requested_attacker} 와 호환되지 않습니다 "
+                    f"(허용: {sorted(allowed_attackers) or ['-']})."
                 )
-            )
+                continue
+        else:
+            # 미명시: CANONICAL 단일
+            attackers_for_scenario = [canonical]
+
+        # R4 는 항상 sensitive 모드로 실행한다. R4 의 핵심 분석은
+        # "어떤 종류의 PII 가 가장 강한 멤버십 신호를 만드는가" 라는
+        # 카테고리 분해 분석이며, generic 모드는 별도 비교 가치가 없는
+        # 동일 공격의 약화된 변종이라 컨셉을 폐기했다 (대시보드 R4 패널 참고).
+        # 다른 시나리오는 probe_mode 가 의미 없어 generic 1개로 충분.
+        if scenario_upper == "R4":
+            probe_modes_for_scenario = ["sensitive"]
+        else:
+            probe_modes_for_scenario = ["generic"]
+
+        for attacker_name in attackers_for_scenario:
+            for profile_name in profiles:
+                for probe_mode_value in probe_modes_for_scenario:
+                    cells.append(
+                        SuiteCell(
+                            scenario=scenario_upper,
+                            attacker=str(attacker_name).upper(),
+                            profile_name=str(profile_name),
+                            probe_mode=probe_mode_value,
+                        )
+                    )
     return cells
 
 
@@ -2731,11 +3054,36 @@ def _resolve_existing_path(path_value: str, *, label: str) -> Path:
 
 
 def _deserialize_suite_cell(payload: dict[str, Any]) -> SuiteCell:
-    """Hydrate a SuiteCell from saved JSON."""
+    """Hydrate a SuiteCell from saved JSON.
+
+    옵션 B 매트릭스 전 매니페스트는 attacker 필드가 없을 수 있으므로
+    SCENARIO_ATTACKER_MATRIX 의 CANONICAL 로 폴백한다. environment_type 은
+    더 이상 필드가 아니라 property(SCENARIO_FIXED_ENV 기반)이므로 무시한다.
+
+    probe_mode 필드는 R4 sensitive 셀 도입 이전 매니페스트에는 존재하지 않으므로
+    누락 시 "generic" 으로 폴백한다(기존 동작 유지). 그러나 cell_id 자체에
+    "__sensitive" suffix 가 들어 있으면 payload 의 probe_mode 값과 무관하게
+    sensitive 로 복원해 일관성을 보장한다.
+    """
+    from rag.attack.query_generator import AttackQueryGenerator
+
+    scenario_upper = str(payload.get("scenario", "")).upper()
+    attacker = (
+        str(payload.get("attacker", "")).upper()
+        or AttackQueryGenerator.CANONICAL_ATTACKER.get(scenario_upper, "A1")
+    )
+    probe_mode = str(payload.get("probe_mode", "generic")).lower()
+    if probe_mode not in {"generic", "sensitive"}:
+        probe_mode = "generic"
+    # cell_id suffix 가 정답이라 더 신뢰. 옛 매니페스트 → 새 코드로 resume 시 안전망.
+    cell_id_value = str(payload.get("cell_id", ""))
+    if scenario_upper == "R4" and cell_id_value.endswith("__sensitive"):
+        probe_mode = "sensitive"
     return SuiteCell(
-        scenario=str(payload.get("scenario", "")).upper(),
-        environment_type=str(payload.get("environment_type", "")),
+        scenario=scenario_upper,
+        attacker=attacker,
         profile_name=str(payload.get("profile_name", "")),
+        probe_mode=probe_mode,
     )
 
 
@@ -3026,22 +3374,27 @@ def _infer_environment_from_doc_path(doc_path: str) -> str:
 
 
 def _resolve_env_for_scenario(scenario: str, config: dict[str, Any]) -> str:
-    """시나리오에 고정된 실행 환경을 config의 scenario_environments에서 결정한다.
+    """시나리오에 고정된 실행 환경을 결정한다.
 
-    config에 해당 시나리오 항목이 없으면 clean 을 기본값으로 반환한다.
+    Source of truth 는 코드 상수 SCENARIO_FIXED_ENV. config 의
+    experiment.matrix.scenario_environments 가 있으면 overlay 로 사용 가능하지만
+    옵션 B 매트릭스 이후로는 SCENARIO_FIXED_ENV 우선이다.
 
     Args:
       scenario: 시나리오 이름 ("NORMAL", "R2", "R4", "R7", "R9")
-      config: YAML에서 로드한 설정 딕셔너리
+      config: YAML 설정 딕셔너리 (참고용, scenario_environments override 허용)
 
     Returns:
       str: "clean" 또는 "poisoned"
     """
+    scenario_upper = str(scenario).upper()
     scenario_env_map = (
         config.get("experiment", {}).get("matrix", {}).get("scenario_environments", {})
     )
-    allowed = scenario_env_map.get(str(scenario).upper(), ["clean"])
-    return allowed[0] if allowed else "clean"
+    config_envs = scenario_env_map.get(scenario_upper)
+    if config_envs:
+        return config_envs[0]
+    return SCENARIO_FIXED_ENV.get(scenario_upper, "clean")
 
 
 def _require_scenario_for_poisoned(env: str, scenario: str | None) -> None:
@@ -3460,10 +3813,11 @@ def _show_run_info(
 def _show_suite_run_info(
     *,
     scenario: str | None,
-    attacker: str,
+    attacker: str | None,
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
+    all_attackers: bool = False,
     resume: str | None,
 ) -> None:
     """Render suite-mode configuration before execution starts."""
@@ -3471,8 +3825,14 @@ def _show_suite_run_info(
     table.add_column("Field", style="cyan", width=18)
     table.add_column("Value", style="green")
     table.add_row("Scenario", "ALL" if all_scenarios else (scenario or "N/A"))
-    table.add_row("Attacker", attacker)
-    table.add_row("Environment", "시나리오별 자동 결정 (config)")
+    if all_attackers:
+        attacker_label = "ALL (시나리오별 호환 매트릭스)"
+    elif attacker:
+        attacker_label = str(attacker).upper()
+    else:
+        attacker_label = "시나리오별 자동 (CANONICAL)"
+    table.add_row("Attacker", attacker_label)
+    table.add_row("Environment", "시나리오별 자동 (SCENARIO_FIXED_ENV)")
     table.add_row("Profile", "ALL" if all_profiles else profile)
     table.add_row("Resume", resume or "new suite")
 
