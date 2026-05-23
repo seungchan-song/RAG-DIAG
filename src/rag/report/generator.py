@@ -1574,6 +1574,16 @@ class ReportGenerator:
                 if environment != "clean":
                     continue
 
+                # R4 는 MIA 페어 단위로 success 가 결정되고 b=1/b=0 두 응답이
+                # 동일한 success 를 공유한다. 응답별로 페어링하면 한 MIA 페어가
+                # b=1 비교 1건 + b=0 비교 1건으로 두 번 카운트되므로
+                # b=1 응답만 비교 단위로 사용한다 (_build_attacker_comparison 동일 규약).
+                if (
+                    scenario.upper() == "R4"
+                    and (result.get("metadata") or {}).get("ground_truth_b") == 0
+                ):
+                    continue
+
                 reranker_state = self._get_reranker_state(result, data)
                 paired_env = "poisoned"
                 counterpart = local_index.get(
@@ -1627,6 +1637,16 @@ class ReportGenerator:
                 reranker_state = self._get_reranker_state(result, data)
                 # reranker_off → reranker_on 단방향만 집계하여 이중 계산 방지
                 if reranker_state != "off":
+                    continue
+
+                # R4 는 MIA 페어 단위로 success 가 결정되고 b=1/b=0 두 응답이
+                # 동일한 success 를 공유한다. 응답별로 페어링하면 한 MIA 페어가
+                # b=1 비교 1건 + b=0 비교 1건으로 두 번 카운트되므로
+                # b=1 응답만 비교 단위로 사용한다 (_build_attacker_comparison 동일 규약).
+                if (
+                    scenario.upper() == "R4"
+                    and (result.get("metadata") or {}).get("ground_truth_b") == 0
+                ):
                     continue
 
                 paired_reranker_state = "on"
@@ -2200,12 +2220,21 @@ class ReportGenerator:
         Returns:
           list[dict]: 셀 단위로 균등 분배된 최대 max_count 개 샘플.
         """
+        scenario_upper = scenario.upper()
+
+        # R4 는 페어(b=1, b=0) 단위로 success 가 결정되며, 페어가 분리되면
+        # 대시보드 상세분석에서 한쪽 응답만 남아 페어 매칭이 깨진다.
+        # 응답 단위 cap 만 적용하던 기본 경로는 b 한쪽만 살리는 경우가 생기므로,
+        # R4 는 페어 단위 샘플링 전용 경로로 분기한다. (이 경로는 페어를 절대 쪼개지 않음)
+        if scenario_upper == "R4":
+            return self._stratified_sample_r4_pairs(results_list, max_count)
+
         if len(results_list) <= max_count:
             return results_list
 
-        scenario_upper = scenario.upper()
-        # R4 는 generic / sensitive 두 probe_mode 가 독립 셀로 분리되어 실행된다.
-        include_probe_mode = scenario_upper == "R4"
+        # R4 외 시나리오: 기본 응답 단위 stratified sampling.
+        # R4 분기에서 이미 처리되므로 여기서는 probe_mode 축이 필요하지 않다.
+        include_probe_mode = False
 
         def _cell_key(result: dict[str, Any]) -> tuple[str, ...]:
             meta = result.get("metadata") or {}
@@ -2287,6 +2316,151 @@ class ReportGenerator:
 
         return sampled
 
+    def _stratified_sample_r4_pairs(
+        self,
+        results_list: list[dict[str, Any]],
+        max_count: int,
+    ) -> list[dict[str, Any]]:
+        """R4 전용 페어 단위 stratified sampling.
+
+        R4 는 (b=1, b=0) 두 응답이 한 페어로 success 가 정의되므로 응답 한쪽이
+        잘리면 대시보드 페어 매칭이 깨진다. 이 함수는 페어가 절대 쪼개지지
+        않도록 다음 순서로 처리한다.
+
+          1) 동일 (env, reranker_state, query without b token) 을 키로
+             응답을 페어로 묶는다 (r4_evaluator._make_pair_key 와 동일 규약).
+          2) 양쪽이 모두 채워진 완성 페어만 셀(attacker, reranker_state, probe_mode)
+             단위로 성공/실패 버킷에 넣는다.
+          3) max_count 가 응답 기준이므로 페어 기준 quota 는 max_count // 2 로
+             계산하고, 셀별 균등 분배 + 셀 내부 성공 페어 우선 규칙으로 채운다.
+          4) 한쪽만 도착해 페어가 미완성인 응답은 그대로 끝에 추가해 메타데이터
+             탐색이 가능하도록 보존한다 (남는 슬롯 한도 내).
+
+        결과: 응답 수 ≤ max_count, 페어 분리 없음.
+        """
+        import re
+        from collections import defaultdict
+
+        # 1) 페어 그룹화
+        def _pair_key(result: dict[str, Any]) -> str:
+            meta = result.get("metadata") or {}
+            qid = result.get("query_id") or meta.get("query_id") or ""
+            env = str(
+                meta.get("environment")
+                or meta.get("env")
+                or result.get("environment_type")
+                or ""
+            )
+            rer = str(meta.get("reranker_state") or "").lower()
+            return f"{re.sub(r':b-[01]:', ':', qid)}|env={env}|rer={rer}"
+
+        pair_groups: dict[str, dict[str, dict[str, Any] | None]] = defaultdict(
+            lambda: {"m": None, "n": None}
+        )
+        for result in results_list:
+            key = _pair_key(result)
+            b = (result.get("metadata") or {}).get("ground_truth_b")
+            slot = "m" if b == 1 else "n"
+            # 같은 슬롯에 이미 있으면 첫 응답을 유지(보수적). 페어 키에 env/reranker 가
+            # 포함되므로 정상적으로는 한 슬롯에 한 응답만 들어온다.
+            if pair_groups[key][slot] is None:
+                pair_groups[key][slot] = result
+
+        complete_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        leftover_singletons: list[dict[str, Any]] = []
+        for slots in pair_groups.values():
+            m, n = slots["m"], slots["n"]
+            if m is not None and n is not None:
+                complete_pairs.append((m, n))
+            else:
+                if m is not None:
+                    leftover_singletons.append(m)
+                if n is not None:
+                    leftover_singletons.append(n)
+
+        max_pairs = max_count // 2
+
+        # 페어 수가 cap 이하라면 그대로 반환 (응답 순서 보존).
+        if len(complete_pairs) <= max_pairs:
+            sampled: list[dict[str, Any]] = []
+            for m, n in complete_pairs:
+                sampled.append(m)
+                sampled.append(n)
+            # 미완성 응답은 남는 슬롯 한도까지만 추가.
+            remaining_slots = max_count - len(sampled)
+            if remaining_slots > 0 and leftover_singletons:
+                sampled.extend(leftover_singletons[:remaining_slots])
+            return sampled
+
+        # 2) 셀별 success/fail 버킷 (대표 응답 = b=1 의 메타데이터).
+        def _cell_key(member: dict[str, Any]) -> tuple[str, str, str]:
+            meta = member.get("metadata") or {}
+            attacker = str(meta.get("attacker") or "unknown").upper()
+            reranker_state = str(meta.get("reranker_state") or "unknown").lower()
+            probe_mode = str(meta.get("probe_mode") or "generic").lower()
+            return (attacker, reranker_state, probe_mode)
+
+        cell_success: dict[tuple[str, str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
+        cell_fail: dict[tuple[str, str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
+        for m, n in complete_pairs:
+            key = _cell_key(m)
+            # 페어의 두 응답은 동일 success 를 공유하므로 m.success 만 보면 충분하다.
+            if bool(m.get("success")):
+                cell_success[key].append((m, n))
+            else:
+                cell_fail[key].append((m, n))
+
+        all_keys = sorted(set(cell_success.keys()) | set(cell_fail.keys()))
+
+        # 3) 셀별 페어 quota 분배 + 부족분 재분배 (응답 단위 _stratified_sample 규칙과 동일).
+        num_cells = len(all_keys)
+        base_quota = max_pairs // num_cells if num_cells else 0
+        remainder = max_pairs - base_quota * num_cells
+
+        initial_quota = {
+            key: base_quota + (1 if idx < remainder else 0)
+            for idx, key in enumerate(all_keys)
+        }
+        cell_total = {
+            key: len(cell_success.get(key, [])) + len(cell_fail.get(key, []))
+            for key in all_keys
+        }
+        final_quota = {
+            key: min(initial_quota[key], cell_total[key]) for key in all_keys
+        }
+        leftover = max_pairs - sum(final_quota.values())
+        while leftover > 0:
+            progressed = False
+            for key in all_keys:
+                if final_quota[key] < cell_total[key]:
+                    final_quota[key] += 1
+                    leftover -= 1
+                    progressed = True
+                    if leftover == 0:
+                        break
+            if not progressed:
+                break
+
+        # 4) 셀 내부에서 성공 페어 우선으로 채움.
+        sampled_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for key in all_keys:
+            quota = final_quota[key]
+            if quota <= 0:
+                continue
+            successes = cell_success.get(key, [])
+            fails = cell_fail.get(key, [])
+            take_s = min(len(successes), quota)
+            take_f = min(len(fails), quota - take_s)
+            sampled_pairs.extend(successes[:take_s])
+            sampled_pairs.extend(fails[:take_f])
+
+        # 페어를 응답 리스트로 flatten.
+        sampled: list[dict[str, Any]] = []
+        for m, n in sampled_pairs:
+            sampled.append(m)
+            sampled.append(n)
+        return sampled
+
     def _generate_html_dashboard(
         self,
         run_dir: Path,
@@ -2305,13 +2479,22 @@ class ReportGenerator:
 
         # HTML embed용 경량 복사본: final_prompt 제거 + 시나리오당 최대 200개로 제한
         # (전체 결과는 R2_result.json / R4_result.json / R9_result.json 참조)
+        # R4 는 응답 1건이 아니라 (b=1, b=0) 페어 단위가 평가의 기본 단위이므로
+        # 응답 기준 cap 200 을 그대로 적용하면 한쪽 응답이 잘려 페어가 깨진다.
+        # 페어 단위 cap 200 (= 응답 400) 으로 늘려 양쪽 응답이 함께 보존되도록 한다.
         MAX_EMBEDDED_RESULTS = 200
+        MAX_EMBEDDED_RESULTS_R4 = MAX_EMBEDDED_RESULTS * 2
         lightweight_results: dict[str, Any] = {}
         for scenario, data in scenario_results.items():
             cleaned_data = dict(data)
             results_list = cleaned_data.get("results", [])
+            cap = (
+                MAX_EMBEDDED_RESULTS_R4
+                if scenario.upper() == "R4"
+                else MAX_EMBEDDED_RESULTS
+            )
             sampled = self._stratified_sample(
-                results_list, MAX_EMBEDDED_RESULTS, scenario.upper()
+                results_list, cap, scenario.upper()
             )
             cleaned_results = []
             for result in sampled:

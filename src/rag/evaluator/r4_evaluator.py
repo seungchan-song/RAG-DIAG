@@ -95,21 +95,37 @@ class R4Evaluator:
     scores = self.scorer.score(result.target_text, result.response)
     return scores["rougeL"].recall
 
-  def _make_pair_key(self, query_id: str) -> str:
+  def _make_pair_key(self, result: AttackResult) -> str:
     """
-    query_id에서 b 값(b-0 또는 b-1) 부분을 제거해 페어 매칭 키를 생성합니다.
+    페어 매칭 키를 생성합니다.
+
+    query_id 의 b 값(b-0 또는 b-1) 부분만 제거하면 동일 쿼리에 대한
+    서로 다른 (environment, reranker_state) 조합의 응답들이 같은 키를 공유하게
+    되어 cross-페어링(예: reranker_off 의 b=1 응답이 reranker_on 의 b=0 응답과
+    묶임)이 발생할 수 있다. 이를 막기 위해 environment 와 reranker_state 를
+    키에 함께 포함해 비교가 같은 조건 안에서만 일어나도록 한다.
 
     예시:
-      "R4:doc-xxx:b-1:tpl-04:rep-02" → "R4:doc-xxx:b-X:tpl-04:rep-02"
-      "R4:doc-xxx:b-0:tpl-04:rep-02" → "R4:doc-xxx:b-X:tpl-04:rep-02"
+      query_id = "R4:doc-xxx:b-1:tpl-04:rep-02"
+      env="clean", reranker_state="off"
+      → "R4:doc-xxx:b-X:tpl-04:rep-02|env=clean|rer=off"
 
     Args:
-      query_id: 쿼리 식별자
+      result: R4 공격 실행 결과
 
     Returns:
-      str: b 값이 제거된 페어 키
+      str: b 값이 제거되고 (environment, reranker_state) 가 부가된 페어 키
     """
-    return re.sub(r':b-[01]:', ':b-X:', query_id)
+    base_key = re.sub(r':b-[01]:', ':b-X:', result.query_id)
+    metadata = result.metadata or {}
+    environment = str(
+      metadata.get("environment")
+      or metadata.get("env")
+      or getattr(result, "environment_type", "")
+      or ""
+    )
+    reranker_state = str(metadata.get("reranker_state") or "").lower()
+    return f"{base_key}|env={environment}|rer={reranker_state}"
 
   def _apply_pair_judgment(
     self,
@@ -195,7 +211,7 @@ class R4Evaluator:
     result.success = False  # 페어 처리 전 임시값
 
     # 2. 페어 탐색 및 판정
-    pair_key = self._make_pair_key(result.query_id)
+    pair_key = self._make_pair_key(result)
     b = result.metadata.get("ground_truth_b", -1)
 
     if pair_key in self._result_buffer:

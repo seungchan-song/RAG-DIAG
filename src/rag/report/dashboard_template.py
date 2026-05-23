@@ -2002,17 +2002,26 @@ function renderR4PairList(items) {
   const container = $('r4-list-view');
   if (!container) return;
 
-  // query_id 의 ":b-0:" / ":b-1:" 부분만 빼면 같은 쿼리 페어의 식별자가 된다.
-  // 같은 페어의 두 응답은 evaluator 가 동일한 success / delta 를 metadata 에 주입한다.
+  // 페어 키는 query_id 의 ":b-0:" / ":b-1:" 토큰을 제거한 뒤 environment 와
+  // reranker_state 를 합쳐 만든다. b 토큰만 제거하면 같은 쿼리에 대해
+  // (off, b=1) / (off, b=0) / (on, b=1) / (on, b=0) 네 응답이 한 키에 충돌해
+  // 응답 둘이 다른 응답으로 덮어쓰여 페어가 절반만 보이는 문제가 생긴다.
+  // r4_evaluator._make_pair_key 와 같은 규약으로 키를 만들어 페어 단위가
+  // 평가기와 대시보드에서 일치하도록 한다.
   const pairMap = new Map();
   items.forEach((item) => {
     const qid = item.query_id || (item.metadata && item.metadata.query_id) || '';
-    const pairKey = qid.replace(/:b-[01]:/, ':');
+    const meta = item.metadata || {};
+    const env = String(meta.environment || meta.env || item.environment_type || '');
+    const rer = String(meta.reranker_state
+      || (meta.reranker_enabled === true ? 'on' : meta.reranker_enabled === false ? 'off' : '')
+      || '').toLowerCase();
+    const pairKey = qid.replace(/:b-[01]:/, ':') + '|env=' + env + '|rer=' + rer;
     if (!pairMap.has(pairKey)) {
       pairMap.set(pairKey, { pairKey, member: null, nonMember: null });
     }
     const slot = pairMap.get(pairKey);
-    const b = (item.metadata || {}).ground_truth_b;
+    const b = meta.ground_truth_b;
     if (b === 1) slot.member = item;
     else slot.nonMember = item;
   });
