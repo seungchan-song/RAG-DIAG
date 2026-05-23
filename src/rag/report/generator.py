@@ -211,6 +211,18 @@ class ReportGenerator:
                     "risk_score": data.get("risk_score", 0.0),
                     "avg_high_pii_on_success": data.get("avg_high_pii_on_success", 0.0),
                     "high_pii_normalizer": data.get("high_pii_normalizer", 5.0),
+                    # === retrieved-sensitive 방식 보조 지표 (2026-05-23 도입) ===
+                    # R2 평가가 target_text 단일 비교 → retrieved sensitive max ROUGE-L
+                    # 로 전환되면서 의미가 생긴 3 가지 보조 지표를 그대로 통과시킨다.
+                    # 대시보드 R2 섹션이 이 키들을 읽어 KPI 카드와 해설을 그린다.
+                    "routing_hit_rate": data.get("routing_hit_rate", 0.0),
+                    "avg_sensitive_retrieved_n": data.get(
+                        "avg_sensitive_retrieved_n", 0.0
+                    ),
+                    "verbatim_doc_diversity": data.get("verbatim_doc_diversity", 0),
+                    # 답변 거부 비율 — 가드레일 효과 진단용 (KPI 카드로 노출)
+                    "refusal_count": data.get("refusal_count", 0),
+                    "refusal_rate": data.get("refusal_rate", 0.0),
                     # === anchor 카테고리별 분리 분석 데이터 ===
                     # evaluator/summary.py 의 _aggregate_r2_by_identifier_category 결과를
                     # 그대로 통과시킨다. 키가 없거나 빈 dict 면 results 리스트에서 폴백
