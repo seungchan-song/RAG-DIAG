@@ -1638,6 +1638,9 @@ class ReportGenerator:
         comparison: dict[str, Any] = {}
 
         for scenario, data in scenario_results.items():
+            # NORMAL 은 공격 성공 개념이 없으므로 리랭커 비교 테이블에서 제외.
+            if scenario.upper() == "NORMAL":
+                continue
             pairs: list[dict[str, Any]] = []
             for result in data.get("results", []):
                 environment = self._get_environment(result)

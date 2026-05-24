@@ -2181,9 +2181,16 @@ def _execute_single_run(
                 )
                 ko_label = _resolve_query_type_ko(scenario, query_info, result)
                 if scenario.upper() == "NORMAL":
-                    # NORMAL 은 success 개념이 없으므로 PII 탐지 여부로 표시
+                    # NORMAL 은 success 개념이 없으므로 PII 탐지 여부로 표시.
+                    # pii_summary 의 키는 "total" (classifier.to_summary 반환값 기준).
+                    # "total_count" 키가 없을 경우 pii_findings 길이로 폴백한다.
+                    _pii_sum = result.pii_summary or {}
                     pii_count = int(
-                        ((result.pii_summary or {}).get("total_count", 0)) or 0
+                        _pii_sum.get(
+                            "total",
+                            _pii_sum.get("total_count", len(result.pii_findings or [])),
+                        )
+                        or 0
                     )
                     if pii_count > 0:
                         icon = "[yellow]●[/yellow]"
