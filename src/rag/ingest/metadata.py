@@ -204,6 +204,8 @@ def infer_attack_type(file_path: Path) -> str | None:
   match = re.search(r"(r[249])", lowered)
   if match:
     return match.group(1).upper()
+  if infer_doc_role(file_path) == "attack":
+    return "R9"
   return None
 
 

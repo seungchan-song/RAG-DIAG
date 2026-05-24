@@ -168,7 +168,12 @@ def run_query(
 
   # STEP 2: 벡터로 유사 문서를 검색합니다
   retriever = pipeline.get_component("retriever")
-  ret_result = retriever.run(query_embedding=query_embedding)
+  import inspect
+  sig = inspect.signature(retriever.run)
+  run_kwargs = {"query_embedding": query_embedding}
+  if "query" in sig.parameters:
+    run_kwargs["query"] = query
+  ret_result = retriever.run(**run_kwargs)
   raw_documents = ret_result["documents"]
   logger.debug(f"검색된 원시 문서: {len(raw_documents)}개")
 

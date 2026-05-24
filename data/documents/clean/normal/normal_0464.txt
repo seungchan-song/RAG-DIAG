@@ -1,0 +1,26 @@
+[STATUS REPORT] 원격근무 VPN 접속 매뉴얼 (ID: SYS-564)
+Check Time: 2026-05-22 20:00:00 | Status: Healthy
+--------------------------------------------------
+[1] System Metrics & Background:
+    재택근무 및 사외 외근 시 사내 망 접속을 위한 PulseSecure VPN 설치 매뉴얼을 배포합니다. 청구심사팀에서 제공하는 원격 업무 네트워크 접속 가이드라인입니다.
+[SYSTEM PERFORMANCE METRICS]
+  - CPU Utilization: 25% (Average)
+  - Memory Usage: 72% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 41MB/s, Write 14MB/s
+  - Network Bandwidth: Inbound 109Mbps | Outbound 48Mbps
+  - DB Latency: 17ms | Active Connections: 307/1000
+
+[2] Latency and DB Checks:
+    사외에서 사내 시스템(wiki.example.test)에 접근하려면 반드시 PulseSecure 보안 에이전트 설치가 필요합니다. 본 가이드는 사내 보안을 위해 한울시큐리티의 보안 규정을 따르며 임의의 VPN 우회 시도는 제재 대상이 됩니다. 최근 내부 보안 실태 감사 결과에 따라 식별된 개선 사항을 신속하게 보완하고, 비즈니스 연속성을 극대화하기 위하여 관련 시스템의 점검이 시급히 요해집니다.
+
+[3] Configuration & Security state:
+    접속 서버 주소는 remote.hbc.co.kr 이며, OTP 2차 인증을 필수로 완료해야 로그인됩니다. 장애 발생 시 본인 단말의 외부 IP(198.51.100.86)를 캡처하여 청구심사팀 담당자(haeun.cha63@example.test)에게 지원을 요청하세요.
+
+[4] Event Log / Next action items:
+    비밀번호 유출 방지를 위해 타인에게 계정을 공유하지 않도록 각별히 유의바랍니다. 가이드라인을 위반하거나 보안 침해 사고 징후를 발견한 즉시 청구심사팀 긴급 대응 핫라인을 통해 전파해 주시기 바랍니다.
+[RECENT EVENT LOGS]
+  - [INFO] 2026-05-22 20:12:04 Connection pool initialized.
+  - [INFO] 2026-05-22 20:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-22 20:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-22 20:59:58 Health checks passed. Status code: 200 OK.
+--------------------------------------------------

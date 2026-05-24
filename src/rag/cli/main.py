@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import json
 import random
@@ -860,13 +861,7 @@ def ingest(
         )
         raise typer.Exit(code=1)
 
-    try:
-        _require_scenario_for_poisoned(env, scenario)
-    except ValueError as error:
-        console.print(f"\n[red]Error: {error}[/red]")
-        raise typer.Exit(code=1) from error
     config = load_config(config_path, profile=profile)
-    scenario_label = _resolve_cli_scenario_scope(env, scenario)
 
     console.print(
         Panel(
@@ -874,11 +869,10 @@ def ingest(
                 f"[bold]Document ingest[/bold]\n"
                 f"Path: {path}\n"
                 f"Environment: {env}\n"
-                f"Scenario scope: {scenario_label}\n"
-                f"Profile: {profile}\n"
                 f"Rebuild: {rebuild}\n"
                 f"Incremental: {incremental}\n"
-                f"Sync delete: {sync_delete}"
+                f"Sync delete: {sync_delete}\n"
+                "[dim]* Index path is shared across all scenarios and profiles[/dim]"
             ),
             title="[blue]RAG Ingest[/blue]",
         )
@@ -906,7 +900,6 @@ def ingest(
     console.print(
         "\n[green]Ingest complete.[/green] "
         f"Index status: [bold]{status}[/bold], "
-        f"dataset_scope: [bold]{manifest.get('dataset_scope', scenario_label)}[/bold], "
         f"documents: [bold]{manifest.get('doc_count', 0)}[/bold]"
     )
     delta = manifest.get("last_ingest_delta", {})
@@ -961,13 +954,7 @@ def query(
 ) -> None:
     """Run a one-off RAG query using the persisted environment index."""
     resolved_env = env or _infer_environment_from_doc_path(doc_path)
-    try:
-        _require_scenario_for_poisoned(resolved_env, scenario)
-    except ValueError as error:
-        console.print(f"\n[red]Error: {error}[/red]")
-        raise typer.Exit(code=1) from error
     config = load_config(config_path, profile=profile)
-    scenario_label = _resolve_cli_scenario_scope(resolved_env, scenario)
 
     console.print(
         Panel(
@@ -976,7 +963,6 @@ def query(
                 f"Question: {question}\n"
                 f"Document path: {doc_path}\n"
                 f"Environment: {resolved_env}\n"
-                f"Scenario scope: {scenario_label}\n"
                 f"Profile: {profile}"
             ),
             title="[blue]RAG Query[/blue]",
@@ -1005,8 +991,7 @@ def query(
         raise typer.Exit(code=1) from error
     console.print(
         "  [green]Index ready[/green] "
-        f"({status}, dataset_scope={manifest.get('dataset_scope', scenario_label)}, "
-        f"documents={manifest.get('doc_count', 0)})"
+        f"({status}, documents={manifest.get('doc_count', 0)})"
     )
 
     console.print("[cyan]2. Running query[/cyan]")
@@ -1036,7 +1021,6 @@ def query(
     console.print(
         f"\n[cyan]Profile:[/cyan] {result.get('profile_name', profile)} "
         f"| [cyan]Environment:[/cyan] {resolved_env} "
-        f"| [cyan]Dataset:[/cyan] {manifest.get('dataset_scope', scenario_label)} "
         f"| [cyan]Reranker:[/cyan] {reranker_state}"
     )
 
@@ -2101,183 +2085,171 @@ def _execute_single_run(
     # 현재 셀 안에서 몇 번째 pending 쿼리를 처리 중인지 추적
     pending_query_index = 0
 
+    def _process_query_task(t_index, q_info):
+        current_stage = "query_execute"
+        q_id = str(q_info.get("query_id", ""))
+        try:
+            res = runner.execute_query(
+                attack,
+                query_info=q_info,
+                rag_pipeline=rag_pipeline,
+                attacker=attacker,
+                env=env,
+                trial_index=t_index,
+            )
+            _apply_index_context(
+                res,
+                index_manifest=index_manifest,
+                index_manifest_ref=str(index_manager.manifest_path),
+            )
+            _apply_suite_context(
+                res,
+                suite_context=suite_context,
+                env=env,
+                profile=profile_name,
+            )
+            _apply_replay_context(res, replay_context=replay_context)
+            current_stage = "evaluate"
+            evaluator.evaluate(res)
+            current_stage = "persist"
+            sanitized_res = storage_sanitizer.sanitized_copy(res)
+            res.pii_summary = dict(sanitized_res.pii_summary or {})
+            res.pii_findings = list(sanitized_res.pii_findings or {})
+            res.pii_runtime_status = dict(sanitized_res.pii_runtime_status or {})
+            return True, q_id, q_info, t_index, res, sanitized_res, None, current_stage
+        except Exception as err:
+            return False, q_id, q_info, t_index, None, None, err, current_stage
+
+    max_workers = config.get("runner", {}).get("max_workers", 5)
     with quiet_execution(), progress:
-        for trial_index, query_info in enumerate(queries):
-            query_id = str(query_info.get("query_id", ""))
-            if query_id and query_id in completed_query_ids:
-                continue
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for trial_index, query_info in enumerate(queries):
+                query_id = str(query_info.get("query_id", ""))
+                if query_id and query_id in completed_query_ids:
+                    continue
+                future = executor.submit(_process_query_task, trial_index, query_info)
+                futures[future] = query_info
 
-            pending_query_index += 1
-            current_stage = "query_execute"
-            try:
-                result = runner.execute_query(
-                    attack,
-                    query_info=query_info,
-                    rag_pipeline=rag_pipeline,
-                    attacker=attacker,
-                    env=env,
-                    trial_index=trial_index,
-                )
-                _apply_index_context(
+            for future in concurrent.futures.as_completed(futures):
+                pending_query_index += 1
+                q_info = futures[future]
+                (
+                    is_success,
+                    query_id,
+                    q_info_ret,
+                    trial_index,
                     result,
-                    index_manifest=index_manifest,
-                    index_manifest_ref=str(index_manager.manifest_path),
-                )
-                _apply_suite_context(
-                    result,
-                    suite_context=suite_context,
-                    env=env,
-                    profile=profile_name,
-                )
-                _apply_replay_context(result, replay_context=replay_context)
-                current_stage = "evaluate"
-                evaluator.evaluate(result)
-                sanitized_result = storage_sanitizer.sanitized_copy(result)
-                # sanitized_copy 는 deepcopy 본에만 PII 탐지 메타데이터를 채우므로,
-                # 원본 result 의 pii_summary/pii_findings 가 비어 있는 상태로
-                # evaluated_results 에 들어가게 된다. 그 결과 summarize_evaluated_results
-                # 가 NORMAL 의 pii_response_count / R2 의 intensity 등을 0 으로 잘못
-                # 집계하고, 진행 표시 줄의 PII 카운트도 0 으로 찍히는 불일치가 발생한다.
-                # 응답(response) 마스킹은 평가에 영향을 주면 안 되므로 sanitized 본에만
-                # 적용하고, PII 탐지 결과(요약/finding/runtime_status)만 원본 result 로
-                # 옮겨 평가/리포트가 같은 PII 통계를 보도록 동기화한다.
-                result.pii_summary = dict(sanitized_result.pii_summary or {})
-                result.pii_findings = list(sanitized_result.pii_findings or [])
-                result.pii_runtime_status = dict(sanitized_result.pii_runtime_status or {})
-                current_stage = "persist"
-                next_evaluated_results = evaluated_results + [result]
-                next_stored_results = stored_results + [sanitized_result]
-                next_completed_query_ids = set(completed_query_ids)
-                next_failed_query_ids = set(failed_query_ids)
-                if query_id:
-                    next_completed_query_ids.add(query_id)
-                    next_failed_query_ids.discard(query_id)
+                    sanitized_result,
+                    error,
+                    current_stage,
+                ) = future.result()
 
-                next_checkpoint = dict(checkpoint)
-                next_checkpoint["completed_query_ids"] = sorted(
-                    next_completed_query_ids
-                )
-                next_checkpoint["failed_query_ids"] = sorted(next_failed_query_ids)
-                next_checkpoint["planned_query_count"] = len(queries)
-                next_checkpoint["status"] = "running"
-                exp_manager.save_partial_results(
-                    actual_run_id,
-                    scenario,
-                    [_serialize_value(item) for item in next_stored_results],
-                )
-                exp_manager.save_checkpoint(actual_run_id, next_checkpoint)
-                evaluated_results = next_evaluated_results
-                stored_results = next_stored_results
-                completed_query_ids = next_completed_query_ids
-                failed_query_ids = next_failed_query_ids
-                checkpoint = next_checkpoint
-                executed_now += 1
-                # 진행 바 description 은 부제 + "질문 N/M" 만 유지하고
-                # 직전 시도 의미는 별도 줄(progress.console.print)로 누적 표시한다.
-                progress.update(
-                    task_id,
-                    advance=1,
-                    description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
-                )
-                ko_label = _resolve_query_type_ko(scenario, query_info, result)
-                if scenario.upper() == "NORMAL":
-                    # NORMAL 은 success 개념이 없으므로 PII 탐지 여부로 표시.
-                    # pii_summary 의 키는 "total" (classifier.to_summary 반환값 기준).
-                    # "total_count" 키가 없을 경우 pii_findings 길이로 폴백한다.
-                    _pii_sum = result.pii_summary or {}
-                    pii_count = int(
-                        _pii_sum.get(
-                            "total",
-                            _pii_sum.get("total_count", len(result.pii_findings or [])),
-                        )
-                        or 0
+                if is_success:
+                    next_evaluated_results = evaluated_results + [result]
+                    next_stored_results = stored_results + [sanitized_result]
+                    next_completed_query_ids = set(completed_query_ids)
+                    next_failed_query_ids = set(failed_query_ids)
+                    if query_id:
+                        next_completed_query_ids.add(query_id)
+                        next_failed_query_ids.discard(query_id)
+
+                    next_checkpoint = dict(checkpoint)
+                    next_checkpoint["completed_query_ids"] = sorted(next_completed_query_ids)
+                    next_checkpoint["failed_query_ids"] = sorted(next_failed_query_ids)
+                    next_checkpoint["planned_query_count"] = len(queries)
+                    next_checkpoint["status"] = "running"
+                    
+                    exp_manager.save_partial_results(
+                        actual_run_id,
+                        scenario,
+                        [_serialize_value(item) for item in next_stored_results],
                     )
-                    if pii_count > 0:
-                        icon = "[yellow]●[/yellow]"
-                        tail = f"(PII {pii_count}건 탐지)"
+                    exp_manager.save_checkpoint(actual_run_id, next_checkpoint)
+                    
+                    evaluated_results = next_evaluated_results
+                    stored_results = next_stored_results
+                    completed_query_ids = next_completed_query_ids
+                    failed_query_ids = next_failed_query_ids
+                    checkpoint = next_checkpoint
+                    executed_now += 1
+
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
+                    )
+                    ko_label = _resolve_query_type_ko(scenario, q_info, result)
+                    if scenario.upper() == "NORMAL":
+                        pii_count = int(((result.pii_summary or {}).get("total", 0)) or 0)
+                        if pii_count > 0:
+                            icon = "[yellow]●[/yellow]"
+                            tail = f"(PII {pii_count}건 탐지)"
+                        else:
+                            icon = "[green]·[/green]"
+                            tail = "(PII 미탐)"
+                        progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
+                    elif scenario.upper() == "R4":
+                        b_value = (result.metadata or {}).get("ground_truth_b")
+                        if b_value != 1:
+                            if result.success:
+                                icon = "[green]✓[/green]"
+                                tail = "성공"
+                            else:
+                                icon = "[dim]·[/dim]"
+                                tail = "미성공"
+                            progress.console.print(f"   {icon} 방금 시도: 멤버십 페어 판정: {tail}")
                     else:
-                        icon = "[green]·[/green]"
-                        tail = "(PII 미탐)"
-                    progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
-                elif scenario.upper() == "R4":
-                    # R4 는 페어 단위(b=1 응답 + b=0 응답)로만 성공이 정의된다.
-                    # 응답 1건마다 줄을 찍으면 한 페어가 두 줄을 차지해 가독성이
-                    # 떨어지므로, b=1 응답 단계(페어 미완성)는 진행 줄 자체를 건너뛰고
-                    # b=0 응답이 들어와 페어가 완성된 시점에만 페어 판정 결과를
-                    # "멤버십 페어 판정: 성공/미성공" 으로 한 줄로 출력한다.
-                    # 진행 바 자체는 advance=1 로 이미 갱신되어 페어 절반 진행도 시각화된다.
-                    b_value = (result.metadata or {}).get("ground_truth_b")
-                    if b_value != 1:
                         if result.success:
                             icon = "[green]✓[/green]"
-                            tail = "성공"
+                            tail = "(성공)"
                         else:
                             icon = "[dim]·[/dim]"
-                            tail = "미성공"
-                        progress.console.print(
-                            f"   {icon} 방금 시도: 멤버십 페어 판정: {tail}"
-                        )
+                            tail = "(미성공)"
+                        progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
                 else:
-                    if result.success:
-                        icon = "[green]✓[/green]"
-                        tail = "(성공)"
-                    else:
-                        icon = "[dim]·[/dim]"
-                        tail = "(미성공)"
-                    progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
-            except Exception as error:
-                if query_id:
-                    failed_query_ids.add(query_id)
-                checkpoint["completed_query_ids"] = sorted(completed_query_ids)
-                checkpoint["failed_query_ids"] = sorted(failed_query_ids)
-                checkpoint["planned_query_count"] = len(queries)
-                failure = _build_failure_record(
-                    scenario=scenario,
-                    query_id=query_id,
-                    query_text=str(query_info.get("query", "")),
-                    stage=current_stage,
-                    error=error,
-                    attempt_index=_next_failure_attempt_index(
-                        failures,
+                    if query_id:
+                        failed_query_ids.add(query_id)
+                    checkpoint["completed_query_ids"] = sorted(completed_query_ids)
+                    checkpoint["failed_query_ids"] = sorted(failed_query_ids)
+                    checkpoint["planned_query_count"] = len(queries)
+                    failure = _build_failure_record(
+                        scenario=scenario,
                         query_id=query_id,
+                        query_text=str(q_info.get("query", "")),
                         stage=current_stage,
-                    ),
-                    environment_type=env,
-                    profile_name=profile_name,
-                    scenario_scope=str(index_manifest.get("scenario_scope", "")),
-                    dataset_scope=str(index_manifest.get("dataset_scope", "")),
-                    index_manifest_ref=index_manifest_ref,
-                    suite_context=suite_context,
-                    replay_context=replay_context,
-                    storage_sanitizer=storage_sanitizer,
-                    metadata={
-                        "attacker": attacker,
-                        "trial_index": trial_index,
-                    },
-                )
-                _append_failure_record(
-                    exp_manager=exp_manager,
-                    run_id=actual_run_id,
-                    scenario=scenario,
-                    failures=failures,
-                    failure=failure,
-                    checkpoint=checkpoint,
-                    checkpoint_status="running",
-                )
-                failed_now += 1
-                progress.update(
-                    task_id,
-                    advance=1,
-                    description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
-                )
-                ko_label = _resolve_query_type_ko(scenario, query_info, None)
-                progress.console.print(
-                    f"   [red]✗[/red] 방금 시도: {ko_label} (실행 오류)"
-                )
-                progress.console.print(
-                    f"     [dim]사유: {error}  · "
-                    "체크포인트는 저장되어 다음 실행에서 자동 이어집니다.[/dim]"
-                )
+                        error=error,
+                        attempt_index=_next_failure_attempt_index(
+                            failures, query_id=query_id, stage=current_stage
+                        ),
+                        environment_type=env,
+                        profile_name=profile_name,
+                        scenario_scope=str(index_manifest.get("scenario_scope", "")),
+                        dataset_scope=str(index_manifest.get("dataset_scope", "")),
+                        index_manifest_ref=index_manifest_ref,
+                        suite_context=suite_context,
+                        replay_context=replay_context,
+                        storage_sanitizer=storage_sanitizer,
+                        metadata={"attacker": attacker, "trial_index": trial_index},
+                    )
+                    _append_failure_record(
+                        exp_manager=exp_manager,
+                        run_id=actual_run_id,
+                        scenario=scenario,
+                        failures=failures,
+                        failure=failure,
+                        checkpoint=checkpoint,
+                        checkpoint_status="running",
+                    )
+                    failed_now += 1
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"{desc_prefix}  질문 {pending_query_index}/{pending_count}",
+                    )
+                    ko_label = _resolve_query_type_ko(scenario, q_info, None)
+                    progress.console.print(f"   [red]✗[/red] 방금 시도: {ko_label} (실행 오류)")
+                    progress.console.print(f"     [dim]사유: {error}  · 체크포인트는 저장되어 다음 실행에서 자동 이어집니다.[/dim]")
 
     summary_parts: list[str] = [
         f"[green]✓ 새로 처리한 질문 {executed_now}건[/green]"

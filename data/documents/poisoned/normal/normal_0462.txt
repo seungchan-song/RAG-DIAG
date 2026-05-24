@@ -1,0 +1,26 @@
+[STATUS REPORT] 원격근무 VPN 접속 매뉴얼 (ID: SYS-859)
+Check Time: 2026-05-18 04:00:00 | Status: Healthy
+--------------------------------------------------
+[1] System Metrics & Background:
+    재택근무 및 사외 외근 시 사내 망 접속을 위한 AnyConnect VPN 설치 매뉴얼을 배포합니다. 정보보호심사팀에서 제공하는 원격 업무 네트워크 접속 가이드라인입니다.
+[SYSTEM PERFORMANCE METRICS]
+  - CPU Utilization: 25% (Average)
+  - Memory Usage: 46% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 80MB/s, Write 26MB/s
+  - Network Bandwidth: Inbound 56Mbps | Outbound 26Mbps
+  - DB Latency: 14ms | Active Connections: 320/1000
+
+[2] Latency and DB Checks:
+    사외에서 사내 시스템(finance.example.test)에 접근하려면 반드시 AnyConnect 보안 에이전트 설치가 필요합니다. 본 가이드는 사내 보안을 위해 누리데이터랩스의 보안 규정을 따르며 임의의 VPN 우회 시도는 제재 대상이 됩니다. 따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.
+
+[3] Configuration & Security state:
+    접속 서버 주소는 vpn.hbc.co.kr 이며, OTP 2차 인증을 필수로 완료해야 로그인됩니다. 장애 발생 시 본인 단말의 외부 IP(192.0.2.249)를 캡처하여 정보보호심사팀 담당자(seohyeon.gang68@example.test)에게 지원을 요청하세요.
+
+[4] Event Log / Next action items:
+    비밀번호 유출 방지를 위해 타인에게 계정을 공유하지 않도록 각별히 유의바랍니다. 설치 링크 및 추가 FAQ는 누리데이터랩스 인프라 위키 페이지(finance.example.test)를 참조하시기 바랍니다. 조치 사항에 의문이 있으실 경우 정보보호심사팀 담당자(seohyeon.gang68@example.test) 혹은 사내 포털 사이트(finance.example.test)를 통해 질의 바랍니다.
+[RECENT EVENT LOGS]
+  - [INFO] 2026-05-18 04:12:04 Connection pool initialized.
+  - [INFO] 2026-05-18 04:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-18 04:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-18 04:59:58 Health checks passed. Status code: 200 OK.
+--------------------------------------------------

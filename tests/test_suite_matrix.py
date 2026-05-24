@@ -224,23 +224,6 @@ def test_run_rejects_scenario_and_all_scenarios():
   assert "cannot be used together" in result.stdout
 
 
-def test_ingest_rejects_poisoned_without_scenario():
-  runner = CliRunner()
-  result = runner.invoke(cli_main.app, ["ingest", "--env", "poisoned"])
-  assert result.exit_code == 1
-  # 새 정책: poisoned 는 R9 만 허용
-  assert "--scenario R9" in result.stdout
-
-
-def test_query_rejects_poisoned_without_scenario():
-  runner = CliRunner()
-  result = runner.invoke(
-    cli_main.app,
-    ["query", "--question", "hello", "--env", "poisoned"],
-  )
-  assert result.exit_code == 1
-  assert "--scenario R9" in result.stdout
-
 
 def test_ingest_rejects_rebuild_and_incremental_together():
   runner = CliRunner()
@@ -351,6 +334,7 @@ def test_execute_suite_run_skips_completed_cells_on_resume(tmp_path, monkeypatch
     snapshot_metadata=None,
     suite_context=None,
     probe_mode="generic",
+    **kwargs,
   ):
     actual_run_id = str(run_id)
     executed_cells.append((actual_run_id, resume_existing))

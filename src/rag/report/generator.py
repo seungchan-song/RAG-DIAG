@@ -1492,8 +1492,10 @@ class ReportGenerator:
         paired_env: str,
         paired_reranker_state: str,
     ) -> dict[str, Any]:
-        base_pii = int(self._get_pii_summary(base_result).get("total", 0))
-        paired_pii = int(self._get_pii_summary(paired_result).get("total", 0))
+        base_pii_summary = self._get_pii_summary(base_result)
+        paired_pii_summary = self._get_pii_summary(paired_result)
+        base_pii = int(base_pii_summary.get("total", 0))
+        paired_pii = int(paired_pii_summary.get("total", 0))
 
         return {
             "scenario": scenario,
@@ -1514,6 +1516,8 @@ class ReportGenerator:
             ),
             "base_pii_count": base_pii,
             "paired_pii_count": paired_pii,
+            "base_has_high_risk": bool(base_pii_summary.get("has_high_risk", False)),
+            "paired_has_high_risk": bool(paired_pii_summary.get("has_high_risk", False)),
             "rank_change_score": self._compute_rank_change_score(
                 base_result,
                 paired_result,
@@ -1526,8 +1530,11 @@ class ReportGenerator:
         fixed_field: str,
         paired_field: str,
     ) -> dict[str, Any]:
+        matched_query_count = len(pairs)
+        base_pii_total = sum(pair["base_pii_count"] for pair in pairs)
+        paired_pii_total = sum(pair["paired_pii_count"] for pair in pairs)
         return {
-            "matched_query_count": len(pairs),
+            "matched_query_count": matched_query_count,
             fixed_field: self._collapse_pair_value(pairs, fixed_field),
             paired_field: self._collapse_pair_value(pairs, paired_field),
             "base_success_count": sum(1 for pair in pairs if pair["base_success"]),
@@ -1535,8 +1542,14 @@ class ReportGenerator:
             "response_changed_count": sum(
                 1 for pair in pairs if pair["response_changed"]
             ),
-            "base_pii_total": sum(pair["base_pii_count"] for pair in pairs),
-            "paired_pii_total": sum(pair["paired_pii_count"] for pair in pairs),
+            "base_pii_total": base_pii_total,
+            "paired_pii_total": paired_pii_total,
+            "base_pii_avg": base_pii_total / matched_query_count if matched_query_count else 0.0,
+            "paired_pii_avg": paired_pii_total / matched_query_count if matched_query_count else 0.0,
+            "base_responses_with_pii_rate": (sum(1 for pair in pairs if pair.get("base_pii_count", 0) > 0) / matched_query_count) if matched_query_count else 0.0,
+            "paired_responses_with_pii_rate": (sum(1 for pair in pairs if pair.get("paired_pii_count", 0) > 0) / matched_query_count) if matched_query_count else 0.0,
+            "base_high_risk_responses_rate": (sum(1 for pair in pairs if pair.get("base_has_high_risk", False)) / matched_query_count) if matched_query_count else 0.0,
+            "paired_high_risk_responses_rate": (sum(1 for pair in pairs if pair.get("paired_has_high_risk", False)) / matched_query_count) if matched_query_count else 0.0,
             "avg_rank_change_score": (
                 sum(pair["rank_change_score"] for pair in pairs) / len(pairs)
                 if pairs
@@ -1638,9 +1651,6 @@ class ReportGenerator:
         comparison: dict[str, Any] = {}
 
         for scenario, data in scenario_results.items():
-            # NORMAL 은 공격 성공 개념이 없으므로 리랭커 비교 테이블에서 제외.
-            if scenario.upper() == "NORMAL":
-                continue
             pairs: list[dict[str, Any]] = []
             for result in data.get("results", []):
                 environment = self._get_environment(result)
@@ -1817,8 +1827,10 @@ class ReportGenerator:
         _build_comparison_summary 가 참조하는 response_changed / rank_change_score
         도 함께 채워 환경/리랭커 비교와 동일한 집계 경로를 사용한다.
         """
-        base_pii = int(self._get_pii_summary(base_result).get("total", 0))
-        paired_pii = int(self._get_pii_summary(paired_result).get("total", 0))
+        base_pii_summary = self._get_pii_summary(base_result)
+        paired_pii_summary = self._get_pii_summary(paired_result)
+        base_pii = int(base_pii_summary.get("total", 0))
+        paired_pii = int(paired_pii_summary.get("total", 0))
 
         return {
             "scenario": scenario,
@@ -1833,6 +1845,8 @@ class ReportGenerator:
             "paired_success": bool(paired_result.get("success", False)),
             "base_pii_count": base_pii,
             "paired_pii_count": paired_pii,
+            "base_has_high_risk": bool(base_pii_summary.get("has_high_risk", False)),
+            "paired_has_high_risk": bool(paired_pii_summary.get("has_high_risk", False)),
             "base_score": float(base_result.get("score", 0.0)),
             "paired_score": float(paired_result.get("score", 0.0)),
             "response_changed": (

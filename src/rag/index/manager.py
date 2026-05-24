@@ -25,20 +25,14 @@ REUSE_VALIDATION_FIELDS = (
   "backend",
   "index_version",
   "environment_type",
-  "scenario_scope",
-  "dataset_scope",
   "dataset_selection_mode",
   "embedding_model",
-  "profile_name",
 )
 INCREMENTAL_VALIDATION_FIELDS = (
   "backend",
   "index_version",
   "environment_type",
-  "scenario_scope",
-  "dataset_scope",
   "embedding_model",
-  "profile_name",
 )
 
 
@@ -60,14 +54,8 @@ class PersistentIndexManager:
     self.doc_path = doc_path
     self.environment = str(environment).lower()
     self.scenario = scenario
-    self.scenario_scope = resolve_scenario_scope(self.environment, scenario)
-    if self.environment == "poisoned" and self.scenario_scope == "all":
-      raise ValueError(
-        "A scenario is required for poisoned indexes. "
-        "Use one of: R2, R4, R9."
-      )
-
-    self.dataset_scope = f"{self.environment}/{self.scenario_scope}"
+    self.scenario_scope = "all"
+    self.dataset_scope = self.environment
     self.profile_name = str(config.get("profile_name", "default"))
     self.index_config = config.get("index", {})
     self.index_root = Path(self.index_config.get("root_dir", "data/indexes"))
@@ -75,7 +63,7 @@ class PersistentIndexManager:
       project_root = Path(__file__).resolve().parents[3]
       self.index_root = project_root / self.index_root
 
-    self.index_dir = self.index_root / self.environment / self.scenario_scope / self.profile_name
+    self.index_dir = self.index_root / self.environment
     self.manifest_path = self.index_dir / MANIFEST_FILENAME
 
   def ensure_index(

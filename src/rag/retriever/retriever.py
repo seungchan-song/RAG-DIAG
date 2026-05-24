@@ -28,8 +28,11 @@ class FaissEmbeddingRetriever:
   def run(
     self,
     query_embedding: list[float],
+    query: str | None = None,
   ) -> dict[str, Any]:
-    documents = self.document_store.query_by_embedding(query_embedding, top_k=self.top_k)
+    documents = self.document_store.query_by_embedding(
+      query_embedding, top_k=self.top_k, query_text=query
+    )
     return {"documents": documents}
 
 

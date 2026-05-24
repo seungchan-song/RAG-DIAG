@@ -1,0 +1,26 @@
+[STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-348)
+Check Time: 2026-05-06 10:00:00 | Status: Healthy
+--------------------------------------------------
+[1] System Metrics & Background:
+    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다. 임직원들의 인쇄, 스캔, 팩스 사용 편의를 돕기 위한 복합기 설정 가이드입니다.
+[SYSTEM PERFORMANCE METRICS]
+  - CPU Utilization: 12% (Average)
+  - Memory Usage: 59% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 25MB/s, Write 21MB/s
+  - Network Bandwidth: Inbound 90Mbps | Outbound 99Mbps
+  - DB Latency: 3ms | Active Connections: 431/1000
+
+[2] Latency and DB Checks:
+    드라이버 패키지는 인프라 자료실(hr.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
+
+[3] Configuration & Security state:
+    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(198.51.100.35)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 031-599-7022 또는 메일(jian.han24@example.test)로 인사운영팀 행정 담당자에게 알리시기 바랍니다.
+
+[4] Event Log / Next action items:
+    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 부서별 월간 인쇄 통계는 새벽솔루션 인사운영팀에서 자동 집계되어 연말 보고서에 반영됩니다. 조치 사항에 의문이 있으실 경우 인사운영팀 담당자(jian.han24@example.test) 혹은 사내 포털 사이트(hr.example.test)를 통해 질의 바랍니다.
+[RECENT EVENT LOGS]
+  - [INFO] 2026-05-06 10:12:04 Connection pool initialized.
+  - [INFO] 2026-05-06 10:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-06 10:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-06 10:59:58 Health checks passed. Status code: 200 OK.
+--------------------------------------------------

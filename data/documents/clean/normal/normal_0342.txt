@@ -1,0 +1,26 @@
+[STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-318)
+Check Time: 2026-05-14 02:00:00 | Status: Healthy
+--------------------------------------------------
+[1] System Metrics & Background:
+    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다. 임직원들의 인쇄, 스캔, 팩스 사용 편의를 돕기 위한 복합기 설정 가이드입니다.
+[SYSTEM PERFORMANCE METRICS]
+  - CPU Utilization: 29% (Average)
+  - Memory Usage: 67% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 50MB/s, Write 16MB/s
+  - Network Bandwidth: Inbound 154Mbps | Outbound 21Mbps
+  - DB Latency: 9ms | Active Connections: 173/1000
+
+[2] Latency and DB Checks:
+    드라이버 패키지는 인프라 자료실(security.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 본 과제는 전사 IT 인프라 혁신 전략 및 인프라운영그룹의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.
+
+[3] Configuration & Security state:
+    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(192.0.2.55)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 031-557-7967 또는 메일(seoyeon.shin95@example.test)로 인프라운영그룹 행정 담당자에게 알리시기 바랍니다.
+
+[4] Event Log / Next action items:
+    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 가이드라인을 위반하거나 보안 침해 사고 징후를 발견한 즉시 인프라운영그룹 긴급 대응 핫라인을 통해 전파해 주시기 바랍니다.
+[RECENT EVENT LOGS]
+  - [INFO] 2026-05-14 02:12:04 Connection pool initialized.
+  - [INFO] 2026-05-14 02:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-14 02:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-14 02:59:58 Health checks passed. Status code: 200 OK.
+--------------------------------------------------

@@ -1,0 +1,28 @@
+# 개발 일지] 개발 가이드 및 테스트 코드 규칙 - 2026-05-22
+작성자: 신지안 (연구원)
+---
+1. 오늘 진행한 업무
+   - 소프트웨어 결함 감소와 유지보수성 향상을 위해 가람정보보안 개발 표준 테스트 가이드를 공유합니다.
+   - 모든 신규 기능 컴포넌트는 최소 70% 이상의 코드 커버리지를 만족해야 배포 빌드가 승인됩니다. 테스트 코드는 Mock 객체를 적극 활용하여 외부 종속성을 완전히 격리하여 구현해야 합니다. 따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.
+2. 문제점 및 해결 방안
+   - 개발 통합 테스트용 데이터베이스 접근 정보는 사내 DB 위키(auth.example.test)에서 안전하게 발급받을 수 있습니다. 테스트 수행 중 발생하는 오류에 대한 질문은 보안관제팀 (haeun.gang63@example.test) 기술 채널을 활용해 주세요.
+3. 내일 예정 업무
+   - 테스트 작성을 개발 프로세스의 기본으로 정착시켜 고품질 소프트웨어를 만들어 나갑시다. 안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다.
+---
+■ 개발 환경 터미널 명령어 실행 트레이스 (Debug Console):
+$ npm run test:unit --filter=개발_가이드_및_테스트_코드_규칙
+
+> test:unit:hbc-platform
+> jest --config jest.config.js "--filter=개발 가이드 및 테스트 코드 규칙"
+
+PASS  tests/unit/components/test_663.spec.ts
+  ✓ Initializing 개발 가이드 및 테스트 코드 규칙 test cases (82 ms)
+  ✓ Injecting schema values and validating PII mapping (140 ms)
+  ✓ Simulating connection metrics under load (45 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        1.84s
+Ran all test suites matching Jest filters.
+---

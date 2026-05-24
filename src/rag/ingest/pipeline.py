@@ -8,6 +8,15 @@ from haystack import Pipeline
 from haystack.components.joiners import DocumentJoiner
 from haystack.document_stores.in_memory import InMemoryDocumentStore
 from loguru import logger
+from rich.progress import (
+  BarColumn,
+  MofNCompleteColumn,
+  Progress,
+  SpinnerColumn,
+  TextColumn,
+  TimeElapsedColumn,
+  TimeRemainingColumn,
+)
 
 from rag.index.store import PersistentFaissDocumentStore
 from rag.ingest.cleaner import create_document_cleaner
@@ -93,10 +102,29 @@ def run_ingest_files(
   pipeline.warm_up()
 
   logger.info("Running ingest pipeline for {} selected files...", len(file_paths))
-  result = pipeline.run({"router": {"sources": file_paths}})
-  docs_written = result.get("writer", {}).get("documents_written", 0)
-  logger.info("Ingest complete: {} chunks written", docs_written)
-  return document_store, docs_written
+
+  batch_size = 20
+  chunks = [file_paths[i:i + batch_size] for i in range(0, len(file_paths), batch_size)]
+  total_docs_written = 0
+
+  with Progress(
+    SpinnerColumn(),
+    TextColumn("[progress.description]{task.description}"),
+    BarColumn(),
+    MofNCompleteColumn(),
+    TimeElapsedColumn(),
+    TimeRemainingColumn(),
+  ) as progress:
+    task = progress.add_task("[cyan]Ingesting files...", total=len(file_paths))
+
+    for chunk in chunks:
+      result = pipeline.run({"router": {"sources": chunk}})
+      docs_written = result.get("writer", {}).get("documents_written", 0)
+      total_docs_written += docs_written
+      progress.advance(task, advance=len(chunk))
+
+  logger.info("Ingest complete: {} chunks written", total_docs_written)
+  return document_store, total_docs_written
 
 
 def run_ingest(

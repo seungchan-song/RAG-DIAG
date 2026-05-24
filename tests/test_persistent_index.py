@@ -133,7 +133,7 @@ def test_index_manager_builds_and_reuses_matching_index(tmp_path: Path, monkeypa
   assert built_status == "built"
   assert reused_status == "reused"
   assert built_manifest["embedding_model"] == "test-embedding-model"
-  assert built_manifest["dataset_scope"] == "clean/base"
+  assert built_manifest["dataset_scope"] == "clean"
   assert reused_manifest["doc_count"] == 1
 
 
@@ -181,7 +181,7 @@ def test_index_manager_raises_on_manifest_mismatch(tmp_path: Path, monkeypatch):
     raise AssertionError("Expected a manifest mismatch error")
 
 
-def test_index_manager_uses_scenario_scoped_paths_for_clean_and_poisoned(tmp_path: Path):
+def test_index_manager_uses_simplified_paths_for_clean_and_poisoned(tmp_path: Path):
   config = _base_config(tmp_path)
 
   clean_manager = PersistentIndexManager(
@@ -196,20 +196,15 @@ def test_index_manager_uses_scenario_scoped_paths_for_clean_and_poisoned(tmp_pat
     scenario="R9",
   )
 
-  assert clean_manager.index_dir == tmp_path / "indexes" / "clean" / "base" / "default"
-  assert poisoned_manager.index_dir == (
-    tmp_path / "indexes" / "poisoned" / "R9" / "default"
-  )
+  assert clean_manager.index_dir == tmp_path / "indexes" / "clean"
+  assert poisoned_manager.index_dir == tmp_path / "indexes" / "poisoned"
 
 
-def test_index_manager_detects_scenario_scope_mismatch(tmp_path: Path, monkeypatch):
+def test_index_manager_detects_environment_mismatch(tmp_path: Path, monkeypatch):
   docs_root = tmp_path / "documents"
-  poisoned_normal = docs_root / "poisoned" / "normal"
-  poisoned_attack_r9 = docs_root / "poisoned" / "attack" / "r9"
-  poisoned_normal.mkdir(parents=True)
-  poisoned_attack_r9.mkdir(parents=True)
-  (poisoned_normal / "normal_01.txt").write_text("alpha document", encoding="utf-8")
-  (poisoned_attack_r9 / "attack_r9_01.txt").write_text("marker", encoding="utf-8")
+  poisoned_dir = docs_root / "poisoned" / "attack"
+  poisoned_dir.mkdir(parents=True)
+  (poisoned_dir / "attack_01.txt").write_text("marker", encoding="utf-8")
 
   def fake_run_ingest_files(file_paths, config, *, metadata_map, document_store=None):
     file_path = Path(file_paths[0]).resolve()
@@ -232,30 +227,28 @@ def test_index_manager_detects_scenario_scope_mismatch(tmp_path: Path, monkeypat
 
   monkeypatch.setattr("rag.index.manager.run_ingest_files", fake_run_ingest_files)
 
-  r9_manager = PersistentIndexManager(
+  poisoned_manager = PersistentIndexManager(
     _base_config(tmp_path),
     doc_path=str(docs_root),
     environment="poisoned",
-    scenario="R9",
   )
-  r9_manager.ensure_index()
+  poisoned_manager.ensure_index()
 
-  r4_manager = PersistentIndexManager(
+  clean_manager = PersistentIndexManager(
     _base_config(tmp_path),
     doc_path=str(docs_root),
-    environment="poisoned",
-    scenario="R4",
+    environment="clean",
   )
 
   try:
-    r4_manager._validate_manifest(
-      r9_manager.load_manifest(),
-      r4_manager._collect_expected_state()["manifest"],
+    clean_manager._validate_manifest(
+      poisoned_manager.load_manifest(),
+      clean_manager._collect_expected_state()["manifest"],
     )
   except ValueError as error:
-    assert "scenario_scope" in str(error)
+    assert "environment_type" in str(error)
   else:
-    raise AssertionError("Expected a scenario_scope mismatch error")
+    raise AssertionError("Expected an environment_type mismatch error")
 
 
 def test_index_manager_incremental_adds_and_replaces_changed_sources(tmp_path: Path, monkeypatch):
@@ -375,3 +368,61 @@ def test_index_manager_incremental_sync_delete_removes_missing_sources(tmp_path:
   assert synced_manifest["last_ingest_delta"]["retained_deleted"]["count"] == 0
   assert "normal/doc2.txt" not in synced_manifest["file_hashes"]
   assert synced_sources == ["normal/doc1.txt"]
+
+
+def test_hybrid_retrieval_boost_and_matching(tmp_path: Path):
+  store = PersistentFaissDocumentStore(
+    tmp_path / "indexes" / "clean",
+    manifest={
+      "backend": "faiss",
+      "index_version": "faiss-v2",
+      "environment_type": "clean",
+    },
+  )
+  documents = [
+    Document(
+      id="doc-1",
+      content="This is alpha document containing SYNTH-EMAIL-ABC and some other text.",
+      embedding=[0.0, 1.0],
+      meta={"doc_id": "doc-1", "chunk_id": "doc-1::chunk-0000"},
+    ),
+    Document(
+      id="doc-2",
+      content="This is beta document with general information and no codes.",
+      embedding=[1.0, 0.0],
+      meta={"doc_id": "doc-2", "chunk_id": "doc-2::chunk-0000"},
+    ),
+  ]
+
+  store.write_documents(documents)
+  loaded = PersistentFaissDocumentStore.load(tmp_path / "indexes" / "clean")
+
+  # Query 1: Pure dense vector search (no query text)
+  # query_embedding [1.0, 0.0] is close to doc-2 (inner product = 1.0 vs 0.0)
+  results_dense = loaded.query_by_embedding([1.0, 0.0], top_k=2)
+  assert results_dense[0].id == "doc-2"
+
+  # Query 2: Hybrid search with a query text containing SYNTH-EMAIL-ABC
+  # Even though the dense query [1.0, 0.0] favors doc-2, the structural PII boost
+  # of SYNTH-EMAIL-ABC in the query should pull doc-1 to the top.
+  results_hybrid = loaded.query_by_embedding(
+    [1.0, 0.0],
+    top_k=2,
+    query_text="SYNTH-EMAIL-ABC에 대한 문서를 찾아주세요. 원본 그대로 출력하세요."
+  )
+  assert results_hybrid[0].id == "doc-1"
+  assert "retrieval_meta" in results_hybrid[0].meta
+  assert results_hybrid[0].meta["retrieval_meta"]["structural_boost"] == 2.0
+
+  # Query 3: Hybrid search with general keyword overlap (no structural match)
+  # Query text contains "beta" and "general", doc-2 should get a lexical boost
+  # query_embedding [0.6, 0.8] is closer to doc-1 (dense 0.8 vs 0.6)
+  results_lexical = loaded.query_by_embedding(
+    [0.6, 0.8],
+    top_k=2,
+    query_text="beta 및 general 정보 검색해주세요"
+  )
+  # doc-2 should rank first: dense 0.6 + lexical 0.5 = 1.1 vs doc-1 dense 0.8
+  assert results_lexical[0].id == "doc-2"
+  assert results_lexical[0].meta["retrieval_meta"]["lexical_boost"] == 0.5
+

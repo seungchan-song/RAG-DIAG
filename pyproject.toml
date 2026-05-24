@@ -37,6 +37,8 @@ dependencies = [
 
   # === PDF 처리 ===
   "pypdf>=4.0.0",                  # PDF 텍스트 추출 (Haystack PyPDFToDocument용)
+  "docling-haystack>=0.1.2",       # Docling 기반 PDF 레이아웃/도표 파서 (Haystack 통합)
+  "reportlab>=4.1.0",              # PDF 생성용 라이브러리
 
   # === 설정 & 유틸리티 ===
   "pyyaml>=6.0.2",                 # YAML 설정 파일 파싱

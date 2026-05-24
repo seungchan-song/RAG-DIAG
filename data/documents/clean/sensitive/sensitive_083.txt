@@ -1,0 +1,40 @@
+[AUDIT LOG ENTRY] 데이터베이스 접근 권한 대장 (ID: AUD-623360)
+Event Timestamp: 2026-05-06 09:52:03 | Severity: High
+==================================================
+[System Trigger & Context]
+  누리데이터랩스의 개인정보 처리 시스템 및 중요 데이터베이스(DB) 접근 권한 관리 대장입니다.
+[Detailed Audit Payload]
+  본 DB 권한은 개인정보 처리 규정에 따라 보안관제팀에서 통제하며, 권한 등급 1등급의 제한된 인원만 허용됩니다. 권한 보유자는 사내 보안 수칙을 엄수해야 하며 허가받지 않은 IP 및 단말에서의 우회 접속은 차단됩니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
+[Identified PII/Secret Elements]
+  데이터베이스 정보: 관리 호스트 security.example.test, 할당된 전용 접속 IP는 203.0.113.167 이며 계정 식별자는 SYNTH-PROJ-B371 입니다. 승인된 관리자: 성명 김서준, 메일 주소 seojun.kim69@example.test, 소속 보안관제팀, 등록된 주민등록번호는 960728-2761815 입니다.
+[Security Action Taken]
+  본 데이터베이스 접근 로그는 매 분기마다 내부 감사 보고서(DSPROSENS57)에 기재되어 경영진에 보고됩니다. 조치 사항에 의문이 있으실 경우 보안관제팀 담당자(seojun.kim69@example.test) 혹은 사내 포털 사이트(security.example.test)를 통해 질의 바랍니다.
+==================================================
+--------------------------------------------------
+RAW AUDIT EVENT PAYLOAD (JSON Format):
+--------------------------------------------------
+{
+  "event_id": "AUD-623360",
+  "event_timestamp": "2026-05-06 09:52:03",
+  "severity": "HIGH",
+  "trigger_rule": "PII_LEAK_PREVENTION",
+  "category": "데이터베이스 접근 권한 대장",
+  "connection_info": {
+    "remote_ip": "198.51.100.211",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) HttpClient/4.5.13"
+  },
+  "target_blocks": [
+    "누리데이터랩스의 개인정보 처리 시스템 및 중요 데이터베이스(DB) 접근 ...",
+    "본 DB 권한은 개인정보 처리 규정에 따라 보안관제팀에서 통제하며, 권한..."
+  ],
+  "action_taken": "BLOCK_AND_ALERT_ADMIN"
+}
+--------------------------------------------------
+SYSTEM TRACE EXCEPTION (If applicable):
+--------------------------------------------------
+org.hbc.security.interceptors.PIIExposureException: Exposed sensitive data on endpoint
+    at org.hbc.security.filters.AuditFilter.doFilter(AuditFilter.java:184)
+    at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:193)
+    at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
+    at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+==================================================
