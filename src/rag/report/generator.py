@@ -623,9 +623,18 @@ class ReportGenerator:
     ) -> dict[str, Any]:
         """시나리오별 실행 통계를 집계한다.
 
-        쿼리별 metadata.elapsed_seconds 값을 합산해 시나리오별 총 소요 시간,
-        평균 처리 시간, 단일 쿼리 최대 시간, 처리량(qps)을 계산한다.
-        elapsed_seconds가 없는 옛 결과 파일과의 호환성을 위해 누락 시 0으로 처리한다.
+        실험은 ThreadPoolExecutor(max_workers>1)로 병렬 실행되므로 쿼리별
+        elapsed_seconds를 단순 합산하면 wall-clock(실제 체감 경과 시간) 보다
+        과대평가된다. 따라서 두 가지 시간을 분리해서 집계한다.
+
+        - cpu_time_seconds: 쿼리별 elapsed_seconds 의 단순 합 (스레드 누적 시간)
+        - wall_clock_seconds: max(finished_at) - min(started_at)
+          (시나리오 단위의 실제 경과 시간)
+
+        대시보드의 "전체 소요 시간"·"처리량(qps)" 은 wall_clock_seconds 기준으로
+        계산해 직관과 일치시키고, cpu_time_seconds 는 부가 지표로 보존한다.
+        started_at / finished_at 이 없는 옛 결과 파일은 기존처럼 단순 합산
+        값(cpu_time_seconds)을 wall_clock_seconds 로 대체해 호환성을 유지한다.
         """
         stage_counts: dict[str, int] = {}
         failed_cell_ids: set[str] = set()
@@ -634,7 +643,12 @@ class ReportGenerator:
         completed_total = 0
         open_failure_total = 0
         execution_failure_total = 0
-        total_elapsed_overall = 0.0
+        cpu_time_overall = 0.0
+        # 전체 wall-clock 은 시나리오 경계를 가로지르는 timestamp 의 min/max 로
+        # 재계산한다(시나리오를 순차 실행하는 경우 합산해도 같지만, 안전을 위해
+        # 전체 결과의 timestamp 를 그대로 모은다).
+        all_started_at: list[float] = []
+        all_finished_at: list[float] = []
 
         for scenario, data in scenario_results.items():
             scenario_stage_counts = dict(data.get("failure_stage_counts", {}))
@@ -656,31 +670,63 @@ class ReportGenerator:
             open_failure_count = int(data.get("open_failure_count", 0) or 0)
             execution_failure_count = int(data.get("execution_failure_count", 0) or 0)
 
-            # 쿼리별 elapsed_seconds를 metadata에서 수집
+            # 쿼리별 elapsed_seconds(스레드 처리시간) 와 started_at/finished_at
+            # (Unix timestamp) 를 metadata 에서 수집한다.
             scenario_elapsed_values: list[float] = []
+            scenario_started_at: list[float] = []
+            scenario_finished_at: list[float] = []
             for item in data.get("results", []) or []:
                 meta = item.get("metadata", {}) if isinstance(item, dict) else {}
-                elapsed = meta.get("elapsed_seconds") if isinstance(meta, dict) else None
-                if elapsed is None:
+                if not isinstance(meta, dict):
                     continue
-                try:
-                    scenario_elapsed_values.append(float(elapsed))
-                except (TypeError, ValueError):
-                    continue
+                elapsed = meta.get("elapsed_seconds")
+                if elapsed is not None:
+                    try:
+                        scenario_elapsed_values.append(float(elapsed))
+                    except (TypeError, ValueError):
+                        pass
+                started = meta.get("started_at")
+                finished = meta.get("finished_at")
+                if started is not None and finished is not None:
+                    try:
+                        scenario_started_at.append(float(started))
+                        scenario_finished_at.append(float(finished))
+                    except (TypeError, ValueError):
+                        pass
 
-            total_elapsed = round(sum(scenario_elapsed_values), 4)
+            cpu_time_seconds = round(sum(scenario_elapsed_values), 4)
             sample_count = len(scenario_elapsed_values)
-            avg_elapsed = round(total_elapsed / sample_count, 4) if sample_count else 0.0
+            avg_elapsed = (
+                round(cpu_time_seconds / sample_count, 4) if sample_count else 0.0
+            )
             max_elapsed = round(max(scenario_elapsed_values), 4) if sample_count else 0.0
+
+            # wall-clock 시간: started_at/finished_at 이 있으면 그것으로 산출,
+            # 없으면(옛 결과 파일) cpu_time_seconds 를 fallback 으로 사용한다.
+            if scenario_started_at and scenario_finished_at:
+                wall_clock_seconds = round(
+                    max(scenario_finished_at) - min(scenario_started_at), 4
+                )
+                if wall_clock_seconds < 0:
+                    wall_clock_seconds = 0.0
+            else:
+                wall_clock_seconds = cpu_time_seconds
+
+            # 처리량(qps) 은 wall-clock 기준으로 계산해 "초당 실제 처리한 쿼리 수"
+            # 의 의미를 갖게 한다. 병렬 실행 효과가 자연스럽게 반영된다.
             throughput_qps = (
-                round(sample_count / total_elapsed, 4) if total_elapsed > 0 else 0.0
+                round(sample_count / wall_clock_seconds, 4)
+                if wall_clock_seconds > 0
+                else 0.0
             )
 
             planned_total += planned_query_count
             completed_total += completed_query_count
             open_failure_total += open_failure_count
             execution_failure_total += execution_failure_count
-            total_elapsed_overall += total_elapsed
+            cpu_time_overall += cpu_time_seconds
+            all_started_at.extend(scenario_started_at)
+            all_finished_at.extend(scenario_finished_at)
 
             scenario_summary[scenario] = {
                 "status": data.get("status", "completed"),
@@ -689,23 +735,36 @@ class ReportGenerator:
                 "open_failure_count": open_failure_count,
                 "execution_failure_count": execution_failure_count,
                 "failure_stage_counts": scenario_stage_counts,
-                "total_elapsed_seconds": total_elapsed,
+                # total_elapsed_seconds 는 대시보드의 "총 소요 시간" 컬럼이 참조한다.
+                # 의미를 wall-clock 으로 통일하기 위해 wall_clock_seconds 를 넣는다.
+                "total_elapsed_seconds": wall_clock_seconds,
+                "wall_clock_seconds": wall_clock_seconds,
+                "cpu_time_seconds": cpu_time_seconds,
                 "avg_elapsed_seconds": avg_elapsed,
                 "max_elapsed_seconds": max_elapsed,
                 "throughput_qps": throughput_qps,
                 "timing_sample_count": sample_count,
             }
 
-        # 전체 요약: 평균은 가중 평균(시나리오 합계 기준), 처리량은 전체 완료/전체 시간
-        total_elapsed_overall = round(total_elapsed_overall, 4)
+        # 전체 요약: 평균은 가중 평균(시나리오 합계 기준), 처리량은 wall-clock 기준
+        cpu_time_overall = round(cpu_time_overall, 4)
+        if all_started_at and all_finished_at:
+            wall_clock_overall = round(
+                max(all_finished_at) - min(all_started_at), 4
+            )
+            if wall_clock_overall < 0:
+                wall_clock_overall = 0.0
+        else:
+            wall_clock_overall = cpu_time_overall
+
         avg_elapsed_overall = (
-            round(total_elapsed_overall / completed_total, 4)
-            if completed_total > 0 and total_elapsed_overall > 0
+            round(cpu_time_overall / completed_total, 4)
+            if completed_total > 0 and cpu_time_overall > 0
             else 0.0
         )
         throughput_overall = (
-            round(completed_total / total_elapsed_overall, 4)
-            if total_elapsed_overall > 0
+            round(completed_total / wall_clock_overall, 4)
+            if wall_clock_overall > 0
             else 0.0
         )
 
@@ -716,7 +775,9 @@ class ReportGenerator:
             "execution_failure_count": execution_failure_total,
             "failure_stage_counts": stage_counts,
             "failed_cell_count": len(failed_cell_ids),
-            "total_elapsed_seconds": total_elapsed_overall,
+            "total_elapsed_seconds": wall_clock_overall,
+            "wall_clock_seconds": wall_clock_overall,
+            "cpu_time_seconds": cpu_time_overall,
             "avg_elapsed_seconds": avg_elapsed_overall,
             "throughput_qps": throughput_overall,
             "scenarios": scenario_summary,

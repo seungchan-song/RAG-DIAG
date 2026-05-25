@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from copy import deepcopy
 from typing import Any
 
@@ -17,6 +18,10 @@ _RERANKER_CACHE: dict[str, "SentenceTransformerReranker"] = {}
 class SentenceTransformerReranker:
   """
   SentenceTransformers CrossEncoder 기반 리랭커 래퍼입니다.
+
+  CLI 의 ThreadPoolExecutor(max_workers>1) 가 동일 인스턴스의 predict() 를
+  동시에 호출하면 PyTorch 모델 내부 state 가 race 되어 native segfault 가
+  발생하므로, model.predict() 구간을 인스턴스 단위 Lock 으로 직렬화한다.
   """
 
   def __init__(self, model_name: str) -> None:
@@ -24,6 +29,8 @@ class SentenceTransformerReranker:
 
     self.model_name = model_name
     self.model = CrossEncoder(model_name)
+    # predict() 호출만 직렬화. 다른 단계(임베딩/생성/PII 탐지)는 계속 병렬 실행됨.
+    self._predict_lock = threading.Lock()
     logger.debug(f"리랭커 모델 로드 완료: {model_name}")
 
   def rerank(
@@ -39,7 +46,8 @@ class SentenceTransformerReranker:
       return []
 
     pairs = [(query, getattr(document, "content", "") or "") for document in documents]
-    scores = self.model.predict(pairs)
+    with self._predict_lock:
+      scores = self.model.predict(pairs)
 
     ranked_documents: list[Any] = []
     for document, score in zip(documents, scores):

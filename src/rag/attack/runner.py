@@ -90,13 +90,18 @@ class AttackRunner:
   ) -> AttackResult:
     """Execute one query and attach the shared metadata fields.
 
-    개별 쿼리의 전체 실행 시간을 perf_counter()로 측정해 metadata.elapsed_seconds
-    필드에 소수점 4자리 단위로 기록한다. 이 값은 리포트 생성 시 시나리오별
-    총 소요 시간·평균 처리 시간·처리량 계산의 원천 데이터로 사용된다.
+    개별 쿼리의 처리 시간을 perf_counter() 로 측정해 metadata.elapsed_seconds 에
+    기록한다. 동시에 time.time() 기반 Unix 타임스탬프(started_at/finished_at) 도
+    함께 저장해 두는데, 리포트 생성 시 시나리오별 wall-clock 시간(병렬 실행을
+    반영한 실제 체감 경과 시간)을 max(finished_at) - min(started_at) 으로
+    역산하기 위함이다. perf_counter 는 wall-clock 과 무관한 단조 시계라
+    스레드 간 비교가 불가능하므로 time.time() 값을 별도로 기록한다.
     """
+    started_at = time.time()
     start_time = time.perf_counter()
     result = attack.execute(query_info, rag_pipeline)
     elapsed_seconds = round(time.perf_counter() - start_time, 4)
+    finished_at = time.time()
 
     result.query_id = result.query_id or query_info.get("query_id", "")
     result.environment_type = env
@@ -115,6 +120,10 @@ class AttackRunner:
     result.metadata["reranker_enabled"] = reranker_enabled
     result.metadata["reranker_state"] = "on" if reranker_enabled else "off"
     result.metadata["elapsed_seconds"] = elapsed_seconds
+    # wall-clock 측정용 Unix timestamp(초). 병렬 실행 시 시나리오 전체의
+    # 실제 경과 시간을 산출하기 위해 사용된다.
+    result.metadata["started_at"] = round(started_at, 4)
+    result.metadata["finished_at"] = round(finished_at, 4)
     # query_info 에 probe_mode / identifier_category 가 있다면 결과 메타데이터에
     # 동기화해 둔다 (특히 R4 외 시나리오에서는 attack.execute 가 키를 모르므로
     # 여기서 한 번 더 안전망을 둔다). 이미 attack.execute 가 세팅했다면 덮어쓰지 않음.
