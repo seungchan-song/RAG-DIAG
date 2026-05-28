@@ -328,10 +328,16 @@ def _show_banner() -> None:
     )
 
     # ── 빠른 시작 순서 ────────────────────────────────────
+    # 처음 사용자가 0 → 4 단계 순으로 따라가면 매트릭스 실험 + 리포트까지 완료된다.
     quick_start = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
     quick_start.add_column("Step", style="bold yellow", no_wrap=True)
     quick_start.add_column("Command", style="green")
     quick_start.add_column("Description", style="dim")
+    quick_start.add_row(
+        "0단계",
+        'pip install -e ".[dev]"  &&  echo OPENAI_API_KEY=sk-... > .env',
+        "의존성 설치 + API 키 등록 (최초 1회)",
+    )
     quick_start.add_row("1단계", "rag ingest --env clean", "Clean DB 인덱스 구축")
     quick_start.add_row(
         "2단계", "rag ingest --env poisoned -s R9", "Poisoned DB 인덱스 구축 (R9 전용)"
@@ -339,26 +345,29 @@ def _show_banner() -> None:
     quick_start.add_row(
         "3단계",
         "rag run --all-scenarios --all-attackers --all-profiles --auto-report",
-        "전체 매트릭스(14셀) 실행 + 리포트 자동 생성",
+        "전체 매트릭스(12셀) 실행 + 리포트 자동 생성",
+    )
+    quick_start.add_row(
+        "4단계",
+        "open data/results/<run_id>/report_dashboard.html",
+        "HTML 대시보드에서 결과 확인",
     )
 
     console.print(
         Panel(
             quick_start,
-            title="[bold yellow]빠른 시작[/bold yellow]",
+            title="[bold yellow]빠른 시작 (처음 사용자용)[/bold yellow]",
             border_style="yellow",
             padding=(0, 1),
         )
     )
 
     # ── 팁 & 힌트 ─────────────────────────────────────────
+    # 컴팩트 유지를 위해 핵심 3개만 남긴다 (--help 안내 + resume + A1↔A2 비교).
     tips = Table(show_header=False, box=None, padding=(0, 1))
     tips.add_column("tip", style="white")
     tips.add_row(
-        "[bold]--auto-report[/bold]  실행 완료 후 리포트를 자동으로 생성합니다."
-    )
-    tips.add_row(
-        "[bold]--resume <run_id>[/bold]  중간에 끊긴 실험을 이어서 실행할 수 있습니다."
+        "[bold]--resume <run_id>[/bold]  중간에 끊긴 실험을 이어서 실행합니다."
     )
     tips.add_row(
         "[bold]rag run -s R2 --all-attackers --auto-report[/bold]  R2 시나리오의 A1↔A2 비교 실행."
