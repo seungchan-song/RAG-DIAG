@@ -2206,7 +2206,7 @@ def _execute_single_run(
                                 tail = "성공"
                             else:
                                 icon = "[dim]·[/dim]"
-                                tail = "미성공"
+                                tail = "실패"
                             progress.console.print(f"   {icon} 방금 시도: 멤버십 페어 판정: {tail}")
                     else:
                         if result.success:
@@ -2214,7 +2214,7 @@ def _execute_single_run(
                             tail = "(성공)"
                         else:
                             icon = "[dim]·[/dim]"
-                            tail = "(미성공)"
+                            tail = "(실패)"
                         progress.console.print(f"   {icon} 방금 시도: {ko_label} {tail}")
                 else:
                     if query_id:
