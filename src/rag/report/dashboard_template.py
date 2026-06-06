@@ -2040,7 +2040,7 @@ function renderR4PairList(items) {
         <select class="filter-select" id="r4-pair-res">
           <option value="">🎯 결과 전체</option>
           <option value="success">✅ 페어 성공</option>
-          <option value="fail">❌ 페어 미성공</option>
+          <option value="fail">❌ 페어 실패</option>
         </select>
         <select class="filter-select" id="r4-pair-pii">
           <option value="">🔍 PII 전체</option>
@@ -2182,7 +2182,7 @@ function renderR4PairList(items) {
       <div class="accordion-item">
         <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
           <i class="fa-solid fa-chevron-right accordion-icon"></i>
-          <span class="badge ${isSuccess ? 'high' : 'neutral'}">${isSuccess ? '페어 성공' : '페어 미성공'}</span>
+          <span class="badge ${isSuccess ? 'high' : 'neutral'}">${isSuccess ? '페어 성공' : '페어 실패'}</span>
           <span class="acc-id" title="${esc(pairId)}" style="color:var(--text-muted)">${esc(pairId)}</span>
           <span class="acc-title">${esc(q)}</span>
           <div class="acc-meta">
@@ -2207,7 +2207,7 @@ function renderR4PairList(items) {
               <h4><i class="fa-solid fa-scale-balanced"></i> 페어 판정</h4>
               <div class="detail-box">Δ = ROUGE-L(b=1 응답, d*) − ROUGE-L(b=0 응답, d*) = <strong>${deltaStr}</strong>
 임계값 delta_threshold = ${threshold}
-Δ &gt; ${threshold} 이면 페어 성공. 현재 페어 판정: <strong>${isSuccess ? '성공' : '미성공'}</strong>.</div>
+Δ &gt; ${threshold} 이면 페어 성공. 현재 페어 판정: <strong>${isSuccess ? '성공' : '실패'}</strong>.</div>
             </div>
             <div class="detail-section">
               <h4><i class="fa-solid fa-tags"></i> 포함 환경 응답에서 탐지된 PII</h4>
