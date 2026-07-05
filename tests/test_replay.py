@@ -82,6 +82,7 @@ def _fake_single_executor(
   snapshot_metadata=None,
   suite_context=None,
   replay_context=None,
+  show_briefing=True,
 ):
   actual_run_id = str(run_id)
   exp_manager.save_snapshot(actual_run_id, config, metadata=snapshot_metadata)
@@ -191,6 +192,7 @@ def _fake_suite_executor(
   suite_context=None,
   replay_context=None,
   probe_mode="generic",
+  show_briefing=True,
 ):
   actual_run_id = str(run_id)
   exp_manager.save_snapshot(actual_run_id, config, metadata=snapshot_metadata)
