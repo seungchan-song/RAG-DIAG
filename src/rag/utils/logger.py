@@ -32,7 +32,9 @@ def setup_logger(log_level: str | None = None) -> None:
 
   Args:
     log_level: 로그 레벨 문자열 ("DEBUG", "INFO", "WARNING", "ERROR").
-               None이면 환경변수 LOG_LEVEL 또는 기본값 "INFO" 사용.
+               None이면 환경변수 LOG_LEVEL 또는 기본값 "WARNING" 사용.
+               (CLI 화면에는 Rich 패널만 노출하고, loguru INFO 로그는 감춘다.
+                개발 중 상세 로그가 필요하면 LOG_LEVEL=INFO 로 실행한다.)
   """
   # Haystack "Mutating attribute" 경고 및 라이브러리 Deprecation 경고 억제
   warnings.filterwarnings("ignore", message=".*Mutating attribute.*")
@@ -40,9 +42,12 @@ def setup_logger(log_level: str | None = None) -> None:
   warnings.filterwarnings("ignore", category=FutureWarning)
 
   # HuggingFace / sentence_transformers / Haystack 표준 로그 억제
+  # huggingface_hub 은 토큰 미설정 시 "unauthenticated requests to the HF Hub..."
+  # 경고를 띄우므로 ERROR 로 낮춰 CLI 화면을 깔끔하게 유지한다.
   logging.getLogger("transformers").setLevel(logging.ERROR)
   logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
   logging.getLogger("haystack").setLevel(logging.ERROR)
+  logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
   # transformers tqdm 진행바 억제
   try:
@@ -52,9 +57,20 @@ def setup_logger(log_level: str | None = None) -> None:
   except Exception:
     pass
 
+  # huggingface_hub 자체 로깅 API 로 verbosity 를 error 로 낮춘다.
+  # (라이브러리가 자기 루트 로거 레벨을 재설정하므로 setLevel 만으로는
+  #  "unauthenticated requests to the HF Hub..." 경고가 남을 수 있어 이 경로를 함께 쓴다.)
+  try:
+    from huggingface_hub.utils import logging as hf_hub_logging
+    hf_hub_logging.set_verbosity_error()
+  except Exception:
+    pass
+  # warnings 모듈 경로로 올라오는 동일 경고도 함께 억제한다.
+  warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
+
   # 로그 레벨 결정 (우선순위: 인자 > 환경변수 > 기본값)
   if log_level is None:
-    log_level = os.getenv("LOG_LEVEL", "INFO")
+    log_level = os.getenv("LOG_LEVEL", "WARNING")
 
   # 기존 로거 설정을 모두 제거합니다 (중복 출력 방지)
   logger.remove()
@@ -72,7 +88,7 @@ def setup_logger(log_level: str | None = None) -> None:
     colorize=True,
   )
 
-  logger.info(f"로거 설정 완료 (레벨: {log_level})")
+  logger.debug(f"로거 설정 완료 (레벨: {log_level})")
 
 
 def get_logger():
