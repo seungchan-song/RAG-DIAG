@@ -425,6 +425,11 @@ def _show_banner() -> None:
     cmd_table.add_column("예시", style="dim")
 
     cmd_table.add_row(
+        "demo",
+        "[심사위원용] 데모셋으로 전체 파이프라인 원커맨드 체험 (API 키 불필요)",
+        "rag demo",
+    )
+    cmd_table.add_row(
         "run",
         "공격 시나리오 실행 (NORMAL / R2 / R4 / R7 / R9)",
         "rag run --all-scenarios --auto-report",
@@ -471,9 +476,15 @@ def _show_banner() -> None:
     quick_start.add_column("Command", style="green")
     quick_start.add_column("Description", style="dim")
     quick_start.add_row(
+        "빠른 체험",
+        "pip install -e .  &&  rag demo",
+        "데모셋으로 원커맨드 실행 (API 키 불필요) — 심사위원 권장",
+    )
+    quick_start.add_row("", "", "")
+    quick_start.add_row(
         "0단계",
-        'pip install -e ".[dev]"  &&  echo OPENAI_API_KEY=sk-... > .env',
-        "의존성 설치 + API 키 등록 (최초 1회)",
+        "pip install -e .   (선택: echo OPENAI_API_KEY=sk-... > .env)",
+        "의존성 설치 (+ 정밀 측정용 API 키는 선택)",
     )
     quick_start.add_row("1단계", "rag ingest --env clean", "Clean DB 인덱스 구축")
     quick_start.add_row(
@@ -943,6 +954,163 @@ def run(
 
     if auto_report:
         _run_auto_report(outcome.run_id, base_config)
+
+
+@app.command()
+def demo(
+    num_targets: int = typer.Option(
+        5,
+        "--num-targets",
+        "-n",
+        help="데모에서 공격할 민감 문서 수 상한. 작을수록 빠릅니다. 기본 5.",
+    ),
+    rebuild: bool = typer.Option(
+        False,
+        "--rebuild",
+        help="데모 인덱스를 강제로 다시 만듭니다 (데모 문서를 교체했을 때 사용).",
+    ),
+    open_report: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="완료 후 HTML 대시보드를 브라우저로 자동으로 엽니다.",
+    ),
+) -> None:
+    """[심사위원용] 데모 데이터셋으로 전체 파이프라인을 원커맨드로 체험합니다.
+
+    API 키 없이(오프라인)도 동작하며, 소형 데모 코퍼스(`data/documents/demo/`)를
+    인덱싱한 뒤 대표 시나리오(NORMAL 기준선 + R2 검색 데이터 유출)를 실행하고
+    HTML 리포트를 생성/오픈합니다. 실제 `clean`/`poisoned` 인덱스는 건드리지 않고
+    `data/indexes/_demo` 에 격리됩니다.
+
+    최초 실행 시에는 임베딩/NER 모델(약 1.5GB)을 Hugging Face 에서 내려받으므로
+    시간이 걸릴 수 있으나, 이후에는 캐시를 재사용해 수 분 내에 끝납니다.
+    """
+    import os
+    import tempfile
+    import webbrowser
+
+    import yaml
+
+    from rag.index.manager import PersistentIndexManager
+    from rag.utils.config import _deep_merge_dicts
+    from rag.utils.experiment import ExperimentManager
+
+    # 1. 데모 전용 설정을 만든다.
+    #    default.yaml 을 단일 소스로 유지하기 위해, 기본 설정(raw)에 격리 오버라이드만
+    #    런타임에 병합해 임시 YAML 파일로 덤프한다. suite 실행 시 자식 셀이 config 를
+    #    디스크에서 다시 읽으므로(_execute_suite_run), 파일 경로로 넘겨야 오버라이드가 유지된다.
+    project_root = Path(__file__).resolve().parents[3]
+    default_config_path = project_root / "config" / "default.yaml"
+    with open(default_config_path, "r", encoding="utf-8") as config_file:
+        raw_config = yaml.safe_load(config_file) or {}
+
+    demo_overrides = {
+        # 실제 인덱스(data/indexes/clean|poisoned)를 덮어쓰지 않도록 격리한다.
+        "index": {"root_dir": "data/indexes/_demo"},
+        # 소형 데모 코퍼스만 사용한다.
+        "attack": {"doc_path": "data/documents/demo/"},
+        # 무키로도 의미 있게 채워지는 대표 시나리오만 실행한다.
+        # (R7/R9 는 generator 가드레일 우회가 본질이라 로컬 LLM 도입 후 편입 예정)
+        "experiment": {"matrix": {"scenarios": ["NORMAL", "R2"]}},
+    }
+    merged_config = _deep_merge_dicts(raw_config, demo_overrides)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="rag_demo_"))
+    demo_config_path = tmp_dir / "demo_config.yaml"
+    with open(demo_config_path, "w", encoding="utf-8") as config_file:
+        yaml.safe_dump(merged_config, config_file, allow_unicode=True, sort_keys=False)
+
+    api_key_present = bool(
+        os.getenv("OPENAI_API_KEY") or os.getenv("NAVER_CLOVA_API_KEY")
+    )
+    generator_note = (
+        "API 키 감지됨 → 실제 LLM 으로 응답을 생성합니다."
+        if api_key_present
+        else "API 키 없음 → 오프라인 MockGenerator 로 동작합니다 (키 불필요)."
+    )
+    console.print(
+        Panel(
+            (
+                "[bold]심사위원용 원커맨드 데모[/bold]\n"
+                "  1) 소형 데모 코퍼스 인덱싱 (실제 인덱스와 격리)\n"
+                "  2) 대표 시나리오 실행: [cyan]NORMAL[/cyan](기준선) + "
+                "[cyan]R2[/cyan](검색 데이터 유출)\n"
+                "  3) 한국형 PII 탐지 + HTML 리포트 생성\n"
+                f"\n[dim]{generator_note}[/dim]\n"
+                "[dim]최초 실행 시 모델(약 1.5GB) 다운로드로 시간이 걸릴 수 있습니다.[/dim]"
+            ),
+            title="[blue]RAG Demo[/blue]",
+            border_style="blue",
+            padding=(1, 2),
+        )
+    )
+
+    base_config = load_config(str(demo_config_path))
+    base_exp_manager = ExperimentManager(base_config)
+
+    # 2. 데모 인덱스를 보장한다(clean 환경). 없으면 자동 빌드, --rebuild 면 재구성.
+    #    준비 단계의 장황한 내부 로그는 스피너 하나로 감춘다.
+    logger.disable("rag")
+    setup_status = console.status(
+        "[bold cyan]데모 인덱스 준비 중[/bold cyan] · 문서 임베딩...", spinner="dots"
+    )
+    setup_status.start()
+    try:
+        index_manager = PersistentIndexManager(
+            base_config,
+            doc_path="data/documents/demo/",
+            environment="clean",
+        )
+        index_manager.ensure_index(rebuild=rebuild, auto_build_if_missing=True)
+    except (FileNotFoundError, ValueError) as error:
+        setup_status.stop()
+        logger.enable("rag")
+        console.print(f"\n[red]데모 인덱스 준비 실패: {error}[/red]")
+        raise typer.Exit(code=1) from error
+    finally:
+        setup_status.stop()
+        logger.enable("rag")
+
+    # 3. suite 실행(NORMAL + R2, reranker_off). config 파일 경로로 오버라이드를 전달한다.
+    try:
+        suite_run_id = _execute_suite_run(
+            base_config=base_config,
+            base_exp_manager=base_exp_manager,
+            scenario=None,
+            attacker=None,
+            profile="reranker_off",
+            all_profiles=False,
+            all_scenarios=True,
+            all_attackers=False,
+            resume=None,
+            config_path=str(demo_config_path),
+            num_targets=num_targets,
+        )
+    except (FileNotFoundError, ValueError) as error:
+        console.print(f"\n[red]데모 실행 실패: {error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    # 4. 리포트 생성 + 대시보드 안내/오픈.
+    _run_auto_report(suite_run_id, base_config)
+    dashboard_path = base_exp_manager.run_dir(suite_run_id) / "report_dashboard.html"
+    if dashboard_path.exists():
+        console.print(
+            Panel(
+                (
+                    "[bold green]데모 완료[/bold green]\n"
+                    f"HTML 대시보드: [bold]{dashboard_path}[/bold]\n"
+                    "[dim]NORMAL 기준선과 R2 공격의 PII 노출량을 비교해 보세요.[/dim]"
+                ),
+                title="[bold blue]RAG Demo 결과[/bold blue]",
+                border_style="green",
+                padding=(1, 2),
+            )
+        )
+        if open_report:
+            webbrowser.open(dashboard_path.as_uri())
+    else:
+        console.print(
+            f"\n[yellow]대시보드 파일을 찾지 못했습니다:[/yellow] {dashboard_path}"
+        )
 
 
 @app.command()
