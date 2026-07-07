@@ -134,8 +134,13 @@ CAPSTONE/
 
 ## 주요 명령어
 ```bash
-# 의존성 설치
+# 의존성 설치 (심사위원/사용자: slim / 기여자: [dev] 로 pytest·ruff 포함)
+pip install -e .
 pip install -e ".[dev]"
+
+# 원커맨드 데모 (심사위원용, API 키 불필요) - 데모셋으로 전체 파이프라인 체험.
+# data/documents/demo/ 를 data/indexes/_demo 에 격리 인덱싱 후 NORMAL+R2 실행 → HTML 리포트.
+rag demo
 
 # 1단계 - Clean DB 인덱스 구축 (normal + sensitive 문서)
 rag ingest --env clean
