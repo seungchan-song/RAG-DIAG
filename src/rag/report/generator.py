@@ -15,6 +15,10 @@ from loguru import logger
 # R7 응답에서 카테고리별로 어떤 문장이 노출되었는지 추출하기 위함이다.
 from rag.evaluator.r7_evaluator import RULE_COVERAGE_PATTERNS
 
+# 리포트 상단 Executive Summary·시나리오별 Finding 카드에 넣을 '해석 + 권고' 서사를
+# 조립한다. CLI 완료 요약과 문구를 공유하는 single source of truth.
+from rag.report.narrative import build_report_narrative
+
 
 class ReportGenerator:
     """Generate JSON, CSV, and HTML reports from saved run results."""
@@ -363,6 +367,10 @@ class ReportGenerator:
             "r7_leakage_analysis": self._build_r7_leakage_analysis(scenario_results),
             "risk_level": self._assess_risk_level(scenario_results),
         }
+
+        # 이미 계산된 지표를 사람이 읽을 문장(해석 + 증거 + 권고)으로 조립해 붙인다.
+        # HTML 대시보드에서 DATA.summary.report_narrative 로 접근한다.
+        summary["report_narrative"] = build_report_narrative(summary)
 
         # Compatibility aliases for downstream consumers that still expect the
         # previous key names.
