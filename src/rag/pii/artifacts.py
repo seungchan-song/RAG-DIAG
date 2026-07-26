@@ -32,6 +32,7 @@ class StorageSanitizer:
     result.masking_applied = True
     result.pii_summary = dict(masked.get("summary", {}))
     result.pii_findings = list(masked.get("findings", []))
+    result.pii_rejected = list(masked.get("rejected", []))
     result.pii_runtime_status = dict(masked.get("runtime_status", {}))
     result.metadata = dict(result.metadata)
     result.metadata["masking_applied"] = True
@@ -78,6 +79,7 @@ class StorageSanitizer:
         "masked_text": "[MASKED_UNAVAILABLE]",
         "summary": {},
         "findings": [],
+        "rejected": [],
         "runtime_status": {
           "step3": {
             "enabled": False,
@@ -99,6 +101,7 @@ class StorageSanitizer:
         "masked_text": "[MASKED_UNAVAILABLE]",
         "summary": {},
         "findings": [],
+        "rejected": [],
         "runtime_status": {
           "step3": {
             "enabled": False,
