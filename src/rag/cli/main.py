@@ -9,6 +9,7 @@ import random
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 import typer
@@ -1790,7 +1791,10 @@ def _replay_suite_run(
                 replay_context=replay_context,
                 show_briefing=first_time_scenario,
             )
-            if outcome.status == "completed":
+            if outcome.status in {"completed", "skipped"}:
+                # skipped = 대상 어댑터의 능력 부족으로 의도적으로 건너뛴 셀이다
+                # (미해결/실패가 아니라 확정된 결정). suite 완료 판정이 막히지 않도록
+                # 완료 집합에 포함시키고 실패 집합에서는 제외한다.
                 completed_cells.add(cell.cell_id)
                 failed_cells.discard(cell.cell_id)
             else:
@@ -1921,6 +1925,85 @@ def _replay_pii_eval_run(
     return replayed_run_id
 
 
+def _resolve_target_capabilities(config: dict[str, Any]) -> set[Any]:
+    """
+    진단 대상 어댑터가 노출하는 능력 집합을 해석합니다.
+
+    기본값은 우리 RAG(BuiltinHaystackAdapter)의 전 능력(Tier 2)이라, 별도 설정이
+    없으면 모든 시나리오가 완전판으로 실행된다(= 기존 동작과 완전히 동일). 외부 RAG 를
+    진단할 때만 `config.adapter.capabilities` 에 그 RAG 가 실제로 노출하는 능력
+    (예: ["query"], ["query", "retrieval_trace"])만 선언하면, 이 함수가 그 집합을
+    돌려주어 CLI 실행 루프가 자동으로 skip/degrade 를 수행한다.
+
+    Args:
+      config: 실험 설정 딕셔너리. `adapter.capabilities` 리스트를 읽는다.
+
+    Returns:
+      set[Capability]: 대상 어댑터가 노출하는 능력 집합. query 는 항상 포함된다.
+    """
+    from rag.adapters import BuiltinHaystackAdapter, Capability
+
+    adapter_cfg = config.get("adapter") or {}
+    declared = adapter_cfg.get("capabilities")
+    if not declared:
+        return set(BuiltinHaystackAdapter.capabilities)
+
+    valid = {cap.value: cap for cap in Capability}
+    resolved: set[Any] = set()
+    for name in declared:
+        cap = valid.get(str(name).strip().lower())
+        if cap is None:
+            logger.warning("알 수 없는 adapter capability '{}' 무시(유효: {})", name, list(valid))
+            continue
+        resolved.add(cap)
+    # query 는 어떤 어댑터든 노출해야 하는 최소 필수 능력이므로 항상 포함시킨다.
+    resolved.add(Capability.QUERY)
+    return resolved
+
+
+def _capability_plan_payload(plan: Any) -> dict[str, Any]:
+    """
+    능력 계획(CapabilityPlan)을 결과 JSON·리포트에 담을 직렬화 dict 로 변환합니다.
+
+    Args:
+      plan: plan_scenario_execution() 이 돌려준 CapabilityPlan.
+
+    Returns:
+      dict: decision / reason / 부족 능력 목록을 담은 직렬화 payload.
+    """
+    return {
+        "decision": plan.decision,
+        "reason": plan.reason,
+        "missing_required": sorted(cap.value for cap in plan.missing_required),
+        "missing_recommended": sorted(cap.value for cap in plan.missing_recommended),
+    }
+
+
+def _show_capability_skip_panel(scenario: str, plan: Any, *, env: str) -> None:
+    """
+    능력 부족으로 건너뛴(skip) 시나리오를 사유와 함께 패널로 안내합니다.
+
+    Args:
+      scenario: 시나리오 이름.
+      plan: CapabilityPlan(skip 결정).
+      env: 실행 환경.
+    """
+    body = (
+        f"[bold]{scenario.upper()}[/bold]  [dim]· env={env}[/dim]\n"
+        f"[yellow]건너뜀(skip)[/yellow] — {plan.reason}\n"
+        "[dim]대상 RAG 가 이 능력을 노출하면 자동으로 실행됩니다.[/dim]"
+    )
+    console.print(
+        Panel(
+            body,
+            title="[yellow]능력 부족으로 시나리오 건너뜀[/yellow]",
+            title_align="left",
+            border_style="yellow",
+            padding=(0, 1),
+        )
+    )
+
+
 def _execute_single_run(
     config: dict[str, Any],
     *,
@@ -2021,6 +2104,59 @@ def _execute_single_run(
 
     checkpoint["status"] = "running"
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
+
+    # === 능력 기반 실행 계획 (BYO-RAG 어댑터 skip/degrade) ===
+    # 진단 대상 어댑터가 노출한 능력을 근거로 이 시나리오를 완전판(run)/축소(degrade)/
+    # 건너뜀(skip) 중 무엇으로 돌릴지 결정한다. 능력 판정은 인덱스·파이프라인이 필요 없어
+    # 인덱스 로드 이전에 계산해, skip 이면 비싼 준비 작업을 건너뛴다. 기본(우리 RAG)은
+    # 전 능력이라 항상 run → 기존 동작과 완전히 동일하다.
+    from rag.adapters import plan_scenario_execution
+    from rag.adapters.capabilities import DECISION_DEGRADE, DECISION_SKIP
+
+    _target_capabilities = _resolve_target_capabilities(config)
+    capability_plan = plan_scenario_execution(
+        SimpleNamespace(capabilities=_target_capabilities), scenario
+    )
+    capability_plan_payload = _capability_plan_payload(capability_plan)
+
+    if capability_plan.decision == DECISION_SKIP:
+        checkpoint["status"] = "skipped"
+        checkpoint["planned_query_count"] = 0
+        exp_manager.save_checkpoint(actual_run_id, checkpoint)
+        summary = _build_single_run_summary(
+            scenario=scenario,
+            config=config,
+            evaluated_results=[],
+            stored_results=[],
+            failures=failures,
+            checkpoint=checkpoint,
+            profile_name=profile_name,
+            index_manifest={},
+            index_manifest_ref=index_manifest_ref,
+            planned_query_count=0,
+            completed_query_ids=set(),
+            failed_query_ids=set(),
+            suite_context=suite_context,
+            replay_context=replay_context,
+            capability_plan_payload=capability_plan_payload,
+        )
+        try:
+            exp_manager.save_result(
+                actual_run_id,
+                _serialize_summary(summary),
+                f"{scenario.upper()}_result.json",
+            )
+        except Exception:
+            pass
+        _show_capability_skip_panel(scenario, capability_plan, env=env)
+        return SingleRunOutcome(
+            run_id=actual_run_id,
+            scenario=scenario.upper(),
+            environment_type=env,
+            profile_name=profile_name,
+            status="skipped",
+            summary=summary,
+        )
 
     # 준비 단계(인덱스 로드·파이프라인 초기화·쿼리 생성)의 장황한 내부 로그는
     # 스피너 하나로 감춘다. 끝나면 핵심 정보만 담은 패널을 한 번만 출력한다.
@@ -2295,6 +2431,12 @@ def _execute_single_run(
             planned_query_count=planned_query_count,
             show_briefing=show_briefing,
         )
+        # 필수 능력은 있으나 권장 능력이 없어 축소(블랙박스) 진단으로 실행되는 경우,
+        # 그 사유를 한 줄로 명시해 리포트/화면 모두에서 오해가 없도록 한다.
+        if capability_plan.decision == DECISION_DEGRADE:
+            console.print(
+                f"  [yellow]⚠ 축소 진단[/yellow] [dim]{capability_plan.reason}[/dim]"
+            )
     except Exception as error:
         setup_status.stop()
         logger.enable("rag")
@@ -2603,6 +2745,7 @@ def _execute_single_run(
         failed_query_ids=failed_query_ids,
         suite_context=suite_context,
         replay_context=replay_context,
+        capability_plan_payload=capability_plan_payload,
     )
 
     try:
@@ -2835,7 +2978,10 @@ def _execute_suite_run(
                 num_targets=num_targets,
                 show_briefing=first_time_scenario,
             )
-            if outcome.status == "completed":
+            if outcome.status in {"completed", "skipped"}:
+                # skipped = 대상 어댑터의 능력 부족으로 의도적으로 건너뛴 셀이다
+                # (미해결/실패가 아니라 확정된 결정). suite 완료 판정이 막히지 않도록
+                # 완료 집합에 포함시키고 실패 집합에서는 제외한다.
                 completed_cells.add(cell.cell_id)
                 failed_cells.discard(cell.cell_id)
             else:
@@ -3584,6 +3730,7 @@ def _build_single_run_summary(
     failed_query_ids: set[str],
     suite_context: dict[str, str] | None,
     replay_context: dict[str, Any] | None,
+    capability_plan_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one final or failure-only single-run summary payload."""
     from rag.evaluator.summary import summarize_evaluated_results
@@ -3618,6 +3765,10 @@ def _build_single_run_summary(
     )
     summary["failure_stage_counts"] = _count_failure_stages(failures)
     summary["status"] = str(checkpoint.get("status", "running"))
+    # BYO-RAG 어댑터 능력 계획(run/degrade/skip + 사유). 결과 JSON·리포트에서
+    # "이 시나리오가 왜 축소/건너뛰기 되었는지" 를 사유와 함께 노출하기 위함이다.
+    if capability_plan_payload is not None:
+        summary["capability_plan"] = capability_plan_payload
     if suite_context:
         summary.update(suite_context)
     if replay_context:
