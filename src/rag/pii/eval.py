@@ -6,6 +6,7 @@ import copy
 import csv
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,11 +14,56 @@ from typing import Any
 from rag.pii.classifier import ConfirmedPII
 from rag.pii.detector import PIIDetector
 from rag.pii.masker import PIIMasker
+from rag.pii.step0_normalize import TextNormalizer
 from rag.pii.step1_regex import PIIMatch, RegexDetector
 
 LABEL_SCHEMA_VERSION = "kdpii-33-v1"
 ARTIFACT_POLICY = "masked_only"
 EVAL_MODES = ("step1", "step1_2", "step1_2_3", "full")
+
+# canonical 값 계산용 정규화기(전각·호모글리프·자모분리 복원). eval 은 오프라인이라
+# 단일 인스턴스를 재사용해도 안전하다.
+_CANONICAL_NORMALIZER = TextNormalizer({})
+# 값 단위 비교 시 무시할 구분자/공백(전화·주민번호의 하이픈, 이메일의 점 등).
+_CANON_STRIP_RE = re.compile(r"[\s\-._]")
+
+
+def canonical_value(surface: str) -> str:
+  """
+  엔티티 표면 문자열을 '값 단위 비교용' 정규형으로 변환한다.
+
+  STEP 0(전각→반각·호모글리프·자모결합) 정규화 후 구분자/공백을 제거하고 casefold 한다.
+  변형(evasion)된 PII 와 그 canonical 형태를 같은 값으로 인식시켜, 완전일치 채점이
+  놓치던 변형 PII 를 canonical 매칭으로 채점할 수 있게 하는 것이 목적이다.
+
+  예: "０１０－１２３４" · "010 1234" · "010-1234" → 모두 "0101234" 로 수렴.
+
+  Args:
+    surface: 엔티티의 원문 표면 텍스트(text[start:end])
+
+  Returns:
+    str: 정규화·구분자제거·casefold 를 거친 canonical 값(빈 입력이면 "")
+  """
+  if not surface:
+    return ""
+  normalized = _CANONICAL_NORMALIZER.normalize(surface).normalized_text
+  return _CANON_STRIP_RE.sub("", normalized).casefold()
+
+
+def _span_iou(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
+  """
+  두 스팬 [a_start, a_end) 와 [b_start, b_end) 의 IoU(교집합/합집합)를 계산한다.
+
+  경계가 조금 어긋난(조사 포함 등) 예측도 같은 개체로 인정하기 위한 부분일치 척도다.
+
+  Returns:
+    float: 0.0(겹침 없음) ~ 1.0(완전 일치)
+  """
+  intersection = max(0, min(a_end, b_end) - max(a_start, b_start))
+  if intersection <= 0:
+    return 0.0
+  union = (a_end - a_start) + (b_end - b_start) - intersection
+  return intersection / union if union > 0 else 0.0
 
 CANONICAL_LABELS = (
   "DAT",
@@ -109,7 +155,7 @@ class LabelNormalizationError(ValueError):
 
 @dataclass(frozen=True)
 class EvalEntity:
-  """One normalized span-level entity used for exact-match evaluation."""
+  """One normalized span-level entity used for canonical span matching."""
 
   sample_id: str
   start: int
@@ -127,6 +173,11 @@ class EvalEntity:
   @property
   def span_key(self) -> tuple[int, int]:
     return (self.start, self.end)
+
+  @property
+  def canonical(self) -> str:
+    """이 엔티티의 값 단위 정규형(변형 PII 를 같은 값으로 인식시키기 위함)."""
+    return canonical_value(self.text)
 
 
 @dataclass(frozen=True)
@@ -268,7 +319,7 @@ def build_dataset_manifest(path: Path, samples: list[EvalSample]) -> dict[str, A
 
 
 class PIIBenchmarkRunner:
-  """Run one or more exact-match PII benchmark modes and write safe artifacts."""
+  """Run one or more canonical-match PII benchmark modes and write safe artifacts."""
 
   def __init__(self, config: dict[str, Any]) -> None:
     self.config = copy.deepcopy(config)
@@ -277,6 +328,9 @@ class PIIBenchmarkRunner:
       eval_config.get("label_schema_version", LABEL_SCHEMA_VERSION)
     )
     self.error_context_chars = int(eval_config.get("error_context_chars", 20))
+    # canonical 값이 다를 때 부분일치(경계 어긋남)를 TP 로 인정하는 IoU 임계값.
+    # 채점 관례값(0.5)이며, 태그별 탐지 임계값이 아니라 모델과 무관한 매칭 규칙이다.
+    self.match_iou_threshold = float(eval_config.get("match_iou_threshold", 0.5))
     self.regex_detector = RegexDetector()
     self.masker = PIIMasker()
 
@@ -371,6 +425,7 @@ class PIIBenchmarkRunner:
     total_gold = 0
     total_predicted = 0
     exact_match_count = 0
+    canonical_match_count = 0
     runtime_totals = self._build_runtime_totals(mode, detector)
 
     for sample in samples:
@@ -383,6 +438,7 @@ class PIIBenchmarkRunner:
       )
 
       comparison = self._compare_entities(sample, predictions)
+      canonical_match_count += sum(comparison["tp"].values())
       self._merge_counts(tp_counts, comparison["tp"])
       self._merge_counts(fp_counts, comparison["fp"])
       self._merge_counts(fn_counts, comparison["fn"])
@@ -425,6 +481,7 @@ class PIIBenchmarkRunner:
       "gold_entity_count": total_gold,
       "predicted_entity_count": total_predicted,
       "exact_match_count": exact_match_count,
+      "canonical_match_count": canonical_match_count,
       "overall_micro_precision": round(micro_precision, 6),
       "overall_micro_recall": round(micro_recall, 6),
       "overall_micro_f1": round(micro_f1, 6),
@@ -506,57 +563,119 @@ class PIIBenchmarkRunner:
       confidence=float(item.confidence),
     )
 
+  def _match_entities(
+    self,
+    gold_entities: tuple[EvalEntity, ...],
+    predictions: list[EvalEntity],
+  ) -> list[tuple[int, int]]:
+    """
+    gold 와 예측 엔티티를 canonical 기준으로 1:1 그리디 매칭한다.
+
+    두 엔티티는 (1) 라벨이 같고 (2) 스팬이 겹치며 (3) canonical 값이 같거나
+    스팬 IoU 가 임계값 이상일 때 매칭 후보가 된다. 후보를 매칭 점수(canonical 일치
+    가산 + IoU) 내림차순으로 배정해 각 엔티티가 최대 한 번만 매칭되게 한다. 이로써
+    완전일치 채점이 놓치던 (a) 변형 PII(전각·자모 등, canonical 일치)와 (b) 경계
+    어긋남(IoU 부분일치)을 모두 TP 로 인정한다.
+
+    Args:
+      gold_entities: 정답 엔티티들
+      predictions: 예측 엔티티들
+
+    Returns:
+      list[tuple[int, int]]: 매칭된 (gold_index, pred_index) 쌍 목록
+    """
+    gold_canonical = [entity.canonical for entity in gold_entities]
+    pred_canonical = [entity.canonical for entity in predictions]
+
+    candidates: list[tuple[float, int, int]] = []
+    for gold_index, gold_entity in enumerate(gold_entities):
+      for pred_index, pred_entity in enumerate(predictions):
+        if gold_entity.label != pred_entity.label:
+          continue
+        iou = _span_iou(
+          gold_entity.start, gold_entity.end, pred_entity.start, pred_entity.end
+        )
+        if iou <= 0.0:
+          continue
+        same_canonical = (
+          gold_canonical[gold_index] != ""
+          and gold_canonical[gold_index] == pred_canonical[pred_index]
+        )
+        if same_canonical or iou >= self.match_iou_threshold:
+          score = (1.0 if same_canonical else 0.0) + iou
+          candidates.append((score, gold_index, pred_index))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    matched_gold: set[int] = set()
+    matched_pred: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+    for _score, gold_index, pred_index in candidates:
+      if gold_index in matched_gold or pred_index in matched_pred:
+        continue
+      matched_gold.add(gold_index)
+      matched_pred.add(pred_index)
+      pairs.append((gold_index, pred_index))
+    return pairs
+
   def _compare_entities(
     self,
     sample: EvalSample,
     predictions: list[EvalEntity],
   ) -> dict[str, Any]:
-    gold_by_key = {entity.key: entity for entity in sample.entities}
-    pred_by_key = {entity.key: entity for entity in predictions}
-    gold_by_span = {entity.span_key: entity for entity in sample.entities}
-    pred_by_span = {entity.span_key: entity for entity in predictions}
-
     tp_counts = {tag: 0 for tag in CANONICAL_LABELS}
     fp_counts = {tag: 0 for tag in CANONICAL_LABELS}
     fn_counts = {tag: 0 for tag in CANONICAL_LABELS}
     errors: list[dict[str, Any]] = []
 
-    matched_keys = set(gold_by_key) & set(pred_by_key)
-    for key in matched_keys:
-      tp_counts[key[2]] += 1
+    gold_entities = sample.entities
+    pairs = self._match_entities(gold_entities, predictions)
+    matched_gold = {gold_index for gold_index, _ in pairs}
+    matched_pred = {pred_index for _, pred_index in pairs}
+    for gold_index, _pred_index in pairs:
+      tp_counts[gold_entities[gold_index].label] += 1
 
-    mismatch_pred_keys: set[tuple[int, int, str]] = set()
-    mismatch_gold_keys: set[tuple[int, int, str]] = set()
-
-    for span_key, pred_entity in pred_by_span.items():
-      gold_entity = gold_by_span.get(span_key)
-      if gold_entity is None or gold_entity.label == pred_entity.label:
+    # 라벨 불일치: 매칭되지 않은 gold·pred 중 스팬이 충분히 겹치지만(IoU≥임계) 라벨이
+    # 다른 쌍을 label_mismatch 로 기록한다(FP+FN 동시 계상). 완전일치 시절의 진단 보존.
+    mismatch_gold: set[int] = set()
+    mismatch_pred: set[int] = set()
+    for gold_index, gold_entity in enumerate(gold_entities):
+      if gold_index in matched_gold:
         continue
+      for pred_index, pred_entity in enumerate(predictions):
+        if pred_index in matched_pred or pred_index in mismatch_pred:
+          continue
+        if gold_entity.label == pred_entity.label:
+          continue
+        iou = _span_iou(
+          gold_entity.start, gold_entity.end, pred_entity.start, pred_entity.end
+        )
+        if iou < self.match_iou_threshold:
+          continue
+        mismatch_gold.add(gold_index)
+        mismatch_pred.add(pred_index)
+        fp_counts[pred_entity.label] += 1
+        fn_counts[gold_entity.label] += 1
+        errors.append(
+          {
+            "sample_id": sample.sample_id,
+            "error_type": "label_mismatch",
+            "gold_label": gold_entity.label,
+            "pred_label": pred_entity.label,
+            "route": pred_entity.route,
+            "masked_snippet": self._masked_snippet(
+              sample.text,
+              start=gold_entity.start,
+              end=gold_entity.end,
+              label=gold_entity.label,
+              route=pred_entity.route,
+              source=pred_entity.source,
+            ),
+          }
+        )
+        break
 
-      mismatch_pred_keys.add(pred_entity.key)
-      mismatch_gold_keys.add(gold_entity.key)
-      fp_counts[pred_entity.label] += 1
-      fn_counts[gold_entity.label] += 1
-      errors.append(
-        {
-          "sample_id": sample.sample_id,
-          "error_type": "label_mismatch",
-          "gold_label": gold_entity.label,
-          "pred_label": pred_entity.label,
-          "route": pred_entity.route,
-          "masked_snippet": self._masked_snippet(
-            sample.text,
-            start=gold_entity.start,
-            end=gold_entity.end,
-            label=gold_entity.label,
-            route=pred_entity.route,
-            source=pred_entity.source,
-          ),
-        }
-      )
-
-    for pred_entity in predictions:
-      if pred_entity.key in matched_keys or pred_entity.key in mismatch_pred_keys:
+    for pred_index, pred_entity in enumerate(predictions):
+      if pred_index in matched_pred or pred_index in mismatch_pred:
         continue
       fp_counts[pred_entity.label] += 1
       errors.append(
@@ -577,8 +696,8 @@ class PIIBenchmarkRunner:
         }
       )
 
-    for gold_entity in sample.entities:
-      if gold_entity.key in matched_keys or gold_entity.key in mismatch_gold_keys:
+    for gold_index, gold_entity in enumerate(gold_entities):
+      if gold_index in matched_gold or gold_index in mismatch_gold:
         continue
       fn_counts[gold_entity.label] += 1
       errors.append(

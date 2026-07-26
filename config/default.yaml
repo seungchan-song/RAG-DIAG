@@ -218,6 +218,10 @@ pii:
   eval:
     label_schema_version: "kdpii-33-v1"
     error_context_chars: 20
+    # canonical 채점의 부분일치 임계값(IoU). canonical 값이 다를 때 경계가 어긋난
+    # 예측(조사 포함 등)을 TP 로 인정하는 기준. 태그별 탐지 임계값이 아니라 모델과
+    # 무관한 채점 관례값이라 0.5 로 고정해 둔다.
+    match_iou_threshold: 0.5
 
 report:
   output_formats:

@@ -119,7 +119,7 @@ class TestPIIBenchmarkRunner:
     assert set(summary["mode_results"]) == {"step1", "step1_2", "step1_2_3", "full"}
     assert summary["artifact_policy"] == "masked_only"
 
-  def test_single_mode_metrics_use_exact_span_and_label_match(self, tmp_path) -> None:
+  def test_single_mode_metrics_use_canonical_span_and_label_match(self, tmp_path) -> None:
     runner = PIIBenchmarkRunner(_build_config(tmp_path))
     generated = runner.evaluate(
       dataset_path=FIXTURE_PATH,
@@ -178,6 +178,112 @@ class TestPIIBenchmarkRunner:
     assert compared["errors"][0]["gold_label"] == "TMI_EMAIL"
     assert compared["errors"][0]["pred_label"] == "QT_MOBILE"
     assert "hong@example.com" not in compared["errors"][0]["masked_snippet"]
+
+  def test_canonical_matching_credits_boundary_drift(self, tmp_path) -> None:
+    # 완전일치라면 FP+FN 이 될 경계 어긋남(조사 포함)을 canonical 매칭은 TP 로 인정한다.
+    runner = PIIBenchmarkRunner(_build_config(tmp_path))
+    sample = EvalSample(
+      sample_id="s1",
+      text="홍길동은 학교에 갔다.",
+      entities=(
+        EvalEntity(
+          sample_id="s1",
+          start=0,
+          end=3,
+          label="PER",
+          text="홍길동",
+          route="gold",
+          source="gold",
+        ),
+      ),
+    )
+    predictions = [
+      EvalEntity(
+        sample_id="s1",
+        start=0,
+        end=4,
+        label="PER",
+        text="홍길동은",
+        route="B-1",
+        source="ner",
+      )
+    ]
+
+    compared = runner._compare_entities(sample, predictions)
+
+    assert compared["tp"]["PER"] == 1
+    assert compared["fp"]["PER"] == 0
+    assert compared["fn"]["PER"] == 0
+
+  def test_canonical_value_disambiguates_overlapping_predictions(self, tmp_path) -> None:
+    # 같은 라벨의 겹치는 예측이 여럿이면, canonical 값이 일치하는 쪽을 TP 로 우선 배정한다.
+    runner = PIIBenchmarkRunner(_build_config(tmp_path))
+    sample = EvalSample(
+      sample_id="s1",
+      text="김철수 드림",
+      entities=(
+        EvalEntity(
+          sample_id="s1",
+          start=0,
+          end=3,
+          label="PER",
+          text="김철수",
+          route="gold",
+          source="gold",
+        ),
+      ),
+    )
+    predictions = [
+      EvalEntity(
+        sample_id="s1", start=0, end=2, label="PER", text="김철", route="B-1", source="ner"
+      ),
+      EvalEntity(
+        sample_id="s1", start=0, end=3, label="PER", text="김철수", route="B-1", source="ner"
+      ),
+    ]
+
+    compared = runner._compare_entities(sample, predictions)
+
+    # 정확한 값("김철수")이 TP 로 매칭되고, 부분값("김철")은 FP 로 남는다.
+    assert compared["tp"]["PER"] == 1
+    assert compared["fp"]["PER"] == 1
+    assert compared["fn"]["PER"] == 0
+
+  def test_non_overlapping_same_label_stays_fp_and_fn(self, tmp_path) -> None:
+    # 스팬이 전혀 겹치지 않으면 값·라벨이 같아도 매칭하지 않는다(교차 위치 오매칭 방지).
+    runner = PIIBenchmarkRunner(_build_config(tmp_path))
+    sample = EvalSample(
+      sample_id="s1",
+      text="김철수 그리고 박영희",
+      entities=(
+        EvalEntity(
+          sample_id="s1",
+          start=0,
+          end=3,
+          label="PER",
+          text="김철수",
+          route="gold",
+          source="gold",
+        ),
+      ),
+    )
+    predictions = [
+      EvalEntity(
+        sample_id="s1",
+        start=8,
+        end=11,
+        label="PER",
+        text="박영희",
+        route="B-1",
+        source="ner",
+      )
+    ]
+
+    compared = runner._compare_entities(sample, predictions)
+
+    assert compared["tp"]["PER"] == 0
+    assert compared["fp"]["PER"] == 1
+    assert compared["fn"]["PER"] == 1
 
   def test_unknown_gold_label_raises_explicit_normalization_error(self, tmp_path) -> None:
     dataset_path = tmp_path / "unknown-label.jsonl"
