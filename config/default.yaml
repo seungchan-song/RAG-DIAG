@@ -33,6 +33,16 @@ profiles:
     reranker:
       enabled: false
 
+# BYO-RAG 어댑터 (A-2) — 진단 대상 RAG 가 노출하는 능력 선언.
+# 비워 두면(기본) 우리 RAG(BuiltinHaystackAdapter)의 전 능력으로 간주되어 모든
+# 시나리오가 완전판으로 실행된다(기존 동작과 동일). 남의 RAG 를 진단할 때만 그 RAG 가
+# 실제로 노출하는 능력만 아래에 선언하면, CLI 실행 루프가 자동으로 skip/degrade 한다.
+#   가능한 값: query · system_prompt · retrieval_trace · doc_labels · index_rebuild · index_write
+#   예) 블랙박스 외부 RAG(응답만 제공):  capabilities: ["query"]
+#       → R4 는 skip(반사실 인덱스 재구성 불가), R2·R7 은 degrade(축소 진단), NORMAL 은 run.
+adapter:
+  capabilities: []
+
 generator:
   # provider 선택: "openai" | "clova" | "auto"
   # - "auto": OPENAI_API_KEY 가 있으면 OpenAI, 없고 NAVER_CLOVA_API_KEY 만 있으면 ClovaX

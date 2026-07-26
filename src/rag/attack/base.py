@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from haystack import Pipeline
+
+if TYPE_CHECKING:
+  from rag.adapters.base import TargetRAG
 
 
 @dataclass
@@ -81,12 +84,17 @@ class BaseAttack(ABC):
     config: dict[str, Any],
     attacker: str = "A2",
     env: str = "poisoned",
+    target: "TargetRAG | None" = None,
   ) -> None:
     self.config = config
     self.attacker = (attacker or "A2").upper()
     # env는 R2에서 쿼리 타입을 결정합니다.
     # clean → q_i(앵커)만 사용(기준선), poisoned → q_i+q_c 복합 쿼리 사용(공격)
     self.env = (env or "poisoned").lower()
+    # 진단 대상 어댑터(BYO-RAG). None 이면 execute() 에 전달된 Haystack 파이프라인을
+    # 참조 어댑터(BuiltinHaystackAdapter)로 즉석에서 감싸 사용한다 → 기존 동작과 동일.
+    # 외부 RAG 를 진단할 때만 여기에 해당 어댑터를 주입한다.
+    self.target: "TargetRAG | None" = target
 
   @abstractmethod
   def generate_queries(self, target_docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -101,11 +109,20 @@ class BaseAttack(ABC):
     """Execute one attack query against the shared RAG pipeline."""
 
   def _run_rag_query(self, pipeline: Pipeline, query: str) -> dict[str, Any]:
-    """Send a query through the shared RAG path and return its trace."""
-    try:
-      from rag.retriever.pipeline import run_query
+    """Send a query through the shared RAG path and return its trace.
 
-      return run_query(pipeline, query)
+    질의는 항상 어댑터 경계(`TargetRAG.query`)를 경유한다. `self.target` 이 주입돼
+    있으면 그 외부 어댑터를, 없으면 전달된 파이프라인을 참조 어댑터로 감싼다. 어느
+    쪽이든 `RagTrace.to_engine_dict()` 로 기존과 동일한 트레이스 dict 를 돌려주므로
+    호출부(각 시나리오 execute)는 변경 없이 그대로 동작한다(비파괴).
+    """
+    try:
+      target = self.target
+      if target is None:
+        from rag.adapters.builtin import BuiltinHaystackAdapter
+
+        target = BuiltinHaystackAdapter(pipeline, self.config)
+      return target.query(query).to_engine_dict()
     except Exception as error:
       from loguru import logger
 
