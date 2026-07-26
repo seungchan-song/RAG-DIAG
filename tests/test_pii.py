@@ -164,6 +164,32 @@ class TestChecksumValidator:
     assert len(valid) == 1
     assert valid[0].tag == "QT_MOBILE"
 
+  def test_partition_valid_captures_rejected_rrn(self) -> None:
+    matches = [
+      PIIMatch(
+        tag="QT_RRN",
+        text="901015-1234567",
+        start=0,
+        end=14,
+        needs_validation=True,
+      ),
+      PIIMatch(
+        tag="TMI_EMAIL",
+        text="test@example.com",
+        start=20,
+        end=36,
+        needs_validation=False,
+      ),
+    ]
+    valid, rejected = self.validator.partition_valid(matches)
+
+    # 유효 목록에는 이메일만 남고, 체크섬 탈락 주민번호는 rejected 로 분리된다.
+    assert [match.tag for match in valid] == ["TMI_EMAIL"]
+    assert len(rejected) == 1
+    assert rejected[0].tag == "QT_RRN"
+    assert rejected[0].reason == "checksum_failed"
+    assert rejected[0].validator == "mod11"
+
 
 class TestPIIMasker:
   def setup_method(self) -> None:
@@ -355,3 +381,48 @@ class TestPIIHardening:
     assert sanitized.metadata["response_storage_mode"] == "masked"
     assert all("text" not in finding for finding in sanitized.pii_findings)
     assert all("masked_text" in finding for finding in sanitized.pii_findings)
+
+  def test_detector_reports_checksum_rejected_without_confirming(self) -> None:
+    # step3/step4 를 꺼서 정규식+체크섬 경로만 남긴 뒤, 체크섬 미통과 주민번호가
+    # 확정 목록이 아니라 rejected 트랙에 사유와 함께 보존되는지 검증한다.
+    detector = PIIDetector(_build_pii_config(enable_step3=False, enable_step4=False))
+    detector.warm_up()
+    result = detector.detect("주민번호 901015-1234567, 이메일 hong@example.com")
+
+    # 확정 목록에는 주민번호가 없어야 한다(체크섬 탈락 → 확정 제외).
+    assert all(finding["tag"] != "QT_RRN" for finding in result["findings"])
+    assert any(finding["tag"] == "TMI_EMAIL" for finding in result["findings"])
+
+    # rejected 트랙에 사유·검증기·마스킹과 함께 보존되어야 한다.
+    assert len(result["rejected"]) == 1
+    rejected = result["rejected"][0]
+    assert rejected["tag"] == "QT_RRN"
+    assert rejected["reason"] == "checksum_failed"
+    assert rejected["validator"] == "mod11"
+    assert rejected["status"] == "structurally_matched_unverified"
+    assert "text" not in rejected  # 원문 키는 노출하지 않는다
+    assert "1234567" not in rejected["masked_text"]  # 뒷자리 마스킹
+
+    # 집계 왜곡 방지: rejected 는 확정 탐지 총계와 분리되어 카운트된다.
+    assert result["runtime_status"]["step2"]["rejected_count"] == 1
+
+  def test_sanitize_results_preserves_checksum_rejected(self) -> None:
+    results = [
+      AttackResult(
+        scenario="R2",
+        query="테스트 질의",
+        response="주민번호 901015-1234567 참고 바랍니다.",
+      )
+    ]
+
+    sanitized = sanitize_results_for_storage(
+      results,
+      _build_pii_config(enable_step3=False, enable_step4=False),
+    )[0]
+
+    assert len(sanitized.pii_rejected) == 1
+    rejected = sanitized.pii_rejected[0]
+    assert rejected["tag"] == "QT_RRN"
+    assert rejected["reason"] == "checksum_failed"
+    assert "text" not in rejected
+    assert "1234567" not in rejected["masked_text"]

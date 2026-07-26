@@ -2165,7 +2165,7 @@ function renderPaginatedList(scenarioId, items) {
             ${r7CategoryHtml}
             <div class="detail-section">
               <h4><i class="fa-solid fa-tags"></i> 탐지된 PII</h4>
-              <div>${piiHtml}</div>
+              <div>${piiHtml}${rejectedChips(item)}</div>
             </div>
             ${metaHtml}
             ${docsFinal}
@@ -2440,7 +2440,7 @@ function renderR4PairList(items) {
             </div>
             <div class="detail-section">
               <h4><i class="fa-solid fa-tags"></i> 포함 환경 응답에서 탐지된 PII</h4>
-              <div>${piiHtml}</div>
+              <div>${piiHtml}${rejectedChips(memberItem)}</div>
             </div>
             ${metaHtml}
           </div>
@@ -3410,7 +3410,7 @@ function renderNormalBaseline() {
             </div>
             <div class="detail-section">
               <h4><i class="fa-solid fa-tags"></i> 탐지된 PII (${piiCount}건)</h4>
-              <div>${piiBadges}</div>
+              <div>${piiBadges}${rejectedChips(r)}</div>
             </div>
             ${docsHtml}
           </div>
@@ -3973,6 +3973,36 @@ const TAG_KO = {
 function tagKo(t) {
   if (t === null || t === undefined || t === '') return '기타';
   return TAG_KO[String(t).toUpperCase()] || t;
+}
+// 체크섬 탈락 항목(pii_rejected) 을 "구조 일치·검증 탈락" 칩으로 렌더한다.
+// 정규식 구조는 PII 와 일치했으나 mod11/Luhn 검증을 통과하지 못해 확정 목록에서
+// 제외된 항목으로, 응답에 주민번호처럼 생긴 문자열이 남아 있을 때 미탐(누락)으로
+// 오해받지 않도록 별도로 표시한다. 확정 PII 배지와 시각적으로 구분(점선·회색·취소선)
+// 하며, 탐지 건수/위험도 집계에는 포함하지 않는 순수 설명용이다.
+function rejectedChips(item) {
+  const rejected = (item && item.pii_rejected) || [];
+  if (!rejected.length) return '';
+  const chipStyle = 'display:inline-block;padding:0.12rem 0.5rem;margin:0.12rem;'
+    + 'border-radius:6px;font-size:0.72rem;background:rgba(148,163,184,0.12);'
+    + 'border:1px dashed rgba(148,163,184,0.55);color:var(--text-muted);'
+    + 'text-decoration:line-through';
+  const chips = rejected.map(r => {
+    const tag = r.tag || '?';
+    const val = r.masked_text || '';
+    const validator = r.validator || 'checksum';
+    const title = `정규식 구조는 일치했으나 ${validator} 검증 미통과 → 유효 PII 아님으로 판정(미탐 아님)`;
+    return `<span style="${chipStyle}" title="${esc(title)}">⊘ ${esc(tagKo(tag))}`
+      + `${val ? ': ' + esc(val) : ''}</span>`;
+  }).join(' ');
+  const labelTitle = '정규식 구조는 PII와 일치하지만 체크섬(mod11/Luhn) 검증을 '
+    + '통과하지 못해 확정 목록에서 제외된 항목입니다. 미탐(누락)이 아니라 의도적 '
+    + '제외이며, 탐지 건수·위험도 집계에는 포함되지 않습니다.';
+  return `<div style="margin-top:0.5rem;display:flex;align-items:center;`
+    + `flex-wrap:wrap;gap:0.2rem">`
+    + `<span style="font-size:0.72rem;color:var(--text-muted);margin-right:0.35rem" `
+    + `title="${esc(labelTitle)}"><i class="fa-solid fa-circle-info" `
+    + `style="margin-right:0.25rem"></i>구조 일치·검증 탈락 (${rejected.length})</span>`
+    + chips + `</div>`;
 }
 const SEV_META = {
   high: { icon:'fa-triangle-exclamation', label:'높음' },

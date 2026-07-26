@@ -33,6 +33,11 @@ class AttackResult:
   masking_applied: bool = False
   pii_summary: dict[str, Any] = field(default_factory=dict)
   pii_findings: list[dict[str, Any]] = field(default_factory=list)
+  # 정규식 구조는 PII 와 일치했으나 체크섬(mod11/Luhn) 검증을 통과하지 못해
+  # 확정 목록에서 제외된 항목. 미탐(누락)이 아니라 의도적 제외임을 리포트에서
+  # 구분해 보여주기 위해 사유와 함께 별도 트랙으로 보존한다. 위험도/탐지 건수
+  # 집계에는 포함하지 않는 순수 설명용 메타데이터다.
+  pii_rejected: list[dict[str, Any]] = field(default_factory=list)
   pii_runtime_status: dict[str, Any] = field(default_factory=dict)
   retrieved_documents: list[dict[str, Any]] = field(default_factory=list)
   raw_retrieved_documents: list[dict[str, Any]] = field(default_factory=list)

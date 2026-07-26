@@ -2443,6 +2443,7 @@ def _execute_single_run(
             sanitized_res = storage_sanitizer.sanitized_copy(res)
             res.pii_summary = dict(sanitized_res.pii_summary or {})
             res.pii_findings = list(sanitized_res.pii_findings or {})
+            res.pii_rejected = list(sanitized_res.pii_rejected or [])
             res.pii_runtime_status = dict(sanitized_res.pii_runtime_status or {})
             return True, q_id, q_info, t_index, res, sanitized_res, None, current_stage
         except Exception as err:
