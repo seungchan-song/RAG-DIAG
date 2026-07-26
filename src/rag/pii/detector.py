@@ -8,6 +8,7 @@ from loguru import logger
 
 from rag.pii.classifier import PIIClassifier, is_high_risk_tag
 from rag.pii.masker import PIIMasker
+from rag.pii.step0_normalize import NormalizationResult, TextNormalizer
 from rag.pii.step1_regex import RegexDetector
 from rag.pii.step2_checksum import ChecksumValidator
 from rag.pii.step3_ner import NERDetector
@@ -15,9 +16,10 @@ from rag.pii.step4_sllm import SLLMVerifier
 
 
 class PIIDetector:
-  """Run Step 1-4 PII detection and build storage-safe outputs."""
+  """Run Step 0-4 PII detection and build storage-safe outputs."""
 
   def __init__(self, config: dict[str, Any]) -> None:
+    self.normalizer = TextNormalizer(config)
     self.regex_detector = RegexDetector()
     self.checksum_validator = ChecksumValidator()
     self.ner_detector = NERDetector(config)
@@ -33,13 +35,22 @@ class PIIDetector:
     """Detect PII in a single text and return safe runtime metadata."""
     logger.debug("Starting PII detection for text of length {}", len(text))
 
-    regex_matches = self.regex_detector.detect(text)
+    # STEP 0: 변형(전각·호모글리프·자모분리·공백삽입) 정규화. 정규화된 텍스트에서
+    # 탐지한 뒤 스팬을 '원문 좌표'로 되돌린다(마스킹·STEP 4 문맥 추출은 원문 기준).
+    normalization = self.normalizer.normalize(text)
+    detect_text = normalization.normalized_text
+
+    regex_matches = self._remap_to_original(
+      self.regex_detector.detect(detect_text), normalization
+    )
     # 체크섬 탈락 항목을 버리지 않고 함께 받아 "구조 일치·검증 탈락"으로 노출한다.
     regex_validated, regex_rejected = self.checksum_validator.partition_valid(
       regex_matches
     )
 
-    ner_matches = self.ner_detector.detect(text)
+    ner_matches = self._remap_to_original(
+      self.ner_detector.detect(detect_text), normalization
+    )
     ner_b1, ner_b2 = self.ner_detector.split_by_route(ner_matches)
 
     step4_reason = ""
@@ -62,8 +73,8 @@ class PIIDetector:
 
     confirmed = self.classifier.classify(regex_validated, ner_b1, sllm_verified)
     summary = self.classifier.to_summary(confirmed)
-    findings = self._build_public_findings(confirmed)
-    rejected = self._build_public_rejected(regex_rejected)
+    findings = self._build_public_findings(confirmed, text)
+    rejected = self._build_public_rejected(regex_rejected, text)
 
     return {
       "confirmed": confirmed,
@@ -71,6 +82,11 @@ class PIIDetector:
       "findings": findings,
       "rejected": rejected,
       "runtime_status": {
+        "step0": {
+          "enabled": self.normalizer.enabled,
+          "changed": normalization.changed,
+          "applied": normalization.applied,
+        },
         "step1": {"detected_count": len(regex_matches)},
         "step2": {
           "validated_count": len(regex_validated),
@@ -98,7 +114,58 @@ class PIIDetector:
     result["masking_applied"] = True
     return result
 
-  def _build_public_findings(self, confirmed: list[Any]) -> list[dict[str, Any]]:
+  def _remap_to_original(
+    self,
+    matches: list[Any],
+    normalization: NormalizationResult,
+  ) -> list[Any]:
+    """
+    정규화 텍스트에서 찾은 매치의 start/end 를 '원문 좌표'로 되돌린다.
+
+    마스킹(masker)과 STEP 4 문맥 추출은 원문 인덱스를 사용하므로, 정규화된 텍스트에서
+    탐지한 스팬을 원문 좌표로 옮겨야 원문의 올바른 구간이 마스킹된다. match.text 는
+    정규화된(깨끗한) 문자열 그대로 두어 체크섬 검증과 마스킹 표현이 정확해진다.
+    정규화로 바뀐 게 없으면(항등) 매치를 그대로 반환한다.
+
+    Args:
+      matches: 정규화 텍스트에서 탐지된 매치 목록(PIIMatch 또는 NERMatch)
+      normalization: STEP 0 정규화 결과(원문 좌표 매핑 포함)
+
+    Returns:
+      list[Any]: start/end 가 원문 좌표로 갱신된 동일한 매치 목록
+    """
+    if not normalization.changed:
+      return matches
+
+    for match in matches:
+      original_start, original_end = normalization.to_original_span(match.start, match.end)
+      match.start = original_start
+      match.end = original_end
+    return matches
+
+  def _is_recovered_by_step0(self, item: Any, original_text: str) -> bool:
+    """
+    이 항목이 STEP 0 정규화 덕분에 복원되어 탐지되었는지 판정한다.
+
+    item.start/end 는 원문 좌표, item.text 는 정규화(깨끗한)된 값이다. 원문의 해당
+    구간과 정규화된 값이 다르면 STEP 0 가 그 구간을 표준화(전각→반각, 자모결합 등)했다는
+    뜻이므로 "변형 PII 복원"으로 본다. 정규화가 손대지 않은 구간은 둘이 같아 False.
+
+    Args:
+      item: ConfirmedPII 또는 RejectedPII (start/end/text 속성 보유)
+      original_text: 원문 텍스트
+
+    Returns:
+      bool: STEP 0 정규화로 복원된 항목이면 True
+    """
+    original_span = original_text[item.start : item.end]
+    return original_span != item.text
+
+  def _build_public_findings(
+    self,
+    confirmed: list[Any],
+    original_text: str,
+  ) -> list[dict[str, Any]]:
     """Serialize confirmed findings without raw PII values."""
     findings: list[dict[str, Any]] = []
     for item in confirmed:
@@ -112,11 +179,16 @@ class PIIDetector:
           "end": item.end,
           "confidence": item.confidence,
           "high_risk": is_high_risk_tag(item.tag),
+          "recovered": self._is_recovered_by_step0(item, original_text),
         }
       )
     return findings
 
-  def _build_public_rejected(self, rejected: list[Any]) -> list[dict[str, Any]]:
+  def _build_public_rejected(
+    self,
+    rejected: list[Any],
+    original_text: str,
+  ) -> list[dict[str, Any]]:
     """
     체크섬 탈락 항목을 저장 안전한(마스킹된) 형태로 직렬화한다.
 
@@ -141,6 +213,7 @@ class PIIDetector:
           "validator": item.validator,
           "stage": "step2_checksum",
           "status": "structurally_matched_unverified",
+          "recovered": self._is_recovered_by_step0(item, original_text),
         }
       )
     return items

@@ -898,6 +898,10 @@ class ReportGenerator:
             step4_mode: dict[str, int] = {}
             step4_status: dict[str, int] = {}
             step4_reason: dict[str, int] = {}
+            # STEP 0(변형 정규화) 집계: 정규화 덕에 복원된 PII 건수와 정규화가 적용된 응답 수.
+            step0_recovered_count = 0
+            step0_changed_responses = 0
+            step0_enabled = False
 
             for result in results:
                 result_pii_summary = self._get_pii_summary(result)
@@ -911,7 +915,20 @@ class ReportGenerator:
                 for tag, count in result_pii_summary.get("by_tag", {}).items():
                     pii_by_tag[tag] = pii_by_tag.get(tag, 0) + int(count)
 
+                # STEP 0 정규화로 복원된 항목(확정+탈락)과 정규화 적용 여부를 집계한다.
+                for finding in result.get("pii_findings") or []:
+                    if (finding or {}).get("recovered"):
+                        step0_recovered_count += 1
+                for rejected_item in result.get("pii_rejected") or []:
+                    if (rejected_item or {}).get("recovered"):
+                        step0_recovered_count += 1
+
                 runtime_status = self._get_pii_runtime_status(result)
+                step0_status = runtime_status.get("step0", {})
+                if step0_status.get("enabled"):
+                    step0_enabled = True
+                if step0_status.get("changed"):
+                    step0_changed_responses += 1
                 step3_status = runtime_status.get("step3", {})
                 step4_runtime = runtime_status.get("step4", {})
                 self._increment_bucket(
@@ -957,6 +974,9 @@ class ReportGenerator:
                 "step4_mode": step4_mode,
                 "step4_status": step4_status,
                 "step4_reason": step4_reason,
+                "step0_enabled": step0_enabled,
+                "step0_recovered_count": step0_recovered_count,
+                "step0_changed_responses": step0_changed_responses,
             }
 
         return pii_summary
