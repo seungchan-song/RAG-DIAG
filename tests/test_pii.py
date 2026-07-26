@@ -8,6 +8,7 @@ import types
 from rag.attack.base import AttackResult
 from rag.pii.artifacts import sanitize_results_for_storage
 from rag.pii.detector import PIIDetector
+from rag.pii.step0_normalize import TextNormalizer
 from rag.pii.step1_regex import PIIMatch, RegexDetector
 from rag.pii.step2_checksum import ChecksumValidator
 from rag.pii.step3_ner import NERDetector, NERMatch
@@ -189,6 +190,57 @@ class TestChecksumValidator:
     assert rejected[0].tag == "QT_RRN"
     assert rejected[0].reason == "checksum_failed"
     assert rejected[0].validator == "mod11"
+
+
+class TestStep0Normalizer:
+  def setup_method(self) -> None:
+    self.normalizer = TextNormalizer(_build_pii_config())
+
+  def test_clean_text_is_unchanged(self) -> None:
+    result = self.normalizer.normalize("연락처는 010-1234-5678 입니다.")
+    assert result.changed is False
+    assert result.applied == []
+
+  def test_fullwidth_digits_folded(self) -> None:
+    result = self.normalizer.normalize("０１０－１２３４－５６７８")
+    assert result.normalized_text == "010-1234-5678"
+    assert "compat" in result.applied
+
+  def test_zero_width_removed(self) -> None:
+    result = self.normalizer.normalize("0​1​0​1234​5678")
+    assert result.normalized_text == "01012345678"
+    assert "invisible" in result.applied
+
+  def test_jamo_composition(self) -> None:
+    result = self.normalizer.normalize("ㅎㅗㅇㄱㅣㄹㄷㅗㅇ")
+    assert result.normalized_text == "홍길동"
+    assert "jamo" in result.applied
+    # 음절 3개가 자모 9개에서 나왔으므로 원문 스팬으로 되돌리면 전체를 덮는다.
+    assert result.to_original_span(0, 3) == (0, 9)
+
+  def test_emoticon_consonants_are_preserved(self) -> None:
+    # 모음이 없는 자음 나열은 결합되지 않아 흔한 이모티콘이 보존된다.
+    result = self.normalizer.normalize("아 진짜 ㅋㅋㅋ")
+    assert result.changed is False
+
+  def test_spaced_digits_gated_and_stripped(self) -> None:
+    # 규칙적 숫자 공백열(5자리 이상)이면 숫자 사이 공백을 제거한다.
+    result = self.normalizer.normalize("0 1 0 1 2")
+    assert result.normalized_text == "01012"
+    assert "digit_sep" in result.applied
+
+  def test_prose_spacing_not_stripped(self) -> None:
+    # 산문의 우연한 숫자 공백(짧은 열)은 건드리지 않는다.
+    result = self.normalizer.normalize("방 302 호실 5명")
+    assert result.changed is False
+
+  def test_disabled_returns_identity(self) -> None:
+    config = _build_pii_config()
+    config["pii"]["runtime"]["enable_step0"] = False
+    normalizer = TextNormalizer(config)
+    result = normalizer.normalize("０１０")
+    assert result.normalized_text == "０１０"
+    assert result.changed is False
 
 
 class TestPIIMasker:
@@ -392,6 +444,9 @@ class TestPIIHardening:
     # 확정 목록에는 주민번호가 없어야 한다(체크섬 탈락 → 확정 제외).
     assert all(finding["tag"] != "QT_RRN" for finding in result["findings"])
     assert any(finding["tag"] == "TMI_EMAIL" for finding in result["findings"])
+    # 클린 텍스트라 정규화가 손대지 않았으므로 복원 플래그는 False 여야 한다(오탐 방지).
+    email = next(f for f in result["findings"] if f["tag"] == "TMI_EMAIL")
+    assert email["recovered"] is False
 
     # rejected 트랙에 사유·검증기·마스킹과 함께 보존되어야 한다.
     assert len(result["rejected"]) == 1
@@ -426,3 +481,29 @@ class TestPIIHardening:
     assert rejected["reason"] == "checksum_failed"
     assert "text" not in rejected
     assert "1234567" not in rejected["masked_text"]
+
+  def test_step0_recovers_fullwidth_phone(self) -> None:
+    # 전각으로 변형된 휴대폰 번호가 STEP 0 정규화 후 정규식에 다시 잡히는지 검증한다.
+    detector = PIIDetector(_build_pii_config(enable_step3=False, enable_step4=False))
+    detector.warm_up()
+    result = detector.detect_and_mask("연락처는 ０１０－１２３４－５６７８ 입니다.")
+
+    tags = [finding["tag"] for finding in result["findings"]]
+    assert "QT_MOBILE" in tags
+    assert result["runtime_status"]["step0"]["changed"] is True
+    # 전각 → 반각 복원으로 잡힌 항목이므로 recovered 플래그가 True 여야 한다(리포트 노출용).
+    mobile = next(f for f in result["findings"] if f["tag"] == "QT_MOBILE")
+    assert mobile["recovered"] is True
+    # 원문(전각) 구간이 정규화된 마스킹 표현으로 치환되어 뒷자리가 그대로 남지 않는다.
+    assert "１２３４" not in result["masked_text"]
+    assert "010-****-5678" in result["masked_text"]
+
+  def test_step0_fullwidth_invalid_rrn_flows_to_rejection(self) -> None:
+    # STEP 0 가 구조를 복원했지만 체크섬이 실패하면 rejection 채널로 흘러가는지 검증한다.
+    detector = PIIDetector(_build_pii_config(enable_step3=False, enable_step4=False))
+    detector.warm_up()
+    result = detector.detect("주민번호 ９０１０１５－１２３４５６７ 참고")
+
+    rejected_tags = [item["tag"] for item in result["rejected"]]
+    assert "QT_RRN" in rejected_tags
+    assert all(finding["tag"] != "QT_RRN" for finding in result["findings"])

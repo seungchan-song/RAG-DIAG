@@ -1518,8 +1518,12 @@ details.method-box .mb-content strong { color: var(--text-main); }
       </div>
     </div>
     
-    <h3 class="card-title" style="margin-bottom: 1rem;"><i class="fa-solid fa-shield-halved"></i> 4단계 PII 탐지 파이프라인</h3>
+    <h3 class="card-title" style="margin-bottom: 1rem;"><i class="fa-solid fa-shield-halved"></i> PII 탐지 파이프라인 (STEP 0~4)</h3>
     <div class="pipeline-flow">
+      <div class="pipeline-step">
+        <div class="step-num">STEP 0</div>
+        <div class="step-name">변형 정규화</div>
+      </div>
       <div class="pipeline-step">
         <div class="step-num">STEP 1</div>
         <div class="step-name">정규식 탐지</div>
@@ -1537,6 +1541,7 @@ details.method-box .mb-content strong { color: var(--text-main); }
         <div class="step-name">sLLM 교차검증</div>
       </div>
     </div>
+    <div id="step0-recovery-note" style="margin-top: 0.75rem;"></div>
 
     <div class="card">
       <h3 class="card-title"><i class="fa-solid fa-code-compare"></i> NORMAL vs 공격 시나리오 PII 탐지량 비교</h3>
@@ -1851,7 +1856,24 @@ function renderOverview() {
     hPii += p.responses_with_high_risk || 0;
     tResp += p.total_responses || 0;
   });
-  
+
+  // STEP 0(변형 정규화) 복원 건수 배너 — 전각·제로폭·자모분리·공백삽입으로 STEP 1/3 을
+  // 우회하려던 PII 를 표준화해 추가로 잡아낸 건수를 노출한다.
+  let tStep0Recovered = 0, tStep0Changed = 0, step0On = false;
+  Object.values(sum.pii_leakage_profile||{}).forEach(p => {
+    tStep0Recovered += p.step0_recovered_count || 0;
+    tStep0Changed += p.step0_changed_responses || 0;
+    if (p.step0_enabled) step0On = true;
+  });
+  const step0Note = $('step0-recovery-note');
+  if (step0Note) {
+    if (step0On && (tStep0Recovered > 0 || tStep0Changed > 0)) {
+      step0Note.innerHTML = `<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.35);border-radius:8px;padding:0.7rem 1rem;font-size:0.85rem;color:var(--text-secondary)"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:0.45rem;color:var(--status-low)"></i><strong>STEP 0 정규화가 변형 PII ${tStep0Recovered.toLocaleString()}건</strong>을 복원했습니다 <span style="color:var(--text-muted)">(정규화가 적용된 응답 ${tStep0Changed.toLocaleString()}건)</span>. 전각·제로폭·자모분리·공백삽입으로 STEP 1/3 을 우회하려던 PII 를 표준 형태로 되돌려 탐지한 결과입니다.</div>`;
+    } else if (step0On) {
+      step0Note.innerHTML = `<div style="background:rgba(148,163,184,0.08);border:1px solid rgba(148,163,184,0.28);border-radius:8px;padding:0.7rem 1rem;font-size:0.82rem;color:var(--text-muted)"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:0.45rem"></i>STEP 0 변형 정규화 활성 · 이번 실행에서 정규화로 추가 복원된 변형 PII 는 없습니다.</div>`;
+    }
+  }
+
   let tScen = Object.keys(sum.scenario_results||{}).length;
   let qCount = sum.execution_reliability?.completed_query_count || 0;
   let eFail = sum.execution_reliability?.execution_failure_count || 0;
@@ -2081,7 +2103,7 @@ function renderPaginatedList(scenarioId, items) {
         const val = f.masked_text || f.value || f.text || '';
         const isHigh = (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high');
         const cls = isHigh ? 'badge high' : 'badge med';
-        return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}</span>`;
+        return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}${recoveredMark(f)}</span>`;
       }).join(' ') || '<span class="badge neutral">탐지 안 됨</span>';
       
       const renderDocs = (docs, title) => {
@@ -2373,7 +2395,7 @@ function renderR4PairList(items) {
         const val = f.masked_text || f.value || f.text || '';
         const isHigh = (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high');
         const cls = isHigh ? 'badge high' : 'badge med';
-        return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}</span>`;
+        return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}${recoveredMark(f)}</span>`;
       }).join(' ') || '<span class="badge neutral">탐지 안 됨</span>';
 
       // 페어의 두 응답에 같은 success/delta 가 들어 있으므로 어느 쪽 메타로 표시해도 동일.
@@ -3352,7 +3374,7 @@ function renderNormalBaseline() {
             const val = f.masked_text || f.value || f.text || '';
             const isHigh = (f.high_risk === true) || ((f.risk_level || '').toLowerCase() === 'high');
             const cls = isHigh ? 'badge high' : 'badge med';
-            return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}</span>`;
+            return `<span class="${cls}">${esc(tagKo(tag))}${val ? ': ' + esc(val) : ''}${recoveredMark(f)}</span>`;
           }).join(' ')
         : '<span class="badge neutral">탐지 없음</span>';
 
@@ -3979,6 +4001,12 @@ function tagKo(t) {
 // 제외된 항목으로, 응답에 주민번호처럼 생긴 문자열이 남아 있을 때 미탐(누락)으로
 // 오해받지 않도록 별도로 표시한다. 확정 PII 배지와 시각적으로 구분(점선·회색·취소선)
 // 하며, 탐지 건수/위험도 집계에는 포함하지 않는 순수 설명용이다.
+// STEP 0(변형 정규화)로 복원되어 탐지된 확정 PII 에 붙이는 작은 마커.
+// 원문이 전각·자모분리 등으로 변형돼 있었으나 정규화로 되살려 잡았음을 표시한다.
+function recoveredMark(finding) {
+  if (!finding || !finding.recovered) return '';
+  return ` <span title="STEP 0 정규화(변형 복원)로 탐지됨" style="font-size:0.66rem;color:var(--status-low)"><i class="fa-solid fa-wand-magic-sparkles"></i></span>`;
+}
 function rejectedChips(item) {
   const rejected = (item && item.pii_rejected) || [];
   if (!rejected.length) return '';
