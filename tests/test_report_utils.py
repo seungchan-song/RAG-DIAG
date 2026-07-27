@@ -898,3 +898,58 @@ class TestNormalVsAttackPiiComparison:
     assert by_state["off"]["attack"]["total_pii_count"] == 4
     assert by_state["on"]["baseline"]["total_pii_count"] == 2
     assert by_state["on"]["attack"]["total_pii_count"] == 5
+
+
+class TestHtmlSummaryView:
+  """HTML 임베드용 경량 summary 사본(_html_summary_view) 검증.
+
+  파일 크기 절감을 위해 무거운 페어 리스트·고아 블록을 HTML 에서만 걷어내되,
+  JSON 리포트용 원본 summary 는 절대 변형하지 않아야 한다(연구용 데이터 보존).
+  """
+
+  def _gen(self, tmp_path):
+    return ReportGenerator(
+      {"report": {"output_formats": ["html"], "output_dir": str(tmp_path)}}
+    )
+
+  def test_strips_pairs_and_orphan_without_mutating_original(self, tmp_path):
+    gen = self._gen(tmp_path)
+    summary = {
+      "reranker_on_off_comparison": {
+        "R2": {"matched_query_count": 3, "pairs": [1, 2, 3]}
+      },
+      "attacker_comparison": {"R2": {"base_success_count": 1, "pairs": [1, 2]}},
+      "clean_vs_poisoned_comparison": {"R2": {"matched_query_count": 1}},
+      "normal_vs_attack_pii_comparison": {"R2": {"pii_total_ratio": 2.0}},
+    }
+    view = gen._html_summary_view(summary)
+
+    # 무거운 페어 리스트는 HTML 뷰에서 제거되고 집계 필드는 유지된다.
+    assert "pairs" not in view["reranker_on_off_comparison"]["R2"]
+    assert "pairs" not in view["attacker_comparison"]["R2"]
+    assert view["reranker_on_off_comparison"]["R2"]["matched_query_count"] == 3
+    # HTML 미사용 고아 블록은 뷰에서 빠진다.
+    assert "clean_vs_poisoned_comparison" not in view
+    # 원본 summary(=JSON 출력)는 그대로 보존되어야 한다.
+    assert summary["reranker_on_off_comparison"]["R2"]["pairs"] == [1, 2, 3]
+    assert "clean_vs_poisoned_comparison" in summary
+
+  def test_render_dashboard_leaves_no_unsubstituted_tokens(self):
+    from rag.report.dashboard_template import render_dashboard
+
+    html = render_dashboard(
+      "RID-1", "2026-07-28 00:00", json.dumps({"a": 1}), "{}", "{}"
+    )
+    assert "RID-1" in html
+    # 5개 자리표시자가 모두 치환되어야 한다.
+    for token in (
+      "$run_id",
+      "$generated_at",
+      "$summary_json",
+      "$scenario_results_json",
+      "$snapshot_json",
+    ):
+      assert token not in html
+    # 외부 CDN 의존이 없어야 한다(완전 self-contained: 오프라인 재현성).
+    assert "cdn." not in html
+    assert "googleapis" not in html

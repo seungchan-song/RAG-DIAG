@@ -372,10 +372,8 @@ class ReportGenerator:
         # HTML 대시보드에서 DATA.summary.report_narrative 로 접근한다.
         summary["report_narrative"] = build_report_narrative(summary)
 
-        # Compatibility aliases for downstream consumers that still expect the
-        # previous key names.
-        summary["clean_vs_poisoned_비교"] = env_comparison
-        summary["reranker_on_off_비교"] = reranker_comparison
+        # 과거 한글 별칭(clean_vs_poisoned_비교 / reranker_on_off_비교)은 영문 키의
+        # 순수 중복이라 페이로드만 키우고 소비처가 없어 제거했다(리포트 경량화).
         return summary
 
     def _normalize_r4_probe_mode_block(
@@ -2582,6 +2580,41 @@ class ReportGenerator:
             sampled.append(n)
         return sampled
 
+    def _html_summary_view(self, summary: dict[str, Any]) -> dict[str, Any]:
+        """HTML 임베드용 경량 summary 사본을 만든다(파일 크기 절감).
+
+        JSON 리포트(report_summary.json)에는 연구용으로 모든 필드를 남기되, HTML 에는
+        렌더에 쓰지 않는 무거운 데이터를 걷어낸다. 원본 summary 는 변형하지 않는다.
+          - 비교 블록의 페어별 원본 리스트(`pairs`, 시나리오당 180~240개)는 표 렌더에
+            불필요하므로 제거하고 집계 필드만 남긴다(대시보드 비교표는 집계만 읽는다).
+          - HTML 이 참조하지 않는 고아 블록 clean_vs_poisoned_comparison 은 제외한다.
+
+        Args:
+          summary: `_build_summary` 가 만든 전체 요약 dict.
+
+        Returns:
+          `pairs`·고아 블록을 걷어낸 얕은 사본(원본 불변).
+        """
+
+        def _strip_pairs(block: Any) -> Any:
+            if not isinstance(block, dict):
+                return block
+            trimmed: dict[str, Any] = {}
+            for scenario, entry in block.items():
+                if isinstance(entry, dict):
+                    entry = {k: v for k, v in entry.items() if k != "pairs"}
+                trimmed[scenario] = entry
+            return trimmed
+
+        view = dict(summary)
+        # HTML 미사용 고아 비교 블록 제거(계산 결과는 JSON 에만 남는다).
+        view.pop("clean_vs_poisoned_comparison", None)
+        # 비교 블록의 무거운 페어 리스트 제거(집계 필드만 유지).
+        for key in ("reranker_on_off_comparison", "attacker_comparison"):
+            if key in view:
+                view[key] = _strip_pairs(view[key])
+        return view
+
     def _generate_html_dashboard(
         self,
         run_dir: Path,
@@ -2598,12 +2631,12 @@ class ReportGenerator:
         """
         from rag.report.dashboard_template import render_dashboard
 
-        # HTML embed용 경량 복사본: final_prompt 제거 + 시나리오당 최대 200개로 제한
-        # (전체 결과는 R2_result.json / R4_result.json / R9_result.json 참조)
-        # R4 는 응답 1건이 아니라 (b=1, b=0) 페어 단위가 평가의 기본 단위이므로
-        # 응답 기준 cap 200 을 그대로 적용하면 한쪽 응답이 잘려 페어가 깨진다.
-        # 페어 단위 cap 200 (= 응답 400) 으로 늘려 양쪽 응답이 함께 보존되도록 한다.
-        MAX_EMBEDDED_RESULTS = 200
+        # HTML embed용 경량 복사본: final_prompt 제거 + 시나리오당 소수 대표 케이스만.
+        # 재설계된 리포트는 상세 케이스를 '접이식 부록(상위 N건)'에서만 쓰므로, 예전의
+        # 200개(=13MB 주범) 대신 심각도 우선 샘플 12개만 임베드한다. 전체 원본은
+        # R2_result.json / R4_result.json / R9_result.json 을 참조.
+        # R4 는 (b=1, b=0) 페어가 평가 단위이므로 페어가 쪼개지지 않게 2배(=24응답)로 둔다.
+        MAX_EMBEDDED_RESULTS = 12
         MAX_EMBEDDED_RESULTS_R4 = MAX_EMBEDDED_RESULTS * 2
         lightweight_results: dict[str, Any] = {}
         for scenario, data in scenario_results.items():
@@ -2634,7 +2667,7 @@ class ReportGenerator:
                     ]
                 cleaned_results.append(cleaned)
             cleaned_data["results"] = cleaned_results
-            cleaned_data["results_truncated"] = len(results_list) > MAX_EMBEDDED_RESULTS
+            cleaned_data["results_truncated"] = len(results_list) > cap
             cleaned_data["results_total"] = len(results_list)
             lightweight_results[scenario] = cleaned_data
 
@@ -2645,7 +2678,9 @@ class ReportGenerator:
         html_content = render_dashboard(
             run_id=summary.get("run_id", "N/A"),
             generated_at=generated_at,
-            summary_json=json.dumps(summary, ensure_ascii=False, default=str),
+            summary_json=json.dumps(
+                self._html_summary_view(summary), ensure_ascii=False, default=str
+            ),
             scenario_results_json=json.dumps(
                 lightweight_results,
                 ensure_ascii=False,

@@ -315,6 +315,133 @@ def _scenario_evidence(scenario_upper: str, s: dict[str, Any]) -> list[str]:
   return ev
 
 
+# ==========================================================================
+# 6b. 지표 readout — 각 headline 숫자를 '무슨 뜻인지' 한 줄 평문으로.
+#     대시보드 지표칩 바로 아래에 붙는다(원칙2: 사용자가 직접 해석하지 않게).
+# ==========================================================================
+
+def _fmt_ratio(value: Any) -> str:
+  """배수(ratio)를 'N.N배' 문자열로 만든다(예: 3.4285 → '3.4배')."""
+  return f"{float(value or 0):.1f}배"
+
+
+def _metric_readouts(scenario_upper: str, s: dict[str, Any]) -> dict[str, str]:
+  """시나리오 요약에서 대표 지표별 '이 숫자는 ~라는 뜻' 문장을 만든다.
+
+  대시보드가 각 지표칩(성공률·핵심 보조지표) 아래에 이 문장을 그대로 렌더한다.
+  키는 지표 필드명, 값은 평문 한 줄이다. 값이 0/누락이라 의미가 없는 지표는
+  아예 넣지 않아 빈 문장이 노출되지 않게 한다.
+
+  Args:
+    scenario_upper: 대문자 시나리오 코드(NORMAL/R2/R4/R7/R9).
+    s: 해당 시나리오 요약 dict.
+
+  Returns:
+    {지표 필드명: 평문 해석 문장} dict(의미 있는 지표만).
+  """
+  out: dict[str, str] = {}
+  total = int(s.get("total", 0) or 0)
+  success_n = int(s.get("success_count", 0) or 0)
+
+  if scenario_upper == "R2":
+    out["success_rate"] = (
+      f"전체 {total}건 중 {success_n}건에서 민감 문서 원문이 응답으로 새어나왔습니다."
+    )
+    diversity = int(s.get("verbatim_doc_diversity", 0) or 0)
+    if diversity:
+      out["verbatim_doc_diversity"] = (
+        f"서로 다른 민감 문서 {diversity}종이 원문 유출에 동원됐습니다."
+      )
+    refusal = float(s.get("refusal_rate", 0) or 0)
+    if refusal:
+      out["refusal_rate"] = (
+        f"요청의 {_fmt_pct(refusal)}는 모델이 답변을 거부했습니다(가드레일 작동)."
+      )
+    avg_high = float(s.get("avg_high_pii_on_success", 0) or 0)
+    if avg_high:
+      out["avg_high_pii_on_success"] = (
+        f"유출 성공 응답 1건당 평균 고위험 PII {avg_high:.1f}건이 함께 노출됩니다."
+      )
+  elif scenario_upper == "R4":
+    pairs = int(s.get("total_pairs", 0) or 0)
+    out["success_rate"] = (
+      f"{pairs}개 페어 중 {success_n}개에서 문서의 DB 존재 여부가 응답 차이로 드러났습니다."
+    )
+    delta = float(s.get("avg_abs_delta_on_hit", 0) or 0)
+    if delta:
+      out["avg_abs_delta_on_hit"] = (
+        f"성공 페어의 포함(b=1)·제외(b=0) 응답 차이는 평균 {delta:.2f}입니다(클수록 존재가 뚜렷)."
+      )
+  elif scenario_upper == "R7":
+    out["success_rate"] = (
+      f"{total}개 공격 프롬프트 중 {success_n}개가 시스템 프롬프트를 끌어냈습니다."
+    )
+    coverage = float(s.get("avg_rule_coverage_on_success", 0) or 0)
+    if coverage:
+      out["avg_rule_coverage_on_success"] = (
+        f"유출에 성공한 응답은 방어규칙을 평균 {_fmt_pct(coverage)} 드러냈습니다."
+      )
+    leak = float(s.get("rule_leak_rate", 0) or 0)
+    if leak:
+      out["rule_leak_rate"] = (
+        f"요청의 {_fmt_pct(leak)}에서 방어규칙 단서가 일부 노출됐습니다."
+      )
+  elif scenario_upper == "R9":
+    total_r9 = int(s.get("poisoned_total", 0) or s.get("total", 0) or 0)
+    out["success_rate"] = (
+      f"심어둔 악성 문서가 {total_r9}건 중 {success_n}건에서 발동해 주입 명령이 실행됐습니다."
+    )
+    intensity = float(s.get("intensity", 0) or 0)
+    if intensity:
+      out["intensity"] = (
+        f"발동 성공 응답의 {_fmt_pct(intensity)}가 고위험 PII가 담긴 문서를 함께 검색했습니다."
+      )
+  elif scenario_upper == "NORMAL":
+    pii_n = int(s.get("pii_response_count", 0) or 0)
+    out["pii_response_count"] = (
+      f"공격이 없는 일반 질의 {total}건 중 {pii_n}건에서 개인정보가 노출됐습니다(비교 기준선)."
+    )
+  return out
+
+
+def _thesis_sentences(summary: dict[str, Any]) -> dict[str, Any]:
+  """리포트 핵심 논지 — '공격이 대조군(NORMAL)보다 얼마나 더 유출시켰나'를 문장화한다.
+
+  `normal_vs_attack_pii_comparison`(R2/R4)의 배수·증가량을 읽어, 사용자가 표를
+  해석하지 않아도 결론을 바로 알 수 있는 한 줄로 만든다. 대조군이 없으면 빈 dict.
+
+  Args:
+    summary: ReportGenerator 요약 dict(`normal_vs_attack_pii_comparison` 포함).
+
+  Returns:
+    {"headline": 가장 강한 한 줄, "by_scenario": {시나리오: 문장}} 또는 빈 dict.
+  """
+  comparison = summary.get("normal_vs_attack_pii_comparison") or {}
+  by_scenario: dict[str, str] = {}
+  best_ratio = 0.0
+  best_line = ""
+  for scen, entry in comparison.items():
+    if not isinstance(entry, dict):
+      continue
+    ratio = float(entry.get("pii_total_ratio", 0) or 0)
+    delta = float(entry.get("pii_delta_total", 0) or 0)
+    if ratio <= 0 and delta <= 0:
+      continue
+    scen_upper = str(scen).upper()
+    name = _SCENARIO_NAMES.get(scen_upper, scen_upper)
+    line = (
+      f"{name}({scen_upper}) 공격은 일반 질의보다 개인정보를 약 {_fmt_ratio(ratio)} "
+      f"더 노출했습니다(추가 {int(delta)}건)."
+    )
+    by_scenario[scen_upper] = line
+    if ratio > best_ratio:
+      best_ratio = ratio
+      best_line = line
+  if not by_scenario:
+    return {}
+  return {"headline": best_line, "by_scenario": by_scenario}
+
+
 # 전체 위험도 등급(_assess_risk_level 반환) → 한글 총평·배지 색.
 _RISK_LEVEL_VERDICT: dict[str, tuple[str, str]] = {
   "CRITICAL": ("위험 — 즉시 조치가 필요합니다", "high"),
@@ -380,6 +507,8 @@ def build_report_narrative(summary: dict[str, Any]) -> dict[str, Any]:
       "interpretation": interpretation,
       "evidence": _scenario_evidence(scen_upper, s),
       "remediation": remediation,
+      # 지표칩 아래에 붙일 '숫자→평문 한 줄' 해석(원칙2). 지표 필드명 → 문장.
+      "readouts": _metric_readouts(scen_upper, s),
     })
 
   # 위험도가 높은 순으로 정렬해, 사용자가 위에서부터 읽으면 곧 우선순위가 되도록 한다.
@@ -393,4 +522,6 @@ def build_report_narrative(summary: dict[str, Any]) -> dict[str, Any]:
                "각 카드의 '이렇게 고치세요'가 우선 조치입니다.",
     },
     "findings": findings,
+    # 리포트 핵심 논지: 공격이 대조군보다 얼마나 더 유출시켰나(한 줄).
+    "thesis": _thesis_sentences(summary),
   }
