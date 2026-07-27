@@ -324,9 +324,19 @@ ruff check src/
 - intensity: 시나리오 특성 강도 (R2 의 경우 성공 응답당 평균 High-risk PII 건수 / `high_pii_normalizer=5.0`)
 
 ### 리포트 (report/)
-`output_formats: ["json", "csv", "html"]` (기본). HTML 은 자체 대시보드 템플릿(`dashboard_template.py`)으로
-시나리오별 패널·셀 비교·NORMAL vs 공격 PII 비교 차트를 단일 페이지에 렌더링.
-저장 전 모든 응답·문서는 `mask_raw_pii: true` 설정에 따라 PII 마스킹 적용.
+`output_formats: ["json", "csv", "html"]` (기본). JSON/CSV 는 연구용 원본(전체 필드 보존),
+HTML 은 사용자·심사위원용 요약 대시보드로 역할을 분리한다.
+- **HTML 대시보드(`dashboard_template.py`)**: **단일 스크롤 내러티브**로 재설계(판정→우선조치→한눈요약
+  →핵심증거(대조군 vs 공격)→시나리오별 상세→접이식 부록). **완전 self-contained** — 외부 CDN 0건
+  (폰트=시스템 스택, 아이콘=인라인 SVG 스프라이트, 차트=손수 만든 경량 inline SVG)이라 오프라인에서도
+  정상 렌더된다(라이트 기본 + 다크 토글, 인쇄/PDF 친화). 기술 상세(판정 기준·비교표·상세 케이스·실험
+  설정)는 맨 끝 접이식 부록으로 내려 기본 노출을 줄였다(13MB→~1MB).
+- **해석 레이어(`narrative.py`)**: `build_report_narrative` 가 시나리오별 severity/headline/interpretation/
+  evidence/remediation 에 더해 **지표 readout**(숫자→평문 한 줄)과 **thesis**(공격이 대조군보다 PII 를 몇 배
+  더 노출했나 한 줄)를 만든다. 대시보드가 이 문장을 그대로 렌더해 사용자가 숫자를 직접 해석할 필요가 없다.
+- **HTML 경량화(`generator.py`)**: `_html_summary_view` 가 HTML 임베드용으로 무거운 페어 리스트(`pairs`)와
+  고아 블록(`clean_vs_poisoned_comparison`)을 걷어내고, 상세 케이스는 시나리오당 소수 대표 표본만 임베드한다
+  (JSON 원본은 불변). 저장 전 모든 응답·문서는 `mask_raw_pii: true` 설정에 따라 PII 마스킹 적용.
 
 ## 실험 환경
 - **Clean DB**: normal + sensitive 문서. NORMAL/R2/R4/R7 모두 이 환경에서 실행 (대조군 공유).
