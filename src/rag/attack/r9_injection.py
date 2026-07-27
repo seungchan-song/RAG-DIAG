@@ -42,8 +42,14 @@ class R9InjectionAttack(BaseAttack):
   generator가 의도하지 않은 출력을 하게 만듭니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A3", env: str = "poisoned") -> None:
-    super().__init__(config, attacker=attacker, env=env)
+  def __init__(
+    self,
+    config: dict[str, Any],
+    attacker: str = "A3",
+    env: str = "poisoned",
+    target: Any | None = None,
+  ) -> None:
+    super().__init__(config, attacker=attacker, env=env, target=target)
     self.query_gen = AttackQueryGenerator(config, attacker=self.attacker)
     self.trigger_marker = config.get("evaluator", {}).get(
       "r9", {}
@@ -68,6 +74,39 @@ class R9InjectionAttack(BaseAttack):
     """
     poison_docs, _ = self.query_gen.generate_r9_payloads(trigger_keywords)
     return poison_docs
+
+  def inject_poison(self, target: Any, trigger_keywords: list[str]) -> int:
+    """
+    생성한 poison 문서를 어댑터의 write_documents() 로 인덱스에 주입합니다.
+
+    우리 builtin RAG 는 poison 을 파일 기반 ingest(poisoned 인덱스)로 이미 주입하므로
+    이 경로가 필요 없다. 반면 파일 인덱스를 직접 만질 수 없는 외부 Tier-2 어댑터
+    (INDEX_WRITE 노출)에서는 이 메서드로 런타임에 poison 을 삽입한다. 이렇게 해서
+    "D' = D ∪ D_poi" 주입 단계를 어댑터 경계(write_documents)로 이관한다.
+
+    Args:
+      target: INDEX_WRITE 를 노출하는 대상 어댑터.
+      trigger_keywords: poison 문서 생성용 트리거 키워드.
+
+    Returns:
+      int: 실제로 주입한 poison 문서 수(능력 미노출·생성 0건이면 0).
+    """
+    from rag.adapters.base import Capability, has_capability
+
+    if not has_capability(target, Capability.INDEX_WRITE):
+      logger.warning(
+        "R9 poison 주입 생략: 대상 어댑터가 INDEX_WRITE 능력을 노출하지 않음"
+      )
+      return 0
+
+    poison_docs = self.generate_poison_docs(trigger_keywords)
+    if not poison_docs:
+      logger.warning("R9 poison 주입 생략: 생성된 poison 문서가 없음")
+      return 0
+
+    target.write_documents(poison_docs)
+    logger.info("R9 poison {}건을 write_documents 로 주입", len(poison_docs))
+    return len(poison_docs)
 
   def generate_queries(
     self, target_docs: list[dict[str, Any]]

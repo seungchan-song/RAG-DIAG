@@ -39,8 +39,14 @@ class R2ExtractionAttack(BaseAttack):
   명령어 프롬프트로 generator에게 문서를 그대로 출력하도록 합니다.
   """
 
-  def __init__(self, config: dict[str, Any], attacker: str = "A2", env: str = "clean") -> None:
-    super().__init__(config, attacker=attacker, env=env)
+  def __init__(
+    self,
+    config: dict[str, Any],
+    attacker: str = "A2",
+    env: str = "clean",
+    target: Any | None = None,
+  ) -> None:
+    super().__init__(config, attacker=attacker, env=env, target=target)
     # R2 anchor 다양화를 위한 NER 보충 PIIDetector(옵션).
     # 정규식 12종으로도 충분히 다양한 카테고리(synth_id/email/mobile/rrn/카드/
     # 면허/사업자/계좌/여권/차량번호 등) 가 잡히지만, 한글 이름(PER)·주소(LOC)·

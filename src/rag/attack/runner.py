@@ -39,6 +39,7 @@ class AttackRunner:
     attacker: str = "A2",
     env: str = "poisoned",
     probe_mode: str = "generic",
+    target: Any | None = None,
   ) -> BaseAttack:
     """Instantiate the concrete attack implementation for one scenario.
 
@@ -46,6 +47,8 @@ class AttackRunner:
     (요구사항분석서 §2.4 [표 13] A1~A3 매트릭스 참조; A4 는 제거됨).
     env 는 R2에서 쿼리 타입을 결정합니다.
     probe_mode 는 R4 전용 옵션: "generic"(일반 키워드) / "sensitive"(PII 식별자).
+    target 은 진단 대상 어댑터(BYO-RAG). None 이면 각 시나리오가 execute() 에 전달된
+    파이프라인을 참조 어댑터로 감싼다(기존 동작).
     """
     attack_cls = SCENARIO_MAP.get(scenario.upper())
     if attack_cls is None:
@@ -54,8 +57,10 @@ class AttackRunner:
         f"Available scenarios: {list(SCENARIO_MAP.keys())}"
       )
     if scenario.upper() == "R4":
-      return attack_cls(self.config, attacker=attacker, env=env, probe_mode=probe_mode)
-    return attack_cls(self.config, attacker=attacker, env=env)
+      return attack_cls(
+        self.config, attacker=attacker, env=env, probe_mode=probe_mode, target=target
+      )
+    return attack_cls(self.config, attacker=attacker, env=env, target=target)
 
   def prepare_queries(
     self,
@@ -64,9 +69,12 @@ class AttackRunner:
     attacker: str = "A2",
     env: str = "poisoned",
     probe_mode: str = "generic",
+    target: Any | None = None,
   ) -> tuple[BaseAttack, list[dict[str, Any]]]:
     """Instantiate the scenario attack and generate all queries."""
-    attack = self.create_attack(scenario, attacker=attacker, env=env, probe_mode=probe_mode)
+    attack = self.create_attack(
+      scenario, attacker=attacker, env=env, probe_mode=probe_mode, target=target
+    )
     queries = attack.generate_queries(target_docs)
     logger.debug(
       "Prepared {} attack queries for scenario {} (attacker={}, env={}, probe_mode={})",
@@ -145,10 +153,11 @@ class AttackRunner:
     probe_mode: str = "generic",
     completed_query_ids: set[str] | None = None,
     on_result: Any | None = None,
+    target: Any | None = None,
   ) -> list[AttackResult]:
     """Run one attack scenario across all generated queries."""
     attack, queries = self.prepare_queries(
-      scenario, target_docs, attacker=attacker, env=env, probe_mode=probe_mode
+      scenario, target_docs, attacker=attacker, env=env, probe_mode=probe_mode, target=target
     )
     skipped = completed_query_ids or set()
 

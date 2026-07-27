@@ -108,21 +108,34 @@ class BaseAttack(ABC):
   ) -> AttackResult:
     """Execute one attack query against the shared RAG pipeline."""
 
-  def _run_rag_query(self, pipeline: Pipeline, query: str) -> dict[str, Any]:
+  def _run_rag_query(
+    self,
+    pipeline: Pipeline,
+    query: str,
+    *,
+    target: "TargetRAG | None" = None,
+  ) -> dict[str, Any]:
     """Send a query through the shared RAG path and return its trace.
 
-    질의는 항상 어댑터 경계(`TargetRAG.query`)를 경유한다. `self.target` 이 주입돼
-    있으면 그 외부 어댑터를, 없으면 전달된 파이프라인을 참조 어댑터로 감싼다. 어느
-    쪽이든 `RagTrace.to_engine_dict()` 로 기존과 동일한 트레이스 dict 를 돌려주므로
-    호출부(각 시나리오 execute)는 변경 없이 그대로 동작한다(비파괴).
+    질의는 항상 어댑터 경계(`TargetRAG.query`)를 경유한다. 우선순위는
+    (1) 인자로 명시된 `target`(예: R4 의 비회원 반사실 어댑터) →
+    (2) `self.target`(외부 RAG 주입 시) → (3) 전달된 파이프라인을 감싼 참조 어댑터.
+    어느 쪽이든 `RagTrace.to_engine_dict()` 로 기존과 동일한 트레이스 dict 를
+    돌려주므로 호출부(각 시나리오 execute)는 그대로 동작한다(비파괴).
+
+    Args:
+      pipeline: 참조 어댑터로 감쌀 Haystack 파이프라인(target 미지정 시 사용).
+      query: 질의 문자열.
+      target: 이 질의에만 사용할 어댑터 override(옵션). R4 b=0 반사실 실행처럼
+        기본 대상이 아닌 별도 어댑터로 보내야 할 때 사용한다.
     """
     try:
-      target = self.target
-      if target is None:
+      resolved = target or self.target
+      if resolved is None:
         from rag.adapters.builtin import BuiltinHaystackAdapter
 
-        target = BuiltinHaystackAdapter(pipeline, self.config)
-      return target.query(query).to_engine_dict()
+        resolved = BuiltinHaystackAdapter(pipeline, self.config)
+      return resolved.query(query).to_engine_dict()
     except Exception as error:
       from loguru import logger
 

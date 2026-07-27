@@ -25,8 +25,6 @@ from loguru import logger
 
 from rag.attack.base import AttackResult, BaseAttack
 from rag.attack.query_generator import AttackQueryGenerator
-from rag.ingest.writer import create_document_store
-from rag.retriever.pipeline import build_rag_pipeline
 
 
 class R4MembershipAttack(BaseAttack):
@@ -43,6 +41,7 @@ class R4MembershipAttack(BaseAttack):
     attacker: str = "A2",
     env: str = "poisoned",
     probe_mode: str = "sensitive",
+    target: Any | None = None,
   ) -> None:
     """
     R4MembershipAttack을 초기화합니다.
@@ -56,8 +55,11 @@ class R4MembershipAttack(BaseAttack):
         "generic"  — 일반 키워드 기반 탐색 (레거시). 컨셉상 sensitive 와 동일
                      공격의 약화된 변종이며, 대시보드 R4 패널이 이를 직접 표시
                      하지 않으므로 호환성/디버그 용도로만 남겨둔다.
+      target: 진단 대상 어댑터(BYO-RAG). 주입되면 비회원 반사실 인덱스도 이 어댑터의
+        build_variant() 로 만든다. None 이면 execute() 에 전달된 파이프라인을 참조
+        어댑터로 감싼다(기존 동작과 동일).
     """
-    super().__init__(config, attacker=attacker, env=env)
+    super().__init__(config, attacker=attacker, env=env, target=target)
     self.probe_mode = probe_mode.lower() if probe_mode else "generic"
     # sensitive 모드일 때만 PIIDetector 를 lazy 로 만들어 query_gen 에 주입한다.
     # 정규식만으로 잡히지 않는 한글 이름·주소·직장명을 NER 후보로 보충해서
@@ -70,7 +72,9 @@ class R4MembershipAttack(BaseAttack):
       attacker=self.attacker,
       pii_detector=pii_detector,
     )
-    self._non_member_pipelines: dict[str, Pipeline] = {}
+    # 비회원(d* 제외) 반사실 어댑터를 target_doc_id 별로 캐시한다. 같은 d* 에 대한
+    # 여러 쿼리가 동일한 반사실 인덱스를 재사용하도록 해 재구성 비용을 아낀다.
+    self._non_member_adapters: dict[str, Any] = {}
     logger.debug(
       "R4MembershipAttack 초기화 완료 (attacker={}, probe_mode={}, pii_ner={})",
       self.attacker,
@@ -166,8 +170,13 @@ class R4MembershipAttack(BaseAttack):
       f"R4 공격 실행 (b={ground_truth_b}): {query[:50]}..."
     )
 
-    execution_pipeline = self._resolve_execution_pipeline(query_info, rag_pipeline)
-    trace = self._run_rag_query(execution_pipeline, query)
+    if ground_truth_b == 1:
+      # b=1: d* 가 포함된 원본 대상(회원)에 그대로 질의한다.
+      trace = self._run_rag_query(rag_pipeline, query)
+    else:
+      # b=0: d* 만 제외한 반사실 어댑터(build_variant)로 질의한다.
+      non_member_target = self._resolve_non_member_adapter(query_info, rag_pipeline)
+      trace = self._run_rag_query(rag_pipeline, query, target=non_member_target)
     replies = trace.get("generator", {}).get("replies", [])
     response = replies[0] if replies else ""
 
@@ -206,43 +215,37 @@ class R4MembershipAttack(BaseAttack):
       },
     )
 
-  def _resolve_execution_pipeline(
+  def _resolve_non_member_adapter(
     self,
     query_info: dict[str, Any],
     rag_pipeline: Pipeline,
-  ) -> Pipeline:
+  ) -> Any:
     """
-    R4 b=0 실행에서는 타깃 문서를 제외한 검색 경로를 사용합니다.
-    """
-    if query_info.get("ground_truth_b", 0) == 1:
-      return rag_pipeline
+    R4 b=0 실행에 쓸 비회원(d* 제외) 반사실 어댑터를 만듭니다.
 
+    기존에는 이 메서드가 저장 문서를 직접 필터링해 새 파이프라인을 빌드했지만, 이제는
+    어댑터의 `build_variant(exclude_doc_ids=...)` 로 그 로직을 위임한다. base_target 은
+    주입된 외부 어댑터(self.target)이거나, 없으면 전달된 파이프라인을 감싼 참조
+    어댑터(BuiltinHaystackAdapter)다. 같은 target_doc_id 는 캐시로 재사용한다.
+
+    Args:
+      query_info: R4 쿼리 정보. `target_doc_id` 로 제외할 문서를 지정한다.
+      rag_pipeline: 회원(b=1) 원본 파이프라인. self.target 이 없을 때만 사용된다.
+
+    Returns:
+      TargetRAG: d* 가 제외된 반사실 인덱스를 감싼 어댑터.
+    """
     target_doc_id = query_info.get("target_doc_id", "")
-    if target_doc_id in self._non_member_pipelines:
-      return self._non_member_pipelines[target_doc_id]
+    if target_doc_id in self._non_member_adapters:
+      return self._non_member_adapters[target_doc_id]
 
-    retriever = rag_pipeline.get_component("retriever")
-    document_store = retriever.document_store
-    stored_docs = document_store.filter_documents()
+    base_target = self.target
+    if base_target is None:
+      from rag.adapters.builtin import BuiltinHaystackAdapter
 
-    filtered_docs = [
-      doc for doc in stored_docs
-      if (
-        doc.meta.get("chunk_id") != target_doc_id
-        and doc.meta.get("doc_id") != target_doc_id
-        and getattr(doc, "id", "") != target_doc_id
-      )
-    ]
+      base_target = BuiltinHaystackAdapter(rag_pipeline, self.config)
 
-    non_member_store = create_document_store()
-    non_member_store.write_documents(filtered_docs)
-
-    logger.debug(
-      f"R4 non-member 경로 구성: "
-      f"target_doc_id={target_doc_id}, "
-      f"원본={len(stored_docs)}개, 제외후={len(filtered_docs)}개"
-    )
-
-    non_member_pipeline = build_rag_pipeline(non_member_store, self.config)
-    self._non_member_pipelines[target_doc_id] = non_member_pipeline
-    return non_member_pipeline
+    non_member_target = base_target.build_variant(exclude_doc_ids={target_doc_id})
+    logger.debug("R4 non-member 반사실 어댑터 구성: target_doc_id={}", target_doc_id)
+    self._non_member_adapters[target_doc_id] = non_member_target
+    return non_member_target
