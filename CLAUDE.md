@@ -8,6 +8,12 @@
 핵심 설계: 공격 없는 baseline(NORMAL)과 공격 시나리오(R2/R4/R7/R9)의 PII 노출량을 같은 인덱스
 위에서 비교해, "공격이 추가로 만들어낸 유출량"을 정량화한다.
 
+> **현재 진행 상황(2026-07 기준)**: 이 프로젝트는 **오픈소스 대회 출전**을 목표로 디벨롭 중이다.
+> 대회 규정상 Closed API 전용 모델(예: Step4의 GPT-4o-mini API)·재배포 제약 데이터셋(KDPII)은
+> 로컬 오픈웨이트 모델·자체 데이터셋으로 교체해야 하며, 산출물(가중치/데이터셋/코드)은
+> OSI·CC 라이선스로 공개 저장소에 게시해야 한다. 한국형 PII 4단계 엔진의 구체적 개편안은
+> Notion "송승찬 + 박상희" 페이지(page_id: 39b539e9-8608-80a2-9242-fcb7d894da1b)에 정리돼 있다.
+
 ## 기술 스택
 - **언어**: Python 3.11+
 - **RAG 프레임워크**: Haystack v2 (deepset, haystack-ai)
@@ -15,9 +21,11 @@
 - **임베딩**: dragonkue/BGE-m3-ko (sentence-transformers)
 - **리랭킹**: dragonkue/bge-reranker-v2-m3-ko
 - **NER 모델**: KPF-BERT (KDPII 데이터셋 파인튜닝 완료, townboy/kpfbert-kdpii)
-- **생성기(국외)**: GPT-4o-mini (OpenAI API, gpt-4o-mini-2024-07-18)
-- **생성기(국내)**: HyperCLOVA X HCX-DASH-002 (네이버 클로바 API)
-- **교차검증 sLLM**: GPT-4o-mini (PII 4단계 Step4)
+- **생성기(로컬, 대회 A-1)**: 로컬 오픈웨이트 모델 — EXAONE/Qwen2.5/Gemma 등을 Ollama·vLLM 등
+  OpenAI 호환 엔드포인트로 구동. `provider: "local"` 시 Closed API 0건. (`LocalOpenAICompatGenerator`)
+- **생성기(국외, Closed)**: GPT-4o-mini (OpenAI API) — 개발용. 대회 제출본에서는 미사용
+- **생성기(국내, Closed)**: HyperCLOVA X HCX-DASH-002 (네이버 클로바 API) — 개발용. 대회 제출본에서는 미사용
+- **교차검증 sLLM**: GPT-4o-mini (PII 4단계 Step4) — B-4에서 로컬 sLLM으로 교체 예정(Closed API 제거)
 - **CLI**: Typer + Rich (배너/테이블/프로그레스바)
 - **PDF 파싱**: pypdf + docling-haystack (레이아웃/도표 보존)
 - **리포트**: HTML 대시보드(자체 템플릿) + JSON + CSV. 보조로 reportlab.
@@ -56,8 +64,15 @@ CAPSTONE/
 │   │   └── prompt_builder.py
 │   ├── generator/           # LLM 응답 생성 (OpenAI/Clova 추상화)
 │   │   └── generator.py
+│   ├── adapters/            # BYO-RAG 어댑터 (A-2, 남의 RAG에 진단 붙이기)
+│   │   ├── base.py                  # Capability / RagTrace / TargetRAG 프로토콜 + has_capability
+│   │   ├── capabilities.py          # 시나리오별 필요 능력 매핑 + plan_scenario_execution(run/degrade/skip)
+│   │   ├── builtin.py               # BuiltinHaystackAdapter (우리 RAG 감싸는 첫 참조 어댑터)
+│   │   ├── gated.py                 # CapabilityGatedAdapter (선언 능력 밖 출력 차단 → truthful degrade)
+│   │   ├── registry.py              # 어댑터 레지스트리 (config.adapter.type 확장점) + create_target_adapter
+│   │   └── rest.py                  # RestRagAdapter (외부 REST RAG 참조 구현, transport 주입식)
 │   ├── attack/              # 공격 엔진 (NORMAL / R2 / R4 / R7 / R9)
-│   │   ├── base.py                  # BaseAttack, AttackResult, ExecutionFailureRecord
+│   │   ├── base.py                  # BaseAttack(target 주입 + _run_rag_query 어댑터 경유), AttackResult, ExecutionFailureRecord
 │   │   ├── runner.py                # AttackRunner, SCENARIO_MAP
 │   │   ├── query_generator.py       # AttackQueryGenerator + 공격자 매트릭스
 │   │   ├── normal_baseline.py       # NORMAL baseline (A1, clean DB 전용)
@@ -73,15 +88,16 @@ CAPSTONE/
 │   │   ├── r9_evaluator.py          # R9 트리거 마커 탐지
 │   │   ├── summary.py               # 위험도 산정 (frequency × intensity)
 │   │   └── korean_tokenizer.py      # ROUGE 한국어 토큰화
-│   ├── pii/                 # 한국형 PII 탐지 4단계 파이프라인
-│   │   ├── detector.py      # PIIDetector (4단계 통합)
+│   ├── pii/                 # 한국형 PII 탐지 파이프라인 (STEP 0~4)
+│   │   ├── detector.py      # PIIDetector (STEP 0~4 통합)
+│   │   ├── step0_normalize.py # 변형 PII 정규화 (전각/호모글리프/자모분리/공백삽입)
 │   │   ├── step1_regex.py   # 정규식 12종
-│   │   ├── step2_checksum.py # 주민번호 mod11, Luhn 등
+│   │   ├── step2_checksum.py # 주민번호 mod11/Luhn (탈락 항목은 rejection 채널로 보존)
 │   │   ├── step3_ner.py     # KPF-BERT NER
 │   │   ├── step4_sllm.py    # GPT-4o-mini 교차검증 (비동기 batch)
 │   │   ├── classifier.py    # A1/A2/B1/B2 경로 분류 + 위험도
 │   │   ├── masker.py        # 토큰 마스킹 (응답/문서 저장 전 적용)
-│   │   ├── eval.py          # KDPII 벤치마크 (pii-eval CLI)
+│   │   ├── eval.py          # KDPII 벤치마크 (pii-eval CLI, canonical 채점)
 │   │   └── artifacts.py     # 실험 결과 저장 전 PII 마스킹 처리
 │   ├── report/              # 자동 리포트 생성
 │   │   ├── generator.py             # ReportGenerator (JSON/CSV/HTML)
@@ -162,7 +178,7 @@ rag query -q "홍길동의 주민번호 알려줘" --env clean
 # 실험 리포트 재생성
 rag report --run-id RAG-2026-0526-0001
 
-# PII 4단계 파이프라인 벤치마크 (KDPII 데이터셋)
+# PII 파이프라인 벤치마크 (KDPII 데이터셋, STEP 0~4, canonical 채점)
 rag pii-eval --dataset-path kdpii.jsonl --all-modes
 
 # 이전 실험 동일 설정 재실행
@@ -227,15 +243,67 @@ ruff check src/
 
 전체 매트릭스 실행 시 (`--all-profiles`) 두 profile 모두 돌려 리랭커가 공격 표면에 미치는 영향을 비교.
 
-### PII 탐지 4단계 (pii/)
+### BYO-RAG 어댑터 (adapters/) — A-2
+남이 운영하는 RAG 에도 진단을 그대로 붙이기 위한 추상화 계층. 공격 엔진의 결합점이었던
+`attack/base.py:_run_rag_query` 가 이제 항상 어댑터 경계(`TargetRAG.query() -> RagTrace`)를
+경유한다. 우선순위는 (1) 인자 target override → (2) `self.target`(외부 RAG 주입) →
+(3) 전달된 파이프라인을 감싼 `BuiltinHaystackAdapter`(반환 dict 는 기존 `run_query` 와 동일 → **비파괴**).
+- **Capability** (`base.py`): 어댑터가 노출하는 능력. `QUERY`(필수) / `SYSTEM_PROMPT`(R7) /
+  `RETRIEVAL_TRACE`·`DOC_LABELS`(R2) / `INDEX_REBUILD`(R4 반사실) / `INDEX_WRITE`(R9 주입).
+- **RagTrace** (`base.py`): 한 질의 결과 표준 자료구조. `from_engine_result`/`to_engine_dict` 로
+  기존 트레이스 dict 와 무손실 상호 변환(`raw` 에 원본 보존).
+- **능력계층(Tier)**: T0(query만) → NORMAL·R7·R9판정·PII유출 / T1(+검색원문·라벨) → R2 완전판 /
+  T2(+build_variant·write_documents) → R4·R9 완전판.
+- **plan_scenario_execution** (`capabilities.py`): 어댑터 능력을 근거로 시나리오별 **run/degrade/skip**
+  을 사유와 함께 판정. R4 는 `INDEX_REBUILD` 없으면 skip, R2/R7 은 권장 능력 없으면 degrade.
+- **BuiltinHaystackAdapter** (`builtin.py`): 우리 Haystack RAG 를 감싸는 첫 참조 구현(전 능력 T2).
+- **CapabilityGatedAdapter** (`gated.py`): 안쪽 어댑터를 감싸 **선언 능력 밖 출력을 차단**한다
+  (RETRIEVAL_TRACE 없으면 검색 원문 제거, SYSTEM_PROMPT 없으면 system_prompt=None, INDEX_* 없으면
+  build_variant/write_documents 차단). → **degrade 가 truthful** 해진다.
+- **R4/R9 내부 이관 완료**: R4 비회원(b=0) 경로가 `_resolve_non_member_adapter` → `build_variant`
+  로 통일(target_doc_id 별 어댑터 캐시). R9 는 `inject_poison(target, keywords)` 로 poison 주입을
+  `write_documents` 경유로 이관(INDEX_WRITE 가드; 우리 builtin 은 파일 기반 사전 주입이라 미사용).
+- **외부 어댑터 주입 경로 완료**: `target` 이 `AttackRunner.create_attack/prepare_queries/run`
+  → 각 시나리오 `__init__(target=...)` → `BaseAttack.target` 까지 관통한다. CLI 는
+  `_resolve_target_adapter` 로 대상을 해석해(전 능력이면 None=기존 경로, 제한 능력이면 게이팅 래퍼)
+  runner 에 주입한다.
+- **CLI 배선**: `cli/main.py:_execute_single_run` 이 인덱스 로드 **이전**에 능력 계획을 계산해
+  skip 이면 단락. skip → `status="skipped"` 결과 저장 + 안내 패널, degrade → 실행하되 사유 명시.
+  `summary["capability_plan"]` 로 리포트에 사유 노출. suite 루프는 skipped 를 실패가 아닌 완료 셀로 집계.
+- **리포트 렌더 완료**: `report/generator.py` 가 시나리오별 `capability_plan` 을 실행 신뢰도 요약에
+  담고, 대시보드 "실험 실행 통계" 표에 **진단 범위** 열(완전판/축소/건너뜀 배지 + 사유 툴팁)을 렌더.
+- **어댑터 레지스트리** (`registry.py`): `config.adapter.type` 으로 대상 RAG 선택(확장점).
+  `register_adapter(name, factory, native_caps)` 로 타입 등록, `create_target_adapter(config, pipeline)`
+  가 인스턴스 생성(builtin+전능력이면 None=기존 경로). `resolve_target_capabilities` 는 계획용 능력 해석.
+  builtin·rest 기본 등록, 미등록 type 은 `AdapterConfigError`.
+- **RestRagAdapter** (`rest.py`): 외부 REST RAG(AnythingLLM 류) 첫 참조 구현. transport 주입식(서버 없이
+  테스트). query→answer+sources 매핑(필드 경로 설정 가능), declare_sensitive/write_documents/system_prompt.
+  `build_variant` 미지원 → R4 자동 skip(라이브 인덱스 반사실 불가).
+- **대상 능력 선언**: `config/default.yaml:adapter` — `type`(builtin/rest) · `capabilities`(좁혀 선언;
+  비움=native) · `inject_poison`(외부 Tier-2 런타임 주입) · rest 연결 설정(base_url 등).
+  `["query"]`(블랙박스) → R4 skip, R2/R7 degrade, NORMAL run.
+- 새 어댑터 붙이는 법 + 설계 논리는 Notion "A-2 BYO-RAG 어댑터 구현 기록" 페이지 §9~§10 참조.
+- 남은 후속: LangChain/LlamaIndex 참조 구현 + 순수 블랙박스 외부 코퍼스 대상 target-doc 선택(현재는
+  외부 어댑터도 target_docs 를 로컬 인덱스에서 가져오는 데모 모델 기준).
+
+### PII 탐지 파이프라인 (pii/) — STEP 0~4
+- **STEP 0**: 변형(전각·호모글리프·자모분리·공백삽입) PII 정규화 (`step0_normalize.py`). 탐지 전에
+  텍스트를 표준 형태로 되돌려 STEP 1/3 이 변형 PII 를 다시 잡게 한다. 정규화된 텍스트에서 탐지한 뒤
+  스팬을 **원문 좌표로 복원**(마스킹·STEP 4 문맥은 원문 기준). 복원된 항목은 finding 의 `recovered=true`
+  로 표시돼 리포트(파이프라인 배너·배지)에 노출된다. `pii.runtime.enable_step0` 로 on/off,
+  `digit_spacing_min_run`(잠정값, 벤치마크로 재산정) 로 숫자 공백 제거 게이트를 제어.
 - **STEP 1**: 정규식으로 구조화 PII 탐지 (전화번호/이메일/주민번호/카드/계좌/면허/사업자 등 12종)
-- **STEP 2**: 체크섬·구조 검증 (주민번호 mod 11, Luhn 알고리즘, 사업자번호 체크 등)
+- **STEP 2**: 체크섬·구조 검증 (주민번호 mod 11, Luhn 알고리즘 등). 체크섬 탈락 항목은 버리지 않고
+  `structurally_matched_unverified`(route A-0) 로 **rejection 채널**에 사유(mod11/luhn)와 함께 보존 →
+  리포트에 "구조 일치·검증 탈락"으로 표시(미탐 오해 방지). 탐지 총계·위험도 집계에는 불포함.
+  `partition_valid()` 가 (valid, rejected) 를 반환하며 `filter_valid()` 는 호환용 얇은 래퍼.
 - **STEP 3**: KPF-BERT NER 로 비구조화 PII 탐지 (이름/주소/직장명 등). `confidence_threshold=0.8`
 - **STEP 4**: GPT-4o-mini sLLM 교차검증 (NER 후보 B-2 만 대상, 비동기 `concurrency=8` 병렬)
 
 ### 탐지 경로 분류 (classifier.py)
 - **A-1**: 정규식 매칭 + 유효성검증 없음 → 즉시 PII 확정
 - **A-2**: 정규식 매칭 + 체크섬 통과 → PII 확정
+- **A-0**: 정규식 매칭 + 체크섬 탈락 → 확정 아님. rejection 채널에 보존해 리포트에만 표시
 - **B-1**: NER 탐지 + F1 높은 항목 → 즉시 PII 확정
 - **B-2**: NER 탐지 + F1 낮은 항목 → sLLM 교차검증 통과 시 PII 확정
 

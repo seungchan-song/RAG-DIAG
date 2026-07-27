@@ -33,6 +33,14 @@ from rag.adapters.capabilities import (
   resolve_capabilities,
 )
 from rag.adapters.gated import CapabilityGatedAdapter, UnsupportedCapabilityError
+from rag.adapters.registry import (
+  AdapterConfigError,
+  available_adapters,
+  create_target_adapter,
+  register_adapter,
+  resolve_target_capabilities,
+)
+from rag.adapters.rest import RestRagAdapter
 
 __all__ = [
   "CAPABILITY_LABELS",
@@ -43,6 +51,12 @@ __all__ = [
   "BuiltinHaystackAdapter",
   "CapabilityGatedAdapter",
   "UnsupportedCapabilityError",
+  "RestRagAdapter",
+  "AdapterConfigError",
+  "available_adapters",
+  "create_target_adapter",
+  "register_adapter",
+  "resolve_target_capabilities",
   "CapabilityPlan",
   "DECISION_DEGRADE",
   "DECISION_RUN",

@@ -1936,29 +1936,15 @@ def _resolve_target_capabilities(config: dict[str, Any]) -> set[Any]:
     돌려주어 CLI 실행 루프가 자동으로 skip/degrade 를 수행한다.
 
     Args:
-      config: 실험 설정 딕셔너리. `adapter.capabilities` 리스트를 읽는다.
+      config: 실험 설정 딕셔너리. `adapter.type` 와 `adapter.capabilities` 를 읽는다.
 
     Returns:
       set[Capability]: 대상 어댑터가 노출하는 능력 집합. query 는 항상 포함된다.
     """
-    from rag.adapters import BuiltinHaystackAdapter, Capability
+    # 능력 해석 로직은 레지스트리(adapters.registry)가 source of truth 다. CLI 는 얇게 위임한다.
+    from rag.adapters.registry import resolve_target_capabilities
 
-    adapter_cfg = config.get("adapter") or {}
-    declared = adapter_cfg.get("capabilities")
-    if not declared:
-        return set(BuiltinHaystackAdapter.capabilities)
-
-    valid = {cap.value: cap for cap in Capability}
-    resolved: set[Any] = set()
-    for name in declared:
-        cap = valid.get(str(name).strip().lower())
-        if cap is None:
-            logger.warning("알 수 없는 adapter capability '{}' 무시(유효: {})", name, list(valid))
-            continue
-        resolved.add(cap)
-    # query 는 어떤 어댑터든 노출해야 하는 최소 필수 능력이므로 항상 포함시킨다.
-    resolved.add(Capability.QUERY)
-    return resolved
+    return resolve_target_capabilities(config)
 
 
 def _resolve_target_adapter(
@@ -1967,23 +1953,31 @@ def _resolve_target_adapter(
     capabilities: set[Any],
 ) -> Any | None:
     """
-    진단 대상 어댑터를 해석해, 능력이 제한된 경우에만 게이팅 래퍼를 씌웁니다.
+    진단 대상 어댑터를 해석해 runner 에 주입할 인스턴스를 만듭니다.
 
-    - 능력이 우리 RAG 전 능력(Tier 2)과 같으면(기본) **None** 을 돌려준다. 그러면 각
-      시나리오가 execute() 에 전달된 파이프라인을 참조 어댑터로 감싸는 기존 경로를
-      그대로 타므로 **완전 비파괴**다.
-    - 능력이 제한 선언되면 참조 어댑터를 `CapabilityGatedAdapter` 로 감싸 돌려준다.
-      선언 능력 밖 정보(검색 원문·system_prompt 등)가 트레이스에서 제거되어 **degrade
-      판정이 실제 진단 결과와 일치(truthful)** 하게 된다.
+    - `adapter.type` 이 builtin(기본)일 때:
+        · 능력이 전 능력이면 **None** 을 돌려준다 → 각 시나리오가 파이프라인을 즉석
+          래핑하는 기존 경로를 타므로 **완전 비파괴**.
+        · 능력이 제한 선언되면 참조 어댑터를 `CapabilityGatedAdapter` 로 감싸 검색 원문·
+          system_prompt 등 능력 밖 정보를 차단한다 → **degrade 가 truthful**.
+    - `adapter.type` 이 외부 타입(예: "rest")일 때: 레지스트리 팩토리로 그 어댑터를 만든다
+      (선언 능력이 native 보다 좁으면 레지스트리가 게이팅까지 처리).
 
     Args:
       config: 실험 설정.
-      pipeline: 우리 RAG 파이프라인(참조 어댑터로 감쌀 대상).
-      capabilities: `_resolve_target_capabilities` 가 해석한 대상 능력 집합.
+      pipeline: 우리 RAG 파이프라인(builtin 어댑터로 감쌀 대상).
+      capabilities: `_resolve_target_capabilities` 가 해석한 대상 능력 집합(builtin 게이팅에 사용).
 
     Returns:
-      TargetRAG | None: 게이팅 어댑터(능력 제한 시) 또는 None(전 능력, 기존 경로).
+      TargetRAG | None: 대상 어댑터 인스턴스 또는 None(builtin 전 능력, 기존 경로).
     """
+    adapter_type = str((config.get("adapter") or {}).get("type") or "builtin").strip().lower()
+    if adapter_type != "builtin":
+        # 외부 어댑터: 레지스트리가 팩토리 생성 + 능력 게이팅을 일괄 처리한다.
+        from rag.adapters.registry import create_target_adapter
+
+        return create_target_adapter(config, pipeline)
+
     from rag.adapters import BuiltinHaystackAdapter, CapabilityGatedAdapter
 
     full_capabilities = set(BuiltinHaystackAdapter.capabilities)

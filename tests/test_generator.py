@@ -12,9 +12,11 @@ import pytest
 
 from rag.generator.generator import (
   ClovaXGenerator,
+  LocalOpenAICompatGenerator,
   MockGenerator,
   create_clova_generator,
   create_generator,
+  create_local_generator,
 )
 
 
@@ -154,3 +156,91 @@ class TestCreateGeneratorDispatch:
     monkeypatch.setenv("NAVER_CLOVA_API_KEY", "nv-test")
     gen = create_generator({})
     assert isinstance(gen, ClovaXGenerator)
+
+  def test_provider_local_uses_local_generator_without_keys(self, monkeypatch):
+    # 로컬 provider 는 Closed API 키 없이도 생성된다(대회 규정 A-1).
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("NAVER_CLOVA_API_KEY", raising=False)
+    gen = create_generator({"generator": {"provider": "local", "local": {"model": "qwen2.5"}}})
+    assert isinstance(gen, LocalOpenAICompatGenerator)
+
+  def test_provider_ollama_alias_maps_to_local(self, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("NAVER_CLOVA_API_KEY", raising=False)
+    assert isinstance(
+      create_generator({"generator": {"provider": "ollama"}}), LocalOpenAICompatGenerator
+    )
+
+
+class TestLocalOpenAICompatGenerator:
+  def test_run_extracts_choice_content_and_builds_openai_body(self):
+    payload = {
+      "choices": [{"message": {"role": "assistant", "content": "로컬 모델 응답"}}],
+      "usage": {"total_tokens": 20},
+    }
+    client = _FakeHttpClient(_FakeResponse(payload))
+    gen = LocalOpenAICompatGenerator(model="qwen2.5", http_client=client)
+
+    output = gen.run(prompt="질문에 답해주세요.")
+
+    assert output["replies"] == ["로컬 모델 응답"]
+    assert output["meta"][0]["provider"] == "local"
+    assert output["meta"][0]["model"] == "qwen2.5"
+
+    url, headers, body = client.calls[0]
+    assert url.endswith("/v1/chat/completions")
+    assert headers["Authorization"] == "Bearer local"
+    assert body["model"] == "qwen2.5"
+    assert body["messages"][-1] == {"role": "user", "content": "질문에 답해주세요."}
+    assert body["stream"] is False
+
+  def test_system_prompt_is_prepended_as_system_message(self):
+    client = _FakeHttpClient(_FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
+    gen = LocalOpenAICompatGenerator(
+      model="m", system_prompt="너는 안전한 비서다.", http_client=client
+    )
+
+    gen.run(prompt="q")
+
+    body = client.calls[0][2]
+    assert body["messages"][0] == {"role": "system", "content": "너는 안전한 비서다."}
+    assert body["messages"][1] == {"role": "user", "content": "q"}
+
+  def test_run_handles_http_error(self):
+    client = _FakeHttpClient(_FakeResponse({"error": "bad"}, status_code=500))
+    gen = LocalOpenAICompatGenerator(model="m", http_client=client)
+
+    output = gen.run(prompt="q")
+
+    assert output["replies"] == [""]
+    assert "error" in output["meta"][0]
+    assert output["meta"][0]["provider"] == "local"
+
+
+class TestCreateLocalGenerator:
+  def test_uses_config_overrides(self, monkeypatch):
+    monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
+    config = {
+      "generator": {
+        "local": {
+          "base_url": "http://vllm:8000/v1",
+          "model": "exaone3.5",
+          "temperature": 0.2,
+          "max_tokens": 128,
+        }
+      }
+    }
+    gen = create_local_generator(config)
+
+    assert isinstance(gen, LocalOpenAICompatGenerator)
+    assert gen.base_url == "http://vllm:8000/v1"
+    assert gen.model == "exaone3.5"
+    assert gen.temperature == 0.2
+    assert gen.max_tokens == 128
+
+  def test_env_overrides_base_url(self, monkeypatch):
+    monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://env-host:9/v1")
+    gen = create_local_generator(
+      {"generator": {"local": {"base_url": "http://cfg/v1", "model": "m"}}}
+    )
+    assert gen.base_url == "http://env-host:9/v1"
