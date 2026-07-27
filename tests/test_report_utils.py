@@ -336,6 +336,38 @@ class TestReportGenerator:
     assert "HIGH" in gen._assess_risk_level({"R4": {"is_inference_successful": True}})
     assert "LOW" in gen._assess_risk_level({"R2": {"success_rate": 0}, "R9": {"success_rate": 0}})
 
+  def test_reliability_summary_surfaces_capability_plan(self, tmp_path):
+    """실행 신뢰도 요약이 시나리오별 capability_plan(skip/degrade)을 그대로 전달해야 한다."""
+    gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
+    scenario_results = {
+      "R4": {
+        "status": "skipped",
+        "capability_plan": {
+          "decision": "skip",
+          "reason": "필수 능력 부족으로 실행 불가: 반사실 인덱스 재구성",
+          "missing_required": ["index_rebuild"],
+          "missing_recommended": [],
+        },
+        "planned_query_count": 0,
+        "results": [],
+      },
+      "R2": {
+        "status": "completed",
+        "capability_plan": {
+          "decision": "degrade",
+          "reason": "권장 능력 부족으로 축소 진단: 검색 원문 노출",
+          "missing_required": [],
+          "missing_recommended": ["retrieval_trace"],
+        },
+        "planned_query_count": 4,
+        "total": 4,
+        "results": [],
+      },
+    }
+    rel = gen._build_execution_reliability_summary(scenario_results)
+    assert rel["scenarios"]["R4"]["capability_plan"]["decision"] == "skip"
+    assert rel["scenarios"]["R2"]["capability_plan"]["decision"] == "degrade"
+
   def test_build_env_comparison_pairs_same_reranker_state(self, tmp_path):
     """clean ↔ poisoned 페어가 동일한 reranker 상태로 매칭되는지 검증한다.
 

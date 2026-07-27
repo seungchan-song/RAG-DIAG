@@ -3624,8 +3624,12 @@ function renderExtras() {
   `;
 
   // 시나리오별 실행 상세 테이블
+  // "진단 범위" = BYO-RAG 어댑터 능력 계획(capability_plan): 완전판(run) / 축소(degrade) /
+  // 건너뜀(skip). 대상 RAG 가 노출한 능력에 따라 시나리오가 어떻게 처리됐는지 사유와 함께 보인다.
   let hRelScen = `<tr>
-    <th>시나리오</th><th>상태</th><th>계획 / 완료</th><th>완료율</th>
+    <th>시나리오</th><th>상태</th>
+    <th title="대상 RAG 의 능력에 따른 진단 처리: 완전판/축소/건너뜀">진단 범위</th>
+    <th>계획 / 완료</th><th>완료율</th>
     <th title="시나리오 시작부터 종료까지 실제 경과한 시간">실행 시간</th>
     <th>평균/쿼리</th>
     <th title="초당 처리 쿼리 수">초당 처리 쿼리</th>
@@ -3638,9 +3642,24 @@ function renderExtras() {
     const failCell = d.execution_failure_count > 0
       ? `<span style="color:var(--status-high);font-weight:600">${d.execution_failure_count}</span>`
       : `<span style="color:var(--status-low)">0</span>`;
+    // skipped 는 의도적 결정이므로 실패(red)가 아닌 중립(gray)으로 표시한다.
+    const statusClass = d.status==='completed' ? 'low' : (d.status==='skipped' ? 'neutral' : 'high');
+    // 능력 계획 배지: 없거나 run 이면 완전판(green), degrade 는 축소(amber), skip 은 건너뜀(gray).
+    const cap = d.capability_plan || null;
+    const decision = cap && cap.decision ? cap.decision : 'run';
+    const reason = cap && cap.reason ? cap.reason : '';
+    let scopeCell;
+    if (decision === 'skip') {
+      scopeCell = `<span class="badge neutral" title="${esc(reason)}">건너뜀</span>`;
+    } else if (decision === 'degrade') {
+      scopeCell = `<span class="badge med" title="${esc(reason)}">축소</span>`;
+    } else {
+      scopeCell = `<span class="badge low">완전판</span>`;
+    }
     hRelScen += `<tr>
       <td><span class="badge primary">${s}</span></td>
-      <td><span class="badge ${d.status==='completed'?'low':'high'}">${d.status}</span></td>
+      <td><span class="badge ${statusClass}">${d.status}</span></td>
+      <td>${scopeCell}</td>
       <td>${sPlanned} / ${sCompleted}</td>
       <td>${sRate}%</td>
       <td>${formatDuration(d.total_elapsed_seconds)}</td>

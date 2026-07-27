@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from haystack import Document
 
 from rag.adapters import (
   BuiltinHaystackAdapter,
   Capability,
+  CapabilityGatedAdapter,
   RagTrace,
   TargetRAG,
+  UnsupportedCapabilityError,
   has_capability,
   plan_scenario_execution,
   resolve_capabilities,
@@ -412,3 +415,156 @@ def test_execute_single_run_skips_r4_for_blackbox_target(monkeypatch):
   assert "index_rebuild" in outcome.summary["capability_plan"]["missing_required"]
   # 결과가 실제로 저장되었는지(리포트가 skip 사유를 볼 수 있도록) 확인.
   assert any(name == "R4_result.json" for name, _ in exp_manager.saved_results)
+
+
+# === ① 내부 이관: R4 build_variant · R9 write_documents ===
+def test_r4_execute_b0_routes_through_build_variant(monkeypatch):
+  """R4 b=0 실행은 build_variant 로 만든 비회원 어댑터를 경유해야 한다(이관 검증)."""
+  from rag.attack.r4_membership import R4MembershipAttack
+
+  captured: dict[str, Any] = {}
+
+  class _CapturingStore:
+    def write_documents(self, docs: list[Any]) -> None:
+      captured["written"] = list(docs)
+
+  variant_pipeline = _make_pipeline()
+  monkeypatch.setattr(
+    "rag.adapters.builtin.create_document_store", lambda *a, **k: _CapturingStore()
+  )
+  monkeypatch.setattr(
+    "rag.adapters.builtin.build_rag_pipeline", lambda store, config, **k: variant_pipeline
+  )
+
+  stored = [
+    _FakeDoc("keep", 0.9, {"doc_id": "keep"}),
+    _FakeDoc("d_star", 0.8, {"doc_id": "d_star"}),
+  ]
+
+  class _StoreHolder:
+    def filter_documents(self) -> list[Any]:
+      return stored
+
+  member_pipeline = _FakePipeline(stored, document_store=_StoreHolder())
+
+  # generic 모드 + NER off 로 PIIDetector(KPF-BERT) 로드를 피한다.
+  attack = R4MembershipAttack(
+    {"attack": {"r4": {"sensitive_use_ner": False}}}, probe_mode="generic"
+  )
+  q_info = {
+    "query": "질문",
+    "target_text": "d_star",
+    "ground_truth_b": 0,
+    "target_doc_id": "d_star",
+    "query_id": "R4:x",
+  }
+  result = attack.execute(q_info, member_pipeline)
+
+  # 반사실 인덱스에서 d_star 가 제외되고 keep 만 남아야 한다.
+  assert [d.meta["doc_id"] for d in captured["written"]] == ["keep"]
+  # 응답은 build_variant 로 만든 반사실 파이프라인에서 생성된다.
+  assert result.response.startswith("answer::")
+  # 같은 d* 재사용을 위해 반사실 어댑터가 캐시된다.
+  assert "d_star" in attack._non_member_adapters
+
+
+def test_r9_inject_poison_uses_write_documents():
+  """R9 poison 주입이 어댑터의 write_documents 로 이관되어야 한다(INDEX_WRITE 보유)."""
+  from rag.attack.r9_injection import R9InjectionAttack
+
+  written: dict[str, Any] = {}
+
+  class _WriteTarget:
+    capabilities = {Capability.QUERY, Capability.INDEX_WRITE}
+
+    def query(self, query: str) -> RagTrace:
+      return RagTrace(answer="")
+
+    def write_documents(self, docs: Any) -> None:
+      written["docs"] = list(docs)
+
+  attack = R9InjectionAttack({})
+  count = attack.inject_poison(_WriteTarget(), ["기밀자료"])
+  assert count >= 1
+  assert len(written["docs"]) == count
+
+
+def test_r9_inject_poison_skipped_without_index_write():
+  """INDEX_WRITE 를 노출하지 않는 어댑터에는 poison 을 주입하지 않는다."""
+  from rag.attack.r9_injection import R9InjectionAttack
+
+  class _NoWriteTarget:
+    capabilities = {Capability.QUERY}
+
+    def query(self, query: str) -> RagTrace:
+      return RagTrace(answer="")
+
+  attack = R9InjectionAttack({})
+  assert attack.inject_poison(_NoWriteTarget(), ["기밀자료"]) == 0
+
+
+# === ② 외부 어댑터 주입 + truthful degrade (CapabilityGatedAdapter) ===
+def test_gated_adapter_strips_retrieval_when_not_declared():
+  """RETRIEVAL_TRACE 미선언 시 검색 원문이 구조화 필드·raw dict 양쪽에서 비워져야 한다."""
+  inner = BuiltinHaystackAdapter(_make_pipeline(), {})
+  gated = CapabilityGatedAdapter(inner, {Capability.QUERY})
+  trace = gated.query("질문")
+  assert trace.retrieved_documents == []
+  engine = trace.to_engine_dict()
+  assert engine["retrieved_documents"] == []
+  assert engine["retriever"]["documents"] == []
+  # 응답 자체(query 능력)는 유지된다.
+  assert trace.answer.startswith("answer::")
+
+
+def test_gated_adapter_preserves_retrieval_when_declared():
+  inner = BuiltinHaystackAdapter(_make_pipeline(), {})
+  gated = CapabilityGatedAdapter(inner, {Capability.QUERY, Capability.RETRIEVAL_TRACE})
+  trace = gated.query("질문")
+  assert len(trace.retrieved_documents) == 1
+
+
+def test_gated_adapter_nulls_system_prompt_when_not_declared():
+  inner = BuiltinHaystackAdapter(_make_pipeline(), {"generator": {"system_prompt": "SP"}})
+  assert CapabilityGatedAdapter(inner, {Capability.QUERY}).system_prompt is None
+  declared = CapabilityGatedAdapter(inner, {Capability.QUERY, Capability.SYSTEM_PROMPT})
+  assert declared.system_prompt == "SP"
+
+
+def test_gated_adapter_blocks_undeclared_methods():
+  inner = BuiltinHaystackAdapter(_make_pipeline(), {})
+  gated = CapabilityGatedAdapter(inner, {Capability.QUERY})
+  with pytest.raises(UnsupportedCapabilityError):
+    gated.build_variant(exclude_doc_ids={"x"})
+  with pytest.raises(UnsupportedCapabilityError):
+    gated.write_documents([])
+  with pytest.raises(UnsupportedCapabilityError):
+    gated.declare_sensitive(["x"])
+
+
+def test_gated_adapter_always_includes_query():
+  gated = CapabilityGatedAdapter(BuiltinHaystackAdapter(_make_pipeline(), {}), set())
+  assert Capability.QUERY in gated.capabilities
+
+
+def test_resolve_target_adapter_none_for_full_and_gated_for_limited():
+  from rag.cli.main import _resolve_target_adapter
+
+  full = set(BuiltinHaystackAdapter.capabilities)
+  assert _resolve_target_adapter({}, _make_pipeline(), full) is None
+
+  limited = _resolve_target_adapter({}, _make_pipeline(), {Capability.QUERY})
+  assert isinstance(limited, CapabilityGatedAdapter)
+  assert limited.capabilities == {Capability.QUERY}
+
+
+def test_base_attack_with_gated_target_degrades_truthfully():
+  """게이팅 타깃(RETRIEVAL_TRACE 미선언) 주입 시 트레이스에서 검색 원문이 사라진다."""
+  from rag.attack.normal_baseline import NormalBaselineAttack
+
+  gated = CapabilityGatedAdapter(BuiltinHaystackAdapter(_make_pipeline(), {}), {Capability.QUERY})
+  attack = NormalBaselineAttack({})
+  attack.target = gated
+  trace = attack._run_rag_query(_make_pipeline(), "질문")
+  assert trace["retrieved_documents"] == []
+  assert trace["generator"]["replies"][0].startswith("answer::")

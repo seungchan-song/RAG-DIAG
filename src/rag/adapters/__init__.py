@@ -32,6 +32,7 @@ from rag.adapters.capabilities import (
   plan_scenario_execution,
   resolve_capabilities,
 )
+from rag.adapters.gated import CapabilityGatedAdapter, UnsupportedCapabilityError
 
 __all__ = [
   "CAPABILITY_LABELS",
@@ -40,6 +41,8 @@ __all__ = [
   "TargetRAG",
   "has_capability",
   "BuiltinHaystackAdapter",
+  "CapabilityGatedAdapter",
+  "UnsupportedCapabilityError",
   "CapabilityPlan",
   "DECISION_DEGRADE",
   "DECISION_RUN",

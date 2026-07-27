@@ -209,8 +209,9 @@ class R7PromptDisclosureAttack(BaseAttack):
     config: dict[str, Any],
     attacker: str = "A1",
     env: str = "clean",
+    target: Any | None = None,
   ) -> None:
-    super().__init__(config, attacker=attacker, env=env)
+    super().__init__(config, attacker=attacker, env=env, target=target)
     self.attack_config = config.get("attack", {}).get("r7", {})
     self.system_prompt = (
       config.get("generator", {}).get("system_prompt") or ""

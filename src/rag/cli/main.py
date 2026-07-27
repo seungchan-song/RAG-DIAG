@@ -1961,6 +1961,43 @@ def _resolve_target_capabilities(config: dict[str, Any]) -> set[Any]:
     return resolved
 
 
+def _resolve_target_adapter(
+    config: dict[str, Any],
+    pipeline: Any,
+    capabilities: set[Any],
+) -> Any | None:
+    """
+    진단 대상 어댑터를 해석해, 능력이 제한된 경우에만 게이팅 래퍼를 씌웁니다.
+
+    - 능력이 우리 RAG 전 능력(Tier 2)과 같으면(기본) **None** 을 돌려준다. 그러면 각
+      시나리오가 execute() 에 전달된 파이프라인을 참조 어댑터로 감싸는 기존 경로를
+      그대로 타므로 **완전 비파괴**다.
+    - 능력이 제한 선언되면 참조 어댑터를 `CapabilityGatedAdapter` 로 감싸 돌려준다.
+      선언 능력 밖 정보(검색 원문·system_prompt 등)가 트레이스에서 제거되어 **degrade
+      판정이 실제 진단 결과와 일치(truthful)** 하게 된다.
+
+    Args:
+      config: 실험 설정.
+      pipeline: 우리 RAG 파이프라인(참조 어댑터로 감쌀 대상).
+      capabilities: `_resolve_target_capabilities` 가 해석한 대상 능력 집합.
+
+    Returns:
+      TargetRAG | None: 게이팅 어댑터(능력 제한 시) 또는 None(전 능력, 기존 경로).
+    """
+    from rag.adapters import BuiltinHaystackAdapter, CapabilityGatedAdapter
+
+    full_capabilities = set(BuiltinHaystackAdapter.capabilities)
+    if capabilities >= full_capabilities:
+        return None
+
+    inner = BuiltinHaystackAdapter(pipeline, config)
+    logger.info(
+        "제한 능력 대상 어댑터로 실행(degrade 반영): 노출 능력 {}",
+        sorted(cap.value for cap in capabilities),
+    )
+    return CapabilityGatedAdapter(inner, capabilities)
+
+
 def _capability_plan_payload(plan: Any) -> dict[str, Any]:
     """
     능력 계획(CapabilityPlan)을 결과 JSON·리포트에 담을 직렬화 dict 로 변환합니다.
@@ -2410,10 +2447,32 @@ def _execute_single_run(
         )
         post_cap_count = len(target_docs)
 
+        # 진단 대상 어댑터를 해석해 공격에 주입한다. 능력이 제한 선언된 경우 게이팅
+        # 어댑터가 씌워져 degrade 가 실제 트레이스에 반영된다(전 능력이면 None → 기존 경로).
+        target_adapter = _resolve_target_adapter(config, rag_pipeline, _target_capabilities)
         runner = AttackRunner(config)
         attack, queries = runner.prepare_queries(
-            scenario, target_docs, attacker=attacker, env=env, probe_mode=probe_mode
+            scenario,
+            target_docs,
+            attacker=attacker,
+            env=env,
+            probe_mode=probe_mode,
+            target=target_adapter,
         )
+        # R9 를 외부 Tier-2 어댑터(INDEX_WRITE 노출)로 진단할 때는, 파일 기반 사전 주입
+        # 대신 poison 을 런타임에 write_documents 로 주입한다. config.adapter.inject_poison
+        # 이 참일 때만 동작하므로 파일 기반 builtin 흐름(기본)은 그대로다(이중 주입 방지).
+        if (
+            scenario.upper() == "R9"
+            and target_adapter is not None
+            and bool((config.get("adapter") or {}).get("inject_poison", False))
+        ):
+            trigger_keywords = [
+                str(doc.get("keyword", ""))
+                for doc in target_docs
+                if doc.get("keyword")
+            ]
+            attack.inject_poison(target_adapter, trigger_keywords)
         evaluator = _create_evaluator(scenario, config)
         planned_query_count = len(queries)
         checkpoint["planned_query_count"] = planned_query_count

@@ -738,6 +738,9 @@ class ReportGenerator:
 
             scenario_summary[scenario] = {
                 "status": data.get("status", "completed"),
+                # BYO-RAG 어댑터 능력 계획(run/degrade/skip + 사유). skip/degrade 셀은
+                # 대시보드에서 배지·사유로 노출해 "왜 안 돌았나/왜 축소됐나" 를 밝힌다.
+                "capability_plan": data.get("capability_plan"),
                 "planned_query_count": planned_query_count,
                 "completed_query_count": completed_query_count,
                 "open_failure_count": open_failure_count,

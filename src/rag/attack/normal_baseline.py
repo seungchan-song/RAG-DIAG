@@ -150,6 +150,7 @@ class NormalBaselineAttack(BaseAttack):
     config: dict[str, Any],
     attacker: str = "A1",
     env: str = "clean",
+    target: Any | None = None,
   ) -> None:
     """
     NORMAL 시나리오를 초기화합니다.
@@ -158,9 +159,10 @@ class NormalBaselineAttack(BaseAttack):
       config: YAML 에서 로드한 설정 딕셔너리. config["attack"]["normal"] 블록을 읽습니다.
       attacker: 인터페이스 호환용. NORMAL 은 실제 공격자가 없으므로 항상 "A1" 로 정규화됩니다.
       env: 항상 "clean" 으로 정규화됩니다. NORMAL 은 clean DB 에서만 의미가 있습니다.
+      target: 진단 대상 어댑터(BYO-RAG). 주입되면 질의가 이 어댑터를 경유한다.
     """
     # 인터페이스 호환을 위해 BaseAttack 초기화에 전달하지만, NORMAL 에서는 항상 고정값 사용.
-    super().__init__(config, attacker=attacker, env=env)
+    super().__init__(config, attacker=attacker, env=env, target=target)
 
     # attacker 가 외부에서 다른 값으로 주어져도 NORMAL 은 A1 으로 강제 (인터페이스 호환용).
     if self.attacker != "A1":
