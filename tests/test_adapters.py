@@ -13,17 +13,35 @@ import pytest
 from haystack import Document
 
 from rag.adapters import (
+  AdapterConfigError,
   BuiltinHaystackAdapter,
   Capability,
   CapabilityGatedAdapter,
   RagTrace,
+  RestRagAdapter,
   TargetRAG,
   UnsupportedCapabilityError,
+  available_adapters,
+  create_target_adapter,
   has_capability,
   plan_scenario_execution,
   resolve_capabilities,
+  resolve_target_capabilities,
 )
 from rag.adapters.capabilities import DECISION_DEGRADE, DECISION_RUN, DECISION_SKIP
+
+
+def _record_transport(response: dict[str, Any]) -> Any:
+  """RestRagAdapter 테스트용: 호출을 기록하고 고정 응답을 돌려주는 transport."""
+
+  calls: list[dict[str, Any]] = []
+
+  def transport(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    calls.append({"url": url, "payload": payload, "headers": headers})
+    return response
+
+  transport.calls = calls  # type: ignore[attr-defined]
+  return transport
 
 
 # === 공통 fake 파이프라인 (run_query 구동용, 모델 로드 없음) ===
@@ -568,3 +586,79 @@ def test_base_attack_with_gated_target_degrades_truthfully():
   trace = attack._run_rag_query(_make_pipeline(), "질문")
   assert trace["retrieved_documents"] == []
   assert trace["generator"]["replies"][0].startswith("answer::")
+
+
+# === ④ 어댑터 레지스트리 (config.adapter.type) ===
+def test_registry_lists_builtin_and_rest():
+  names = available_adapters()
+  assert "builtin" in names
+  assert "rest" in names
+
+
+def test_resolve_target_capabilities_for_rest_type():
+  # rest native 는 검색 원문은 있지만 반사실 재구성(INDEX_REBUILD)은 없다.
+  caps = resolve_target_capabilities({"adapter": {"type": "rest", "base_url": "http://x"}})
+  assert Capability.RETRIEVAL_TRACE in caps
+  assert Capability.INDEX_REBUILD not in caps
+  # 선언은 native 를 넘을 수 없다(교집합) → index_rebuild 는 걸러진다.
+  narrowed = resolve_target_capabilities(
+    {"adapter": {"type": "rest", "capabilities": ["query", "index_rebuild"]}}
+  )
+  assert narrowed == {Capability.QUERY}
+
+
+def test_create_target_adapter_builtin_rest_and_unknown():
+  # builtin + 전 능력 → None(기존 경로).
+  assert create_target_adapter({}, _make_pipeline()) is None
+  # rest → RestRagAdapter 인스턴스.
+  rest = create_target_adapter({"adapter": {"type": "rest", "base_url": "http://x"}}, None)
+  assert isinstance(rest, RestRagAdapter)
+  # 미등록 type → 명확한 에러.
+  with pytest.raises(AdapterConfigError):
+    create_target_adapter({"adapter": {"type": "does-not-exist"}}, None)
+
+
+def test_create_target_adapter_gates_rest_with_limited_caps():
+  gated = create_target_adapter(
+    {"adapter": {"type": "rest", "base_url": "http://x", "capabilities": ["query"]}}, None
+  )
+  assert isinstance(gated, CapabilityGatedAdapter)
+  assert gated.capabilities == {Capability.QUERY}
+
+
+# === ⑤ RestRagAdapter 참조 외부 어댑터 ===
+def test_rest_adapter_query_parses_answer_and_sources():
+  transport = _record_transport(
+    {"textResponse": "유출된 답변", "sources": [{"text": "민감 원문", "score": 0.9, "title": "d1"}]}
+  )
+  adapter = RestRagAdapter(base_url="http://x", workspace="ws", api_key="k", transport=transport)
+  trace = adapter.query("질문")
+  assert trace.answer == "유출된 답변"
+  assert len(trace.retrieved_documents) == 1
+  assert trace.retrieved_documents[0]["content"] == "민감 원문"
+  assert trace.retrieved_documents[0]["score"] == 0.9
+  # workspace 치환 + Bearer 헤더 + message 페이로드 확인.
+  assert transport.calls[0]["url"].endswith("/api/v1/workspace/ws/chat")
+  assert transport.calls[0]["payload"]["message"] == "질문"
+  assert transport.calls[0]["headers"]["Authorization"] == "Bearer k"
+
+
+def test_rest_adapter_lacks_index_rebuild_so_r4_skips():
+  adapter = RestRagAdapter(base_url="http://x")
+  assert Capability.INDEX_REBUILD not in adapter.capabilities
+  assert plan_scenario_execution(adapter, "R4").decision == DECISION_SKIP
+  assert plan_scenario_execution(adapter, "NORMAL").decision == DECISION_RUN
+
+
+def test_rest_adapter_from_config_requires_base_url():
+  with pytest.raises(AdapterConfigError):
+    RestRagAdapter.from_config({"adapter": {"type": "rest"}})
+
+
+def test_rest_adapter_write_documents_posts_each():
+  transport = _record_transport({"ok": True})
+  adapter = RestRagAdapter(base_url="http://x", transport=transport)
+  count = adapter.write_documents([{"content": "poison", "doc_id": "p1"}])
+  assert count == 1
+  assert transport.calls[0]["url"].endswith("/api/v1/document/upload")
+  assert transport.calls[0]["payload"]["name"] == "p1"

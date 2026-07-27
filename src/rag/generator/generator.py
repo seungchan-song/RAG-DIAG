@@ -83,10 +83,12 @@ def create_generator(config: dict[str, Any]) -> Any:
   설정과 환경에 맞는 Generator를 자동으로 선택하여 생성합니다.
 
   선택 우선순위:
-    1) config["generator"]["provider"] 가 "clova"  → HyperCLOVA X 생성기
-    2) config["generator"]["provider"] 가 "openai" → OpenAI 생성기 (기본값)
-    3) provider 가 "auto" 또는 미지정이면 환경변수에 따라 자동 선택
-    4) 어떤 API 키도 없으면 MockGenerator
+    1) config["generator"]["provider"] 가 "local"/"ollama"/"vllm" → 로컬 오픈웨이트 생성기
+       (대회 규정 A-1: Closed API 0건. 로컬 서버 호출이라 API 키 불필요)
+    2) config["generator"]["provider"] 가 "clova"  → HyperCLOVA X 생성기 (Closed API)
+    3) config["generator"]["provider"] 가 "openai" → OpenAI 생성기 (Closed API)
+    4) provider 가 "auto" 또는 미지정이면 환경변수에 따라 자동 선택
+    5) 어떤 API 키도 없으면 MockGenerator
 
   config["generator"]["system_prompt"] 가 설정되어 있으면
   각 생성기에 페르소나/방어 지시문으로 전달됩니다.
@@ -107,6 +109,11 @@ def create_generator(config: dict[str, Any]) -> Any:
       len(system_prompt),
       provider,
     )
+
+  # 로컬 오픈웨이트 모델(대회 규정 A-1). 로컬 서버 호출이므로 API 키가 필요 없고,
+  # 서버가 꺼져 있어도 생성은 성공한 뒤 run() 에서 오류 메타로 안전 처리된다.
+  if provider in {"local", "ollama", "vllm", "local_openai", "openai_compat"}:
+    return create_local_generator(config, system_prompt=system_prompt)
 
   if provider == "clova":
     if os.getenv("NAVER_CLOVA_API_KEY"):
@@ -323,6 +330,197 @@ class ClovaXGenerator:
         "replies": [""],
         "meta": [{"model": self.model, "provider": "clova", "error": str(exc)}],
       }
+
+
+@component
+class LocalOpenAICompatGenerator:
+  """
+  로컬 오픈웨이트 모델을 호출하는 Haystack 컴포넌트입니다 (대회 규정 A-1).
+
+  대회 규정상 Closed API 호출(GPT-4o-mini / HCX-DASH-002)은 0건이어야 한다. Ollama ·
+  vLLM · LM Studio · llama.cpp server · TGI 등 대부분의 로컬 추론 서버는 **OpenAI 호환
+  chat-completions 엔드포인트**(`/v1/chat/completions`)를 노출하므로, base_url 만 로컬
+  서버로 두면 이 한 컴포넌트로 어떤 로컬 오픈웨이트 모델(EXAONE · Qwen2.5 · Gemma 등)이든
+  붙일 수 있고 외부 API 호출이 전혀 없다.
+
+  ClovaXGenerator 와 동일하게 HTTP 호출을 ``http_client`` 로 주입할 수 있어, 로컬 서버나
+  GPU 없이도 요청 구성·응답 파싱을 단위 테스트할 수 있다(주입하지 않으면 requests 사용).
+
+  응답은 OpenAIGenerator 와 동일한 ``{"replies": [...], "meta": [...]}`` 형식으로 반환한다.
+  """
+
+  def __init__(
+    self,
+    *,
+    model: str,
+    base_url: str = "http://localhost:11434/v1",
+    api_key: str = "local",
+    temperature: float = 0.1,
+    max_tokens: int = 1024,
+    top_p: float = 0.8,
+    timeout: float = 60.0,
+    system_prompt: str | None = None,
+    http_client: Any | None = None,
+  ) -> None:
+    """
+    Args:
+      model: 로컬 서버에 로드된 모델 이름(예: "qwen2.5", "exaone3.5", "gemma2").
+      base_url: OpenAI 호환 베이스 URL. Ollama 기본값은 http://localhost:11434/v1,
+                vLLM 은 보통 http://localhost:8000/v1.
+      api_key: 로컬 서버는 보통 키를 검사하지 않으므로 임의값("local")이면 충분하다.
+      temperature / max_tokens / top_p: 생성 파라미터.
+      timeout: 요청 타임아웃(로컬 CPU 추론은 느릴 수 있어 기본 60초).
+      system_prompt: system 역할 메시지로 전달할 페르소나/방어 지시문.
+      http_client: (테스트용) .post(url, headers=, json=, timeout=) 를 가진 객체.
+    """
+    self.model = model
+    self.base_url = base_url.rstrip("/")
+    self.api_key = api_key or "local"
+    self.temperature = float(temperature)
+    self.max_tokens = int(max_tokens)
+    self.top_p = float(top_p)
+    self.timeout = float(timeout)
+    self.system_prompt = system_prompt or None
+    self._http_client = http_client
+
+  def _resolve_endpoint(self) -> str:
+    """베이스 URL 에서 chat-completions 엔드포인트 경로를 구성합니다.
+
+    base_url 에 이미 chat/completions 가 포함되어 있으면 그대로 사용한다.
+    """
+    if "chat/completions" in self.base_url:
+      return self.base_url
+    return f"{self.base_url}/chat/completions"
+
+  def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> Any:
+    if self._http_client is not None:
+      return self._http_client.post(url, headers=headers, json=body, timeout=self.timeout)
+    import requests  # 지연 import: 테스트 환경에서 의존성 회피
+
+    return requests.post(url, headers=headers, json=body, timeout=self.timeout)
+
+  @staticmethod
+  def _extract_reply(payload: dict[str, Any]) -> str:
+    """OpenAI 호환 응답 payload 에서 assistant 메시지 본문을 추출합니다."""
+    choices = payload.get("choices") or []
+    if choices:
+      message = choices[0].get("message") or {}
+      content = message.get("content")
+      if isinstance(content, str) and content:
+        return content
+      # 일부 서버는 completions 스타일 text 필드를 쓴다.
+      text = choices[0].get("text")
+      if isinstance(text, str) and text:
+        return text
+    return ""
+
+  @component.output_types(replies=list[str], meta=list[dict])
+  def run(self, prompt: str) -> dict[str, Any]:
+    url = self._resolve_endpoint()
+    headers = {
+      "Authorization": f"Bearer {self.api_key}",
+      "Content-Type": "application/json",
+    }
+    messages: list[dict[str, str]] = []
+    if self.system_prompt:
+      messages.append({"role": "system", "content": self.system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    body: dict[str, Any] = {
+      "model": self.model,
+      "messages": messages,
+      "temperature": self.temperature,
+      "max_tokens": self.max_tokens,
+      "top_p": self.top_p,
+      "stream": False,
+    }
+
+    try:
+      response = self._post(url, headers=headers, body=body)
+      status = getattr(response, "status_code", 200)
+      if status >= 400:
+        raw = getattr(response, "text", str(response))
+        logger.error("로컬 LLM 호출 실패 status={} body={}", status, raw[:200])
+        return {
+          "replies": [""],
+          "meta": [{"model": self.model, "provider": "local", "error": f"HTTP {status}"}],
+        }
+      payload = response.json() if hasattr(response, "json") else {}
+      if isinstance(payload, str):
+        payload = json.loads(payload)
+      reply = self._extract_reply(payload or {})
+      meta = {
+        "model": self.model,
+        "provider": "local",
+        "base_url": self.base_url,
+        "usage": (payload or {}).get("usage", {}),
+      }
+      return {"replies": [reply], "meta": [meta]}
+    except Exception as exc:  # noqa: BLE001 - 외부/로컬 호출 보호
+      logger.error("로컬 LLM 예외: {}", exc)
+      return {
+        "replies": [""],
+        "meta": [{"model": self.model, "provider": "local", "error": str(exc)}],
+      }
+
+
+def create_local_generator(
+  config: dict[str, Any],
+  *,
+  system_prompt: str | None = None,
+) -> Any:
+  """
+  로컬 오픈웨이트 모델(OpenAI 호환 엔드포인트) 기반 Generator 를 생성합니다 (A-1).
+
+  Closed API 키가 필요 없다(로컬 서버 호출). 서버 주소는 환경변수 ``LOCAL_LLM_BASE_URL``
+  또는 ``config["generator"]["local"]["base_url"]`` 로 지정한다. 서버가 떠 있지 않으면
+  생성 자체는 성공하고, run() 호출 시점에 오류 메타로 안전하게 처리된다(ClovaX 와 동일).
+
+  Args:
+    config: YAML 설정 딕셔너리. ``config["generator"]["local"]`` 아래 값을 사용.
+    system_prompt: system 메시지로 전달할 페르소나/방어 지시문.
+
+  Returns:
+    LocalOpenAICompatGenerator: 로컬 모델 호출 컴포넌트.
+
+  설정 예시 (config/default.yaml):
+    generator:
+      provider: "local"
+      local:
+        base_url: "http://localhost:11434/v1"   # Ollama 기본
+        model: "qwen2.5"
+        temperature: 0.1
+        max_tokens: 1024
+  """
+  gen_config = (config.get("generator", {}) or {}).get("local", {}) or {}
+  base_url = os.getenv("LOCAL_LLM_BASE_URL") or gen_config.get(
+    "base_url", "http://localhost:11434/v1"
+  )
+  api_key = os.getenv("LOCAL_LLM_API_KEY") or gen_config.get("api_key", "local")
+  model = gen_config.get("model", "qwen2.5")
+  temperature = gen_config.get("temperature", 0.1)
+  max_tokens = gen_config.get("max_tokens", 1024)
+  top_p = gen_config.get("top_p", 0.8)
+  timeout = gen_config.get("timeout", 60.0)
+
+  generator = LocalOpenAICompatGenerator(
+    model=model,
+    base_url=base_url,
+    api_key=api_key,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    top_p=top_p,
+    timeout=timeout,
+    system_prompt=system_prompt,
+  )
+
+  logger.debug(
+    "로컬 Generator 생성 완료 (모델: {}, base_url: {}, system_prompt={})",
+    model,
+    base_url,
+    "있음" if system_prompt else "없음",
+  )
+  return generator
 
 
 def create_clova_generator(
