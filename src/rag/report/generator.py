@@ -2366,6 +2366,12 @@ class ReportGenerator:
 
         def _is_success(result: dict[str, Any]) -> bool:
             # R2/R9 는 success, R4 는 is_member_hit 가 성공 신호.
+            # NORMAL 은 공격이 아니라 대조군이라 success 가 항상 False 다. 대신
+            # '개인정보가 실제로 노출된 응답'을 우선 표본으로 삼아야 리포트에서
+            # 기준선을 보여줄 수 있으므로, PII 탐지 여부를 성공 신호로 대체한다.
+            if scenario_upper == "NORMAL":
+                pii = result.get("pii_summary") or {}
+                return int(pii.get("total") or 0) > 0
             return bool(result.get("success") or result.get("is_member_hit"))
 
         # --- 1) 셀별 성공/실패 버킷 구성 ----------------------------------
@@ -2429,6 +2435,10 @@ class ReportGenerator:
             successes = cell_success.get(key, [])
             fails = cell_fail.get(key, [])
             take_success = min(len(successes), quota)
+            # 성공이 quota 를 다 채우면 표본이 '성공만' 남아 대조가 사라진다.
+            # 리포트는 성공/실패를 나란히 보여줘야 하므로 실패 슬롯을 최소 1개 남긴다.
+            if fails and take_success == quota and quota >= 2:
+                take_success = quota - 1
             take_fail = min(len(fails), quota - take_success)
             sampled.extend(successes[:take_success])
             sampled.extend(fails[:take_fail])
