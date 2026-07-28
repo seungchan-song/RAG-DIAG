@@ -84,20 +84,81 @@ class TestThesis:
     assert nar["thesis"] == {}
 
 
-class TestConfigFix:
-  def test_scenarios_with_success_get_copy_paste_config(self):
+class TestDefenseActions:
+  """방어 조치는 '계층 + 근거의 성격(실측/미검증)'을 반드시 갖춰야 한다."""
+
+  def test_successful_scenarios_get_layered_actions(self):
     nar = build_report_narrative(_summary())
     by = {f["scenario"]: f for f in nar["findings"]}
-    # 성공(some/high)한 시나리오는 복붙용 방어 설정을 갖는다.
-    assert by["R2"]["config_fix"]
-    assert "system_prompt" in by["R2"]["config_fix"]
-    assert by["R9"]["config_fix"]
+    for scen in ("R2", "R4", "R9"):
+      actions = by[scen]["actions"]
+      assert actions, f"{scen} 에 방어 조치가 비어 있다"
+      for a in actions:
+        assert a["layer"]  # 어느 계층을 손대는지 항상 밝힌다
+        assert a["kind"] in {"verified", "warning", "advice", "maintain"}
+        assert a["title"] and a["detail"]
+    # 하위호환 필드(remediation)는 조치 제목 리스트여야 한다.
+    assert by["R2"]["remediation"] == [a["title"] for a in by["R2"]["actions"]]
 
-  def test_none_band_has_no_config_fix(self):
+  def test_none_band_switches_to_maintain(self):
     s = _summary()
-    # R2 성공을 0 으로 만들어 band=none → 조치 불필요.
+    # R2 성공을 0 으로 만들어 band=none → '고치세요'가 아니라 '유지·재진단'.
     s["scenario_results"]["R2"]["success_rate"] = 0
     s["scenario_results"]["R2"]["success_count"] = 0
     nar = build_report_narrative(s)
     r2 = next(f for f in nar["findings"] if f["scenario"] == "R2")
-    assert r2["config_fix"] == ""
+    assert [a["kind"] for a in r2["actions"]] == ["maintain"]
+
+
+def _summary_with_reranker() -> dict:
+  """리랭커 OFF→ON 실측이 포함된 요약(R2 는 개선, R4 는 악화된 실제 형태)."""
+  s = _summary()
+  s["reranker_on_off_comparison"] = {
+    "R2": {
+      "matched_query_count": 240, "base_success_count": 17, "paired_success_count": 7,
+      "base_pii_total": 257, "paired_pii_total": 151,
+    },
+    "R4": {
+      "matched_query_count": 100, "base_success_count": 35, "paired_success_count": 42,
+      "base_pii_total": 133, "paired_pii_total": 138,
+    },
+  }
+  return s
+
+
+class TestMeasuredEvidence:
+  """리랭커 실측이 있으면 조치에 '측정된 효과'가 근거로 붙어야 한다."""
+
+  def test_improving_scenario_gets_verified_action_first(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    r2 = next(f for f in nar["findings"] if f["scenario"] == "R2")
+    first = r2["actions"][0]
+    assert first["kind"] == "verified"
+    assert "17건 → 7건" in first["measured"][0]
+    assert "59% 감소" in first["measured"][0]
+    # 다른 시나리오(R4)가 악화됐으므로 트레이드오프를 숨기지 않는다.
+    assert "멤버십 추론" in first["caveat"]
+
+  def test_worsening_scenario_is_reported_as_warning(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    r4 = next(f for f in nar["findings"] if f["scenario"] == "R4")
+    first = r4["actions"][0]
+    assert first["kind"] == "warning"
+    assert "35건 → 42건" in first["measured"][0]
+
+  def test_scenario_without_measurement_has_no_measured_lines(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    r9 = next(f for f in nar["findings"] if f["scenario"] == "R9")
+    # R9 는 비교 데이터가 없으므로 전부 '미검증 권고'여야 한다.
+    assert all(a["kind"] == "advice" for a in r9["actions"])
+    assert all(not a["measured"] for a in r9["actions"])
+
+  def test_defense_effects_exposed_for_report_section(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    eff = nar["defense_effects"]
+    assert eff["R2"]["direction"] == "improve"
+    assert eff["R4"]["direction"] == "worsen"
+
+  def test_no_comparison_data_yields_empty_effects(self):
+    nar = build_report_narrative(_summary())
+    assert nar["defense_effects"] == {}
