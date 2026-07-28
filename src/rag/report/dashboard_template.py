@@ -54,6 +54,8 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,"Segoe UI",Roboto,sans-serif;
   font-size:16px; line-height:1.65; -webkit-font-smoothing:antialiased;
   font-variant-numeric:tabular-nums;
+  /* 한글은 어절(단어) 단위로만 줄바꿈하고, 아주 긴 URL·ID 만 강제로 끊는다. */
+  word-break:keep-all; overflow-wrap:break-word;
 }
 .num{font-variant-numeric:tabular-nums}
 a{color:var(--brand); text-decoration:none}
@@ -66,7 +68,7 @@ h1,h2,h3{line-height:1.3; margin:0}
   backdrop-filter:blur(8px); border-bottom:1px solid var(--border);
 }
 .topbar-inner{max-width:var(--maxw); margin:0 auto; padding:10px 24px; display:flex; align-items:center; gap:16px}
-.brand{display:flex; align-items:center; gap:8px; font-weight:700; color:var(--text)}
+.brand{display:flex; align-items:center; gap:8px; font-weight:700; color:var(--text); white-space:nowrap}
 .brand .ic{color:var(--brand); width:20px; height:20px}
 .topnav{display:flex; gap:4px; margin-left:auto; flex-wrap:wrap}
 .topnav a{padding:5px 10px; border-radius:999px; color:var(--text-muted); font-size:13.5px; font-weight:500}
@@ -180,6 +182,24 @@ svg.chart .base{fill:var(--text-muted); opacity:.5}
 .fix li{margin:5px 0}
 .fix.clean{border-color:color-mix(in srgb,var(--low) 25%,var(--border))}
 
+/* 시나리오 카드 확장: 대조군 차분 배지 · 복붙 방어 설정 · 세부 분해 */
+.badge.delta{color:var(--brand); background:var(--brand-soft)}
+.scen-extra{padding:0 24px 22px; display:flex; flex-direction:column; gap:14px}
+.cfgfix{border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden}
+.cfgfix .fh{display:flex; align-items:center; gap:8px; font-weight:700; font-size:13.5px; padding:10px 14px; background:var(--surface-2); border-bottom:1px solid var(--border)}
+.cfgfix .copy-btn{margin-left:auto; font:inherit; font-size:12.5px; font-weight:600; padding:4px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--brand); cursor:pointer}
+.cfgfix .copy-btn:hover{border-color:var(--brand)}
+.cfgfix pre.mono{margin:0; border-radius:0; background:var(--bg); overflow-x:auto}
+details.sub{border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg)}
+details.sub>summary{cursor:pointer; list-style:none; padding:11px 14px; font-weight:600; font-size:13.5px; color:var(--text-muted); display:flex; align-items:center; gap:8px}
+details.sub>summary::-webkit-details-marker{display:none}
+details.sub>summary:hover{color:var(--brand)}
+details.sub>summary .chev{margin-left:auto; transition:transform .2s}
+details.sub[open]>summary .chev{transform:rotate(180deg)}
+.sub-body{padding:0 14px 12px}
+.sub-body .cap{margin:2px 0 8px}
+.sub-body table.tbl{margin:0}
+
 /* 부록 */
 details.appx{border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); margin-bottom:12px; overflow:hidden}
 details.appx>summary{cursor:pointer; list-style:none; padding:16px 20px; font-weight:700; display:flex; align-items:center; gap:10px}
@@ -198,9 +218,9 @@ table.tbl td.num,table.tbl th.num{text-align:right; font-variant-numeric:tabular
 .interp-line .ic{color:var(--brand); margin-top:3px}
 .case{border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px 14px; margin:10px 0; background:var(--bg)}
 .case .q{font-weight:600; font-size:14px}
-.case .a{color:var(--text-muted); font-size:13.5px; margin-top:6px; white-space:pre-wrap; word-break:break-word}
+.case .a{color:var(--text-muted); font-size:13.5px; margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere}
 .case .tags{margin-top:8px; display:flex; gap:6px; flex-wrap:wrap}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; white-space:pre-wrap; word-break:break-word; background:var(--surface-2); border-radius:var(--radius-sm); padding:12px 14px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--surface-2); border-radius:var(--radius-sm); padding:12px 14px}
 .mono.leak{border:1px solid color-mix(in srgb,var(--high) 30%,var(--border))}
 .mono.real{border:1px solid color-mix(in srgb,var(--low) 30%,var(--border))}
 
@@ -232,6 +252,7 @@ footer{max-width:var(--maxw); margin:40px auto 0; padding:22px 24px 40px; border
 <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
 <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></symbol>
 <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
 </defs></svg>
 
 <header class="topbar">
@@ -314,6 +335,15 @@ const el = id => document.getElementById(id);
 const esc = s => { const d=document.createElement("div"); d.textContent = (s==null?"":String(s)); return d.innerHTML; };
 const pct = (v,d=0) => (Number(v||0)*100).toFixed(d)+"%";
 const num = v => Number(v||0).toLocaleString("ko-KR");
+// 초 → "N시간 M분" / "M분 S초" / "S초" 사람이 읽는 소요 시간.
+function formatDuration(sec){
+  sec = Math.round(Number(sec||0));
+  if(sec<=0) return "-";
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  if(h>0) return h+"시간 "+m+"분";
+  if(m>0) return m+"분 "+s+"초";
+  return s+"초";
+}
 
 const SEV = {
   high:{label:"위험", icon:"i-octagon"},
@@ -323,11 +353,19 @@ const SEV = {
 const SCEN_NAME = {NORMAL:"대조군(일반 질의)", R2:"검색 데이터 유출", R4:"멤버십 추론", R7:"시스템 프롬프트 노출", R9:"간접 프롬프트 주입"};
 const R7CAT = {role:"역할 규칙", context_bound:"근거 한정", pii_block:"PII 차단", instruction_hierarchy:"명령 위계"};
 const TAG_KO = {
-  QT_RRN:"주민등록번호", QT_PHONE:"전화번호", QT_MOBILE:"휴대전화", QT_EMAIL:"이메일", TMI_EMAIL:"이메일",
+  // 정형 PII 태그(QT_*) 및 NER 태그
+  QT_RRN:"주민등록번호", QT_PHONE:"전화번호", QT_MOBILE:"휴대전화", QT_EMAIL:"이메일",
   QT_CARD:"카드번호", QT_ACCOUNT:"계좌번호", QT_ADDR:"주소", QT_IP:"IP 주소", QT_PASSPORT:"여권번호",
-  QT_LICENSE:"운전면허", QT_DL:"운전면허", QT_BIZ:"사업자번호", QT_FOREIGN:"외국인등록번호",
+  QT_LICENSE:"운전면허", QT_DL:"운전면허", QT_DRIVER:"운전면허", QT_BIZ:"사업자번호",
+  QT_FOREIGN:"외국인등록번호", QT_ARN:"외국인등록번호", QT_AGE:"나이", QT_CAR:"차량번호",
+  // 비정형/맥락 PII(TMI_*)
+  TMI_EMAIL:"이메일", TMI_OCCUPATION:"직업·직장", TMI_SITE:"사이트·계정",
   PS_NAME:"이름", PS_POSITION:"직위", PS_ORG:"소속",
   PER:"이름", LOC:"주소·장소", ORG:"기관·소속", DAT:"날짜", TIM:"시간", AFW:"작품·제품명",
+  // R2/R4 식별자 카테고리(소문자)
+  rrn:"주민등록번호", mobile:"휴대전화", email:"이메일", credit_card:"카드번호",
+  bank_account:"계좌번호", passport:"여권번호", driver_license:"운전면허", vehicle:"차량",
+  person_name:"이름", organization:"기관·소속", synth_id:"합성 식별자", generic:"일반",
 };
 const tagKo = t => TAG_KO[t] || t;
 
@@ -410,6 +448,10 @@ function renderHead(){
     const failed=Number(exec.open_failure_count||0);
     chips.push('<span class="meta-chip '+(failed?'':'ok')+'"><svg class="ic"><use href="#i-check"/></svg>'
       +num(exec.completed_query_count)+' 질의 완료 · 실패 '+num(failed)+'</span>');
+  }
+  const totalSec=Number(exec.total_elapsed_seconds||exec.wall_clock_seconds||0);
+  if(totalSec>0){
+    chips.push('<span class="meta-chip"><svg class="ic"><use href="#i-clock"/></svg>총 소요 <b>'+formatDuration(totalSec)+'</b></span>');
   }
   el("metaRow").innerHTML=chips.join("");
 }
@@ -523,6 +565,44 @@ function renderMetrics(f,s){
       +'<div class="mread">'+esc(f.readouts[k])+'</div></div>';
   }).join("")+'</div>';
 }
+// 대조군(NORMAL) 대비 이 공격이 추가로 만든 PII 노출량 배지(R2·R4 만 존재).
+function deltaBadge(scen){
+  const c=((DATA.summary||{}).normal_vs_attack_pii_comparison||{})[scen];
+  if(!c) return "";
+  const dt=Number(c.pii_delta_total||0), ratio=Number(c.pii_total_ratio||0);
+  if(dt<=0 && ratio<=0) return "";
+  return '<span class="badge delta" title="공격이 대조군(일반 질의)보다 추가로 만든 PII 노출량">대조군 대비 +'
+    +num(dt)+'건'+(ratio>0?' · '+ratio.toFixed(1)+'배':'')+'</span>';
+}
+// 시나리오별 세부 분해 dict 를 (라벨·시도·성공·성공률) 공통 행으로 정규화.
+function normalizeBreakdown(obj){
+  return Object.keys(obj||{}).map(k=>{
+    const v=obj[k]||{};
+    const total=Number(v.total!=null?v.total:(v.total_pairs||0));
+    const success=Number(v.success_count!=null?v.success_count:(v.success||0));
+    let rate=v.success_rate!=null?Number(v.success_rate):(v.rate!=null?Number(v.rate):(total?success/total:0));
+    return {k, total, success, rate};
+  }).filter(r=>r.total>0).sort((a,b)=>(b.rate-a.rate)||(b.success-a.success));
+}
+// 공격 고유 분해(접이식): R2/R4 식별자 카테고리 · R7 페이로드 타입 · R9 트리거.
+function breakdown(scen, s){
+  const cfg={
+    R2:{obj:s.by_identifier_category, title:"식별자 카테고리별 성공률", cap:"어떤 종류의 식별자를 미끼로 썼을 때 더 잘 뚫렸는지", c0:"카테고리"},
+    R4:{obj:s.by_identifier_category, title:"식별자 카테고리별 성공률", cap:"어떤 식별자의 DB 존재 여부가 더 잘 드러났는지", c0:"카테고리"},
+    R7:{obj:s.by_payload_type, title:"페이로드 타입별 성공률", cap:"어떤 공격 프롬프트 유형이 시스템 프롬프트를 끌어냈는지", c0:"페이로드"},
+    R9:{obj:s.by_trigger, title:"트리거별 발동률", cap:"어떤 트리거 토큰이 악성 문서를 활성화했는지", c0:"트리거"},
+  }[scen];
+  if(!cfg||!cfg.obj) return "";
+  const all=normalizeBreakdown(cfg.obj);
+  const rows=all.slice(0,8);
+  if(!rows.length) return "";
+  const body=rows.map(r=>'<tr><td>'+esc(r.k)+'</td><td class="num">'+num(r.total)+'</td><td class="num">'+num(r.success)+'</td><td class="num">'+pct(r.rate,1)+'</td></tr>').join("");
+  const more=all.length>8?'<p class="cap">성공률 상위 8개만 표시 (총 '+all.length+'개).</p>':"";
+  return '<details class="sub"><summary><svg class="ic"><use href="#i-chart"/></svg>공격 세부 분해 더보기 — '+esc(cfg.title)
+    +'<svg class="ic chev"><use href="#i-chevron"/></svg></summary>'
+    +'<div class="sub-body"><p class="cap">'+esc(cfg.cap)+'</p>'
+    +'<table class="tbl"><thead><tr><th>'+esc(cfg.c0)+'</th><th class="num">시도</th><th class="num">성공</th><th class="num">성공률</th></tr></thead><tbody>'+body+'</tbody></table>'+more+'</div></details>';
+}
 function renderScenDetails(){
   const html=attackFindings().map(f=>{
     const s=((DATA.summary||{}).scenario_results||{})[f.scenario]||{};
@@ -536,10 +616,18 @@ function renderScenDetails(){
       const clean=(f.severity==="low");
       fix='<div class="fix'+(clean?" clean":"")+'"><div class="fh"><svg class="ic"><use href="#i-wrench"/></svg>'+(clean?"유지·재진단":"이렇게 고치세요")+'</div><ul>'+f.remediation.map(r=>"<li>"+esc(r)+"</li>").join("")+'</ul></div>';
     }
+    // 확장: 복붙 방어 설정 + 공격 세부 분해(있을 때만 scen-extra 렌더).
+    let cfg="";
+    if(f.config_fix){
+      cfg='<div class="cfgfix"><div class="fh"><svg class="ic"><use href="#i-wrench"/></svg>복사해 적용할 방어 설정'
+        +'<button class="copy-btn" type="button">복사</button></div><pre class="mono">'+esc(f.config_fix)+'</pre></div>';
+    }
+    const bd=breakdown(f.scenario, s);
+    const extra=(cfg||bd)?('<div class="scen-extra">'+cfg+bd+'</div>'):"";
     return '<div class="scen" id="detail-'+f.scenario+'">'
       +'<div class="scen-top">'
       +'<div class="row1"><span class="badge '+f.severity+'"><svg class="ic"><use href="#i-'+SEV[f.severity].icon.replace("i-","")+'"/></svg>'+SEV[f.severity].label+'</span>'
-      +'<h3>'+esc(SCEN_NAME[f.scenario]||f.scenario)+'</h3><span class="code">'+esc(f.scenario)+'</span></div>'
+      +'<h3>'+esc(SCEN_NAME[f.scenario]||f.scenario)+'</h3><span class="code">'+esc(f.scenario)+'</span>'+deltaBadge(f.scenario)+'</div>'
       +'<div class="headline">'+esc(f.headline||"")+'</div>'
       +'<div class="interp">'+esc(f.interpretation||"")+'</div>'
       +'</div>'
@@ -549,7 +637,7 @@ function renderScenDetails(){
         +(f.signal?'<br><b>성공 신호:</b> '+esc(f.signal):"")+'</div>'
       +renderMetrics(f,s)+ev+fix+'</div>'
       +'<div class="chart-wrap"><h4>'+esc(ch.title)+'</h4><p class="cap">'+esc(ch.cap)+'</p>'+ch.svg+'</div>'
-      +'</div></div>';
+      +'</div>'+extra+'</div>';
   }).join("");
   el("scenDetails").innerHTML = html || '<p class="empty">공격 시나리오 결과가 없습니다.</p>';
 }
@@ -641,16 +729,21 @@ function renderAppendix(){
     +'</tbody></table>';
   out+=appxBlock("실험 설정","i-doc",setup);
 
-  // 6) 실행 요약
+  // 6) 실행 요약 (소요 시간 포함)
   const exec=s.execution_reliability||{};
-  let run='<p>계획 '+num(exec.planned_query_count)+'건 중 <b>'+num(exec.completed_query_count)+'건 완료</b>, 실패 '+num(exec.open_failure_count||0)+'건.</p>';
+  const totalSec=Number(exec.total_elapsed_seconds||exec.wall_clock_seconds||0);
+  let run='<p>계획 '+num(exec.planned_query_count)+'건 중 <b>'+num(exec.completed_query_count)+'건 완료</b>, 실패 '+num(exec.open_failure_count||0)+'건. 전체 소요 시간 <b>'+formatDuration(totalSec)+'</b>.</p>';
   const sc=exec.scenarios||{};
   if(Object.keys(sc).length){
-    run+='<table class="tbl"><thead><tr><th>시나리오</th><th class="num">완료</th><th class="num">평균 소요(초)</th></tr></thead><tbody>'
-      +Object.keys(sc).map(k=>{const d=sc[k]||{}; return '<tr><td>'+esc(SCEN_NAME[k]||k)+'</td><td class="num">'+num(d.completed_query_count)+'</td><td class="num">'+Number(d.avg_elapsed_seconds||0).toFixed(1)+'</td></tr>';}).join("")
+    run+='<table class="tbl"><thead><tr><th>시나리오</th><th class="num">완료</th><th class="num">소요 시간</th><th class="num">질의당 평균(초)</th></tr></thead><tbody>'
+      +Object.keys(sc).map(k=>{
+        const d=sc[k]||{};
+        const secs=Number(d.total_elapsed_seconds||d.wall_clock_seconds||0);
+        return '<tr><td>'+esc(SCEN_NAME[k]||k)+'</td><td class="num">'+num(d.completed_query_count)+'</td><td class="num">'+formatDuration(secs)+'</td><td class="num">'+Number(d.avg_elapsed_seconds||0).toFixed(1)+'</td></tr>';
+      }).join("")
       +'</tbody></table>';
   }
-  out+=appxBlock("실행 요약","i-check",run);
+  out+=appxBlock("실행 요약 · 소요 시간","i-clock",run);
 
   el("appendixBody").innerHTML=out;
 }
@@ -685,11 +778,23 @@ function initScrollSpy(){
 }
 
 // ── 부팅 ──
+// 방어 설정 '복사' 버튼(이벤트 위임). localhost/https 에서 클립보드 동작, 실패 시 안내.
+function initCopyButtons(){
+  document.addEventListener("click", e=>{
+    const btn=e.target.closest(".copy-btn"); if(!btn) return;
+    const box=btn.closest(".cfgfix"); const pre=box&&box.querySelector("pre");
+    if(!pre) return;
+    const done=msg=>{ btn.textContent=msg; setTimeout(()=>{btn.textContent="복사";},1500); };
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(pre.textContent).then(()=>done("복사됨")).catch(()=>done("직접 선택"));
+    }else{ done("직접 선택"); }
+  });
+}
 function boot(){
   try{ renderHead(); renderVerdict(); renderActions(); renderGlance(); renderThesis(); renderNormalCard(); renderScenDetails(); renderAppendix(); renderFooter(); }
   catch(e){ console.error("render error", e); }
-  initTheme(); initScrollSpy();
-  window.addEventListener("beforeprint",()=>document.querySelectorAll("details.appx").forEach(d=>d.open=true));
+  initTheme(); initScrollSpy(); initCopyButtons();
+  window.addEventListener("beforeprint",()=>document.querySelectorAll("details").forEach(d=>d.open=true));
 }
 if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",boot); else boot();
 </script>
