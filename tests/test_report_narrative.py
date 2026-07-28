@@ -82,3 +82,22 @@ class TestThesis:
     s["normal_vs_attack_pii_comparison"] = {}
     nar = build_report_narrative(s)
     assert nar["thesis"] == {}
+
+
+class TestConfigFix:
+  def test_scenarios_with_success_get_copy_paste_config(self):
+    nar = build_report_narrative(_summary())
+    by = {f["scenario"]: f for f in nar["findings"]}
+    # 성공(some/high)한 시나리오는 복붙용 방어 설정을 갖는다.
+    assert by["R2"]["config_fix"]
+    assert "system_prompt" in by["R2"]["config_fix"]
+    assert by["R9"]["config_fix"]
+
+  def test_none_band_has_no_config_fix(self):
+    s = _summary()
+    # R2 성공을 0 으로 만들어 band=none → 조치 불필요.
+    s["scenario_results"]["R2"]["success_rate"] = 0
+    s["scenario_results"]["R2"]["success_count"] = 0
+    nar = build_report_narrative(s)
+    r2 = next(f for f in nar["findings"] if f["scenario"] == "R2")
+    assert r2["config_fix"] == ""
