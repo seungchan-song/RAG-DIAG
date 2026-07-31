@@ -2461,11 +2461,11 @@ def _execute_single_run(
             and target_adapter is not None
             and bool((config.get("adapter") or {}).get("inject_poison", False))
         ):
-            trigger_keywords = [
-                str(doc.get("keyword", ""))
-                for doc in target_docs
-                if doc.get("keyword")
-            ]
+            # 트리거 쿼리(generate_queries)와 반드시 같은 키워드 집합을 써야 하므로
+            # attack 이 이미 target_docs 로부터 계산한 유도 로직을 그대로 재사용한다
+            # (여기서 target_docs 전체를 별도로 훑으면 normal/sensitive 문서 수만큼
+            # poison 이 과다 생성된다).
+            trigger_keywords = attack.resolve_trigger_keywords(target_docs)
             attack.inject_poison(target_adapter, trigger_keywords)
         evaluator = _create_evaluator(scenario, config)
         planned_query_count = len(queries)
