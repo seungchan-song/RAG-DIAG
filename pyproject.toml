@@ -15,7 +15,7 @@ authors = [
 
 dependencies = [
   # === RAG 프레임워크 ===
-  "haystack-ai>=2.9.0",            # Haystack v2 (RAG 파이프라인 오케스트레이션)
+  "haystack-ai>=2.9.0,<3.0.0",      # Haystack v2 (RAG 파이프라인 오케스트레이션) — 3.0은 v2 API 비호환
   "faiss-cpu>=1.9.0",              # FAISS 벡터 검색 (CPU 버전)
 
   # === 임베딩 & 리랭킹 ===

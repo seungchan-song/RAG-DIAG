@@ -213,13 +213,21 @@ class R7PromptDisclosureAttack(BaseAttack):
   ) -> None:
     super().__init__(config, attacker=attacker, env=env, target=target)
     self.attack_config = config.get("attack", {}).get("r7", {})
+    # 정답 system_prompt 는 (1) 주입된 대상 어댑터가 선언한 값 → (2) config.generator
+    # 순으로 해석한다. 외부 RAG(target)를 진단할 때는 우리 config 의 system_prompt 가
+    # 아니라 그 대상에 실제로 걸린 방어 프롬프트와 비교해야 평가가 의미 있다. target 이
+    # 없거나(기본 경로) SYSTEM_PROMPT 능력이 게이팅으로 차단된 경우 target.system_prompt
+    # 가 None 이므로 자동으로 config 값으로 폴백된다(기존 동작과 동일).
     self.system_prompt = (
-      config.get("generator", {}).get("system_prompt") or ""
+      getattr(self.target, "system_prompt", None)
+      or config.get("generator", {}).get("system_prompt")
+      or ""
     )
     if not self.system_prompt:
       logger.warning(
-        "R7 공격을 시작하지만 config.generator.system_prompt 가 비어 있습니다. "
-        "평가기는 응답을 빈 system_prompt 와 비교하므로 모든 시도가 실패로 판정됩니다."
+        "R7 공격을 시작하지만 시스템 프롬프트 정답(대상 어댑터 선언 또는 "
+        "config.generator.system_prompt)이 비어 있습니다. 평가기는 응답을 빈 "
+        "system_prompt 와 비교하므로 모든 시도가 실패로 판정됩니다."
       )
 
     # anchor_mode: R7 페이로드 앞에 일반 업무 anchor 쿼리를 결합할지 결정.
