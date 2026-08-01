@@ -1,26 +1,26 @@
-[STATUS REPORT] 원격근무 VPN 접속 매뉴얼 (ID: SYS-817)
-Check Time: 2026-05-17 22:00:00 | Status: Healthy
+[STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-156)
+Check Time: 2026-05-09 04:00:00 | Status: Healthy
 --------------------------------------------------
 [1] System Metrics & Background:
-    재택근무 및 사외 외근 시 사내 망 접속을 위한 AnyConnect VPN 설치 매뉴얼을 배포합니다. 권한심사팀에서 제공하는 원격 업무 네트워크 접속 가이드라인입니다.
+    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다. 임직원들의 인쇄, 스캔, 팩스 사용 편의를 돕기 위한 복합기 설정 가이드입니다.
 [SYSTEM PERFORMANCE METRICS]
-  - CPU Utilization: 29% (Average)
-  - Memory Usage: 65% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 39MB/s, Write 25MB/s
-  - Network Bandwidth: Inbound 84Mbps | Outbound 20Mbps
-  - DB Latency: 10ms | Active Connections: 348/1000
+  - CPU Utilization: 39% (Average)
+  - Memory Usage: 44% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 25MB/s, Write 31MB/s
+  - Network Bandwidth: Inbound 124Mbps | Outbound 51Mbps
+  - DB Latency: 6ms | Active Connections: 455/1000
 
 [2] Latency and DB Checks:
-    사외에서 사내 시스템(wiki.example.test)에 접근하려면 반드시 AnyConnect 보안 에이전트 설치가 필요합니다. 본 가이드는 사내 보안을 위해 누리데이터랩스의 보안 규정을 따르며 임의의 VPN 우회 시도는 제재 대상이 됩니다. 따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.
+    드라이버 패키지는 인프라 자료실(gw.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 본 과제는 전사 IT 인프라 혁신 전략 및 청구심사팀의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.
 
 [3] Configuration & Security state:
-    접속 서버 주소는 vpn.hbc.co.kr 이며, OTP 2차 인증을 필수로 완료해야 로그인됩니다. 장애 발생 시 본인 단말의 외부 IP(198.51.100.174)를 캡처하여 권한심사팀 담당자(chaea.yang84@example.test)에게 지원을 요청하세요.
+    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(192.0.2.119)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 010-9000-5785 또는 메일(chaea.cha97@example.test)로 청구심사팀 행정 담당자에게 알리시기 바랍니다.
 
 [4] Event Log / Next action items:
-    비밀번호 유출 방지를 위해 타인에게 계정을 공유하지 않도록 각별히 유의바랍니다. 설치 링크 및 추가 FAQ는 누리데이터랩스 인프라 위키 페이지(wiki.example.test)를 참조하시기 바랍니다. 협조해 주시는 모든 임직원 여러분께 감사드리며, 더욱 안정적이고 효율적인 업무 환경 조성을 위해 노력하겠습니다.
+    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 부서별 월간 인쇄 통계는 누리데이터랩스 인사운영팀에서 자동 집계되어 연말 보고서에 반영됩니다. 지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.
 [RECENT EVENT LOGS]
-  - [INFO] 2026-05-17 22:12:04 Connection pool initialized.
-  - [INFO] 2026-05-17 22:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-17 22:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-17 22:59:58 Health checks passed. Status code: 200 OK.
+  - [INFO] 2026-05-09 04:12:04 Connection pool initialized.
+  - [INFO] 2026-05-09 04:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-09 04:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-09 04:59:58 Health checks passed. Status code: 200 OK.
 --------------------------------------------------
