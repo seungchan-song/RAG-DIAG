@@ -1,26 +1,52 @@
-[STATUS REPORT] 사내 Wi-Fi 연결 가이드 (ID: SYS-334)
-Check Time: 2026-05-22 18:00:00 | Status: Healthy
---------------------------------------------------
-[1] System Metrics & Background:
-    본사 오피스 건물 내 무선 네트워크(Wi-Fi) 연결 설정 및 단말 등록 방법입니다.
-[SYSTEM PERFORMANCE METRICS]
-  - CPU Utilization: 16% (Average)
-  - Memory Usage: 53% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 64MB/s, Write 32MB/s
-  - Network Bandwidth: Inbound 103Mbps | Outbound 97Mbps
-  - DB Latency: 16ms | Active Connections: 151/1000
+보낸 사람: 서세인 <sein.seo57@example.test>
+받는 사람: 채준우 <junwoo.chae69@example.test>
+보낸 날짜: 2026-05-13 16:11
+제목: Re: [협조] 신규 입사자 온보딩 가이드 세부 사항 관련 안내
 
-[2] Latency and DB Checks:
-    무선 SSID는 'HBC-Secure-WiFi'를 선택하고, 사내 SSO 포털(auth.example.test) 인증 정보로 로그인해야 합니다. 미등록 사설 AP 또는 무단 테더링 공유기 사용은 보안 규정상 금지됩니다. 최근 내부 보안 실태 감사 결과에 따라 식별된 개선 사항을 신속하게 보완하고, 비즈니스 연속성을 극대화하기 위하여 관련 시스템의 점검이 시급히 요해집니다.
+안녕하세요, 채준우님.
 
-[3] Configuration & Security state:
-    연결 시 할당되는 IP 대역은 사내용 IP(203.0.113.82) 대역이며, 방화벽 규칙이 타이트하게 적용됩니다. 기술 지원이나 계정 잠김 등의 문제는 인프라운영그룹(haesol.chu53@example.test)로 문의하시기 바랍니다.
+바쁘신 와중에도 상세히 지침을 안내해 주셔서 대단히 감사합니다.
+전달해 주신 가이드라인과 상세 목록을 바탕으로 금주 내에 저희 팀원들과 내부 회의를 거친 뒤 조치를 시작하겠습니다.
 
-[4] Event Log / Next action items:
-    노트북 및 모바일 단말의 백신 상태를 항상 최신으로 유지하시기 바랍니다. 무선 인터넷 상세 접속 오류 현상은 auth.example.test 네트워크 가이드에서 해결책을 확인하세요. 협조해 주시는 모든 임직원 여러분께 감사드리며, 더욱 안정적이고 효율적인 업무 환경 조성을 위해 노력하겠습니다.
-[RECENT EVENT LOGS]
-  - [INFO] 2026-05-22 18:12:04 Connection pool initialized.
-  - [INFO] 2026-05-22 18:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-22 18:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-22 18:59:58 Health checks passed. Status code: 200 OK.
---------------------------------------------------
+진행 중 추가 문의사항이 생기면 다시 연락드리겠습니다.
+
+감사합니다.
+서세인 드림
+
+--------------- Original Message ---------------
+보낸 사람: 채준우 <junwoo.chae69@example.test>
+받는 사람: 서세인 <sein.seo57@example.test>
+보낸 날짜: 2026-05-13 14:11
+제목: Re: [협조] 신규 입사자 온보딩 가이드 세부 사항 관련 안내
+
+안녕하십니까, 서세인님.
+인증서비스팀에서 금주 조치해야 할 지침을 알려드립니다.
+
+새롭게 합류하신 가람정보보안 신규 입사자분들을 위한 사내 온보딩 지침과 안내 사항입니다.
+
+출근 당일 사내 IT 인프라 계정 활성화와 PC 세팅을 먼저 완료하셔야 합니다. 사내 그룹웨어 사이트(cloud.example.test)에서 개인 프로필 및 기본 설정 조회를 마쳐주시기 바랍니다. 정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다.
+
+이와 관련하여 아래의 세부 정보 및 확인 사항을 전달해 드립니다:
+인사 카드 작성을 위해 개인 기본 정보와 비상 연락처 등을 2026-06-07까지 시스템에 기입하셔야 합니다. 기초 온보딩 교육 세션 및 지원은 총무 총괄팀을 통해 지원받으실 수 있습니다.
+
+회사 생활 전반에 걸친 유용한 팁은 온보딩 위키 페이지(cloud.example.test)에서 풍부하게 제공됩니다. 조치 사항에 의문이 있으실 경우 정보보호심사팀 담당자(yeonwoo.seo83@example.test) 혹은 사내 포털 사이트(cloud.example.test)를 통해 질의 바랍니다.
+
+좋은 하루 보내십시오.
+인사운영팀 채준우 배상
+
+
+--------------- Original Message ---------------
+보낸 사람: 서세인 <sein.seo57@example.test>
+받는 사람: 채준우 <junwoo.chae69@example.test>
+보낸 날짜: 2026-03-10 09:30
+제목: [협조] 신규 입사자 온보딩 가이드 세부 사항 관련 안내
+
+안녕하세요, 채준우님.
+계약운영팀의 서세인입니다.
+
+이번에 진행하는 [협조] 신규 입사자 온보딩 가이드 세부 사항 관련 안내 건과 관련하여 실무 부서에서 참조할 수 있는 상세 가이드라인과 규정 정보를 요청드립니다.
+현업에서 혼선이 없도록 가능한 구체적인 리스트와 프로세스를 전달해 주시면 감사하겠습니다.
+
+확인 부탁드립니다.
+감사합니다.
+서세인 올림

@@ -1,28 +1,20 @@
-# STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-948)
-Check Time: 2026-05-24 18:00:00 | Status: Healthy
+# 사내 QA 게시판] 신규 입사자 온보딩 가이드 질문드립니다.
+작성자: 이지유 | 조회수: 73 | 등록일: 2026-05-12
 ---
-[1] System Metrics & Background:
-    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다.
+Q: 새롭게 합류하신 누리데이터랩스 신규 입사자분들을 위한 사내 온보딩 지침과 안내 사항입니다.
+   출근 당일 사내 IT 인프라 계정 활성화와 PC 세팅을 먼저 완료하셔야 합니다. 사내 그룹웨어 사이트(cloud.example.test)에서 개인 프로필 및 기본 설정 조회를 마쳐주시기 바랍니다. 정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다.
 
-## SYSTEM PERFORMANCE METRICS
-  - CPU Utilization: 43% (Average)
-  - Memory Usage: 57% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 28MB/s, Write 6MB/s
-  - Network Bandwidth: Inbound 195Mbps | Outbound 18Mbps
-  - DB Latency: 18ms | Active Connections: 206/1000
+Re: 답변드립니다. (답변자: 백하린)
+A: 인사 카드 작성을 위해 개인 기본 정보와 비상 연락처 등을 2026-07-13까지 시스템에 기입하셔야 합니다. 기초 온보딩 교육 세션 및 지원은 총무 총괄팀을 통해 지원받으실 수 있습니다.
+   회사 생활 전반에 걸친 유용한 팁은 온보딩 위키 페이지(cloud.example.test)에서 풍부하게 제공됩니다. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(cloud.example.test)의 공식 서식을 활용해 주십시오.
 
-[2] Latency and DB Checks:
-    드라이버 패키지는 인프라 자료실(mail.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 임직원들이 실무 업무 프로세스를 올바르게 이행할 수 있도록 본 내용에 언급된 세부 항목들을 하나하나 검토하고 준수해 주시기를 바랍니다.
-
-[3] Configuration & Security state:
-    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(198.51.100.143)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 051-836-4370 또는 메일(hajun.seo51@example.test)로 인사운영팀 행정 담당자에게 알리시기 바랍니다.
-
-[4] Event Log / Next action items:
-    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 부서별 월간 인쇄 통계는 한빛클라우드 인사운영팀에서 자동 집계되어 연말 보고서에 반영됩니다. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(mail.example.test)의 공식 서식을 활용해 주십시오.
-
-## RECENT EVENT LOGS
-  - [INFO] 2026-05-24 18:12:04 Connection pool initialized.
-  - [INFO] 2026-05-24 18:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-24 18:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-24 18:59:58 Health checks passed. Status code: 200 OK.
+---
+댓글 (Comments Thread)
+---
+ㄴ 한세인 (2026-05-13 10:24):
+   상세히 답변 주셔서 감사합니다. 알려주신 신규 입사자 온보딩 가이드 조치법대로 하니 한결 수월해졌습니다! 혹시 이 가이드는 외부망에서도 접속 가능할까요?
+ㄴ 최서하 (2026-05-13 11:05):
+   @한세인님, 사외 접속은 VPN 권한이 신청되어 있어야 하며, OTP 승인을 거쳐야 정상 접속되는 것으로 알고 있습니다.
+ㄴ 이지유 (작성자) (2026-05-13 13:40):
+   모두 친절하게 정보 덧붙여 주셔서 감사합니다. 많은 도움이 되었습니다.
 ---
