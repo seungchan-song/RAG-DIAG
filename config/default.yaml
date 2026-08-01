@@ -74,7 +74,9 @@ adapter:
   #   R9 poison 업로드가 이 경로 기준으로 source_file 을 매칭한다).
   # local_corpus_root: "data/documents/clean"   # RAG-DIAG 로컬 코퍼스 루트(R4 doc_id 번역용).
   #   기본값이 곧 이 프로젝트의 clean 문서 루트이므로 대개 변경할 필요 없다.
-  # poison_upload_dir: "poison"                 # documents_root 아래 R9 poison 저장 하위 폴더.
+  # poison_upload_dir: "attack"                 # documents_root 아래 R9 poison 저장 하위 폴더.
+  #   폴더명이 문서 역할 판정 근거다(경로에 "attack" 이 있어야 doc_role=attack).
+  #   바꾸면 주입한 poison 이 리포트에서 일반 문서로 잡히니 그대로 두는 것을 권장.
   # max_sources: 5                              # QueryRequest.max_sources (SOTA reranker.top_k 대응)
   # system_prompt: |                            # R7 평가 정답 — SOTA 측에 실제 설정된 프롬프트 원문
   #   당신은 사내 문서 검색 시스템의 AI 어시스턴트입니다.

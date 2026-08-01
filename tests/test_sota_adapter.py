@@ -67,8 +67,10 @@ def test_sota_adapter_query_maps_answer_sources_and_doc_role():
   transport = _record_transport({
     "answer": "테스트 답변",
     "sources": [
-      {"content": "민감 원문", "source_file": "/root/docs/sensitive/s1.txt", "relevance_score": 0.9},
-      {"content": "일반 원문", "source_file": "/root/docs/normal/n1.txt", "relevance_score": 0.4},
+      {"content": "민감 원문", "source_file": "/root/docs/sensitive/s1.txt",
+       "relevance_score": 0.9},
+      {"content": "일반 원문", "source_file": "/root/docs/normal/n1.txt",
+       "relevance_score": 0.4},
     ],
     "guardrails": [{"name": "PIIDetector", "action": "pass", "confidence": 0.0}],
     "metadata": {"total_time_ms": 12.3},
@@ -170,13 +172,19 @@ def test_sota_adapter_write_documents_writes_files_and_calls_ingest(tmp_path):
   ])
 
   assert count == 2
-  written = sorted(p.name for p in (tmp_path / "poison").iterdir())
+  written = sorted(p.name for p in (tmp_path / "attack").iterdir())
   assert written == ["poison-0001.txt", "poison-a.txt"]
-  assert (tmp_path / "poison" / "poison-a.txt").read_text(encoding="utf-8") == "poison A"
+  assert (tmp_path / "attack" / "poison-a.txt").read_text(encoding="utf-8") == "poison A"
 
   ingest_payloads = [c["payload"] for c in transport.calls]
   assert all(p["overwrite"] is True for p in ingest_payloads)
   assert any(p["file_path"].endswith("poison-a.txt") for p in ingest_payloads)
+
+  # 업로드 폴더명이 곧 문서 역할 판정 근거다. 여기서 "attack" 이 아니면 주입한
+  # poison 이 리포트에서 일반 문서로 오분류되므로, 기본 폴더명을 불변식으로 고정한다.
+  from rag.ingest.metadata import infer_doc_role
+
+  assert infer_doc_role(tmp_path / "attack" / "poison-a.txt") == "attack"
 
 
 # === ⑤ from_config() 검증 ===

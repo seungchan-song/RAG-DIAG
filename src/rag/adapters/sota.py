@@ -124,7 +124,10 @@ class SotaRagAdapter:
       local_corpus_root: RAG-DIAG 가 타깃 문서 선택에 쓰는 로컬 코퍼스 루트. R4 의
         doc_id → source 번역에 사용한다(config.ingest 의 clean 문서 루트와 일치시킨다).
       poison_upload_dir: R9 poison 문서를 documents_root 아래 어느 하위 폴더에 쓸지
-        (기본 "poison"). SOTA 인덱스 스캔 대상에 포함되도록 documents_root 내부여야 한다.
+        (기본 "attack"). SOTA 인덱스 스캔 대상에 포함되도록 documents_root 내부여야 한다.
+        폴더명이 곧 문서 역할 판정 근거다 — `_infer_doc_role` 은 경로에 "attack" 이
+        있어야 doc_role="attack" 으로 판정하므로, 다른 이름을 쓰면 주입한 poison 이
+        리포트에서 일반 문서로 오분류된다(R9 성공 판정 자체엔 영향 없음).
       query_path / ingest_path: SOTA_RAG API 경로.
       max_sources: QueryRequest.max_sources 로 보낼 값(reranker.top_k 대응).
       system_prompt: R7 평가 정답으로 쓸 SOTA 측 시스템 프롬프트 원문(대상에 실제로
@@ -137,7 +140,7 @@ class SotaRagAdapter:
     self.base_url = base_url.rstrip("/")
     self.documents_root = documents_root.rstrip("/")
     self.local_corpus_root = local_corpus_root
-    self.poison_upload_dir = poison_upload_dir or "poison"
+    self.poison_upload_dir = poison_upload_dir or "attack"
     self.query_path = query_path
     self.ingest_path = ingest_path
     self.max_sources = max_sources
