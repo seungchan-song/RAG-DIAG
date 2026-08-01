@@ -1,20 +1,28 @@
-# 사내 QA 게시판] 브랜드 스타일 가이드라인 질문드립니다.
-작성자: 임민준 | 조회수: 36 | 등록일: 2026-05-12
+# STATUS REPORT] 사내 Wi-Fi 연결 가이드 (ID: SYS-533)
+Check Time: 2026-05-15 18:00:00 | Status: Healthy
 ---
-Q: 한빛클라우드의 통일성 있는 브랜드 아이덴티티 구축을 위한 디자인 스타일 가이드를 전사 배포합니다. 일관된 브랜드 이미지 전달을 위해 마련된 대외 커뮤니케이션 스타일 가이드라인입니다.
-   로고 CI, 지정 폰트, 슬로건 서식 등은 마케팅본부의 승인 없이 변형하여 사용할 수 없습니다. 본 지침은 가람정보보안의 가치를 대외적으로 나타내는 핵심 시각 자산으로 법적 보호를 받습니다. 정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다.
+[1] System Metrics & Background:
+    본사 오피스 건물 내 무선 네트워크(Wi-Fi) 연결 설정 및 단말 등록 방법입니다.
 
-Re: 답변드립니다. (답변자: 우지윤)
-A: 가이드라인 문서와 관련 리소스 패키지는 사내 디자인 허브(auth.example.test)에서 바로 다운로드 받을 수 있습니다. 브랜드 규격 문의와 피드백은 디자인 품질 파트(seojun.park72@example.test)로 보내주시면 답변드리겠습니다.
-   전 직원이 회사의 얼굴인 브랜드 가치를 적극 높이고 올바르게 활용해 주시기를 당부드립니다. 실제 발표용 슬라이드 및 템플릿 서식은 그룹웨어 디자인 게시판(auth.example.test)을 참조하십시오. 협조해 주시는 모든 임직원 여러분께 감사드리며, 더욱 안정적이고 효율적인 업무 환경 조성을 위해 노력하겠습니다.
+## SYSTEM PERFORMANCE METRICS
+  - CPU Utilization: 30% (Average)
+  - Memory Usage: 59% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 35MB/s, Write 21MB/s
+  - Network Bandwidth: Inbound 103Mbps | Outbound 25Mbps
+  - DB Latency: 3ms | Active Connections: 393/1000
 
----
-댓글 (Comments Thread)
----
-ㄴ 안수아 (2026-05-13 10:24):
-   상세히 답변 주셔서 감사합니다. 알려주신 브랜드 스타일 가이드라인 조치법대로 하니 한결 수월해졌습니다! 혹시 이 가이드는 외부망에서도 접속 가능할까요?
-ㄴ 황준서 (2026-05-13 11:05):
-   @안수아님, 사외 접속은 VPN 권한이 신청되어 있어야 하며, OTP 승인을 거쳐야 정상 접속되는 것으로 알고 있습니다.
-ㄴ 임민준 (작성자) (2026-05-13 13:40):
-   모두 친절하게 정보 덧붙여 주셔서 감사합니다. 많은 도움이 되었습니다.
+[2] Latency and DB Checks:
+    무선 SSID는 'HBC-Secure-WiFi'를 선택하고, 사내 SSO 포털(auth.example.test) 인증 정보로 로그인해야 합니다. 미등록 사설 AP 또는 무단 테더링 공유기 사용은 보안 규정상 금지됩니다. 정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다.
+
+[3] Configuration & Security state:
+    연결 시 할당되는 IP 대역은 사내용 IP(203.0.113.205) 대역이며, 방화벽 규칙이 타이트하게 적용됩니다. 기술 지원이나 계정 잠김(아이디: mgr_1919) 등의 문제는 법무대응팀(minjun.jang82@example.test)로 문의하시기 바랍니다.
+
+[4] Event Log / Next action items:
+    노트북 및 모바일 단말의 백신 상태를 항상 최신으로 유지하시기 바랍니다. 무선 인터넷 상세 접속 오류 현상은 auth.example.test 네트워크 가이드에서 해결책을 확인하세요. 지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.
+
+## RECENT EVENT LOGS
+  - [INFO] 2026-05-15 18:12:04 Connection pool initialized.
+  - [INFO] 2026-05-15 18:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-15 18:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-15 18:59:58 Health checks passed. Status code: 200 OK.
 ---

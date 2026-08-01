@@ -1,28 +1,47 @@
-# STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-676)
-Check Time: 2026-05-09 15:00:00 | Status: Healthy
+# 분기별 사업 목표 및 경영 계획 기술 백서 및 가이드라인
+
+* 최근 수정: 서태성 (v1.8)
+
+* 카테고리: 사내 가이드
+
+
 ---
-[1] System Metrics & Background:
-    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다. 임직원들의 인쇄, 스캔, 팩스 사용 편의를 돕기 위한 복합기 설정 가이드입니다.
 
-## SYSTEM PERFORMANCE METRICS
-  - CPU Utilization: 45% (Average)
-  - Memory Usage: 68% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 20MB/s, Write 7MB/s
-  - Network Bandwidth: Inbound 184Mbps | Outbound 50Mbps
-  - DB Latency: 9ms | Active Connections: 338/1000
+## 문서 개정이력 (Revision History)
 
-[2] Latency and DB Checks:
-    드라이버 패키지는 인프라 자료실(dev.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 임직원들이 실무 업무 프로세스를 올바르게 이행할 수 있도록 본 내용에 언급된 세부 항목들을 하나하나 검토하고 준수해 주시기를 바랍니다.
+| 개정 버전 | 개정 일자 | 개정자 | 개정 사유 및 요약 |
 
-[3] Configuration & Security state:
-    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(198.51.100.227)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 02-638-1689 또는 메일(yoonseul.paik34@example.test)로 권한심사팀 행정 담당자에게 알리시기 바랍니다.
+| :--- | :--- | :--- | :--- |
 
-[4] Event Log / Next action items:
-    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 부서별 월간 인쇄 통계는 한빛클라우드 인사운영팀에서 자동 집계되어 연말 보고서에 반영됩니다. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(dev.example.test)의 공식 서식을 활용해 주십시오.
+| v1.0 | 2026-01-15 | 채시우 | 최초 제정 및 초안 등록 |
 
-## RECENT EVENT LOGS
-  - [INFO] 2026-05-09 15:12:04 Connection pool initialized.
-  - [INFO] 2026-05-09 15:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-09 15:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-09 15:59:58 Health checks passed. Status code: 200 OK.
+| v1.8 | 2026-05-10 | 서태성 | 최신 운영 규칙 및 상세 세부사항 현행화 |
+
+
 ---
+
+
+## 1. 개요 및 취지
+한빛클라우드의 지속 가능한 성장과 2025년도 전략 목표 수립을 위한 분기별 경영 계획입니다.
+
+## 2. 주요 운영 가이드라인
+이번 분기에는 고객사 중심의 클라우드 플랫폼 안정성 강화 및 RAG 기반 답변 생성 고도화를 최우선 목표로 삼고 있습니다. 각 본부별 세부 KPI와 추진 일정은 경영기획본부의 조정과 예산 승인을 완료하였습니다. 본 과제는 전사 IT 인프라 혁신 전략 및 인프라운영그룹의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.
+
+## 3. 상세 항목 및 절차
+목표 추진 성과는 분기 말 2026-07-11에 개최되는 타운홀 미팅 및 사내 생방송(infra.example.test)을 통해 발표됩니다. 실적 통계 및 보고서 파일 다운로드는 경영지원 위키(infra.example.test)를 활용해 주십시오.
+
+## 4. 유의사항
+도전적인 목표 달성을 위해 한마음으로 노력하는 한빛클라우드 임직원 여러분이 되기를 기대합니다. 부서별 목표 조정 문의는 인프라운영그룹 기획 파트 담당자(yoonseul.woo25@example.test)에게 접수 바랍니다. 안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다.
+
+
+### ■ 관련 문서 바로가기 링크
+
+- [사내 인프라 표준 운영 규정](wiki.example.test/infra-policy)
+
+- [보안 가이드라인 및 취약점 조치 프로세스](wiki.example.test/security-guide)
+
+- [업무 협업용 서식 자료실](wiki.example.test/templates)
+
+
+---
+*본 문서는 사내 지식 관리 시스템(Wiki)에서 공식 생성된 콘텐츠입니다. 무단 반출을 금합니다.*

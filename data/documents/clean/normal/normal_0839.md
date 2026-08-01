@@ -1,28 +1,18 @@
-# STATUS REPORT] 프린터 복합기 사용법 (ID: SYS-338)
-Check Time: 2026-05-01 06:00:00 | Status: Healthy
 ---
-[1] System Metrics & Background:
-    각 층에 도입된 신규 고속 컬러 복합기 드라이버 설치 및 사용법 매뉴얼입니다. 임직원들의 인쇄, 스캔, 팩스 사용 편의를 돕기 위한 복합기 설정 가이드입니다.
-
-## SYSTEM PERFORMANCE METRICS
-  - CPU Utilization: 38% (Average)
-  - Memory Usage: 59% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 69MB/s, Write 27MB/s
-  - Network Bandwidth: Inbound 146Mbps | Outbound 11Mbps
-  - DB Latency: 9ms | Active Connections: 386/1000
-
-[2] Latency and DB Checks:
-    드라이버 패키지는 인프라 자료실(security.example.test)에서 다운로드 가능하며, 복합기 IP와 포트를 일치시켜야 합니다. 인쇄 시 개인 사원증 접촉 태깅을 통하거나 사번 입력을 통해 최종 인쇄가 수행됩니다. 임직원들이 실무 업무 프로세스를 올바르게 이행할 수 있도록 본 내용에 언급된 세부 항목들을 하나하나 검토하고 준수해 주시기를 바랍니다.
-
-[3] Configuration & Security state:
-    인쇄 오류가 지속될 경우 인쇄 큐를 초기화하고 네트워크 프린터 서버 IP(198.51.100.114)를 재확인하세요. 토너 부족 및 종이 걸림 장애는 내선 032-397-5426 또는 메일(hagyeong.hong66@example.test)로 상담운영팀 행정 담당자에게 알리시기 바랍니다.
-
-[4] Event Log / Next action items:
-    종이 절약 및 친환경 업무 환경을 위해 가급적 양면 인쇄와 전자 문서 활용을 부탁드립니다. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(security.example.test)의 공식 서식을 활용해 주십시오.
-
-## RECENT EVENT LOGS
-  - [INFO] 2026-05-01 06:12:04 Connection pool initialized.
-  - [INFO] 2026-05-01 06:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-01 06:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-01 06:59:58 Health checks passed. Status code: 200 OK.
+기술 및 전략 제안서: 사내 복지 지원 제도 세부 운영 지침서
 ---
+* 발행 부서: 인사운영팀   |   * 등록 일자: 2026-04-13
+* 관리 번호: HBC-52365
+
+■ Section I. 추진 배경
+  본 문서는 인사운영팀의 관리하에 진행되는 사내 복지 지원 제도 세부 운영 지침서의 핵심 추진 과제를 정의하며, 실무 부서의 마일스톤 준수 및 정기 점검 사항을 포함하고 있습니다.
+
+■ Section II. 세부 가이드라인 및 구현 명세
+  ▶ 핵심 사항 1: 임직원 여러분의 복지 향상을 위해 2025년도 사내 체력단련비 지원 제도를 다음과 같이 공지합니다.
+  ▶ 핵심 사항 2: 본 지침은 검색품질팀의 협의를 거쳐 확정되었으며, 근속 기간 1년 이상인 한울시큐리티 임직원에게 적용됩니다. 이번 제도는 전사 임직원의 근무 여건 개선 및 복리후생 증진을 위해 한울시큐리티 경영진의 승인을 받았습니다. 최근 내부 보안 실태 감사 결과에 따라 식별된 개선 사항을 신속하게 보완하고, 비즈니스 연속성을 극대화하기 위하여 관련 시스템의 점검이 시급히 요해집니다.
+  ▶ 핵심 사항 3: 지원 신청은 매월 2026-02-26까지 사내 위키 포털(hr.example.test)의 복지지원 탭을 통해 상시 접수합니다. 관련 영수증 전표와 신청서를 작성하여 검색품질팀 담당자 이메일(seojun.choi74@example.test)로 보내주시기 바랍니다.
+  ▶ 핵심 사항 4: 기타 의문사항은 검색품질팀(내선번호 010-9000-5113)로 문의해 주시기 바랍니다. 규정을 준수하여 기한 내에 사내 시스템(hr.example.test)으로 기안 승인을 완료해 주세요. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(hr.example.test)의 공식 서식을 활용해 주십시오.
+
+■ Section III. 기대 효과 및 향후 계획
+  - 업무 효율 개선 및 규정 위반 리스크 최소화 가능.
+  - 차주 내 인사운영팀 주관 부서별 실무 워크숍 및 Q&A 세션 예정.

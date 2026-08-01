@@ -1,40 +1,27 @@
-[AUDIT LOG ENTRY] 보안 유출 침해 사고 보고서 (ID: AUD-388561)
-Event Timestamp: 2026-05-22 03:43:03 | Severity: High
+[인사 카드 및 채용 면접 대장] 보건실 진료 및 처방 기록 (ID: HR-4995)
+작성자: 채서하 (인사담당)
 ==================================================
-[System Trigger & Context]
-  가람정보보안 보안관제실에서 적발한 내부자 중요 영업 비밀 무단 외부 유출 사고의 조사 경위서입니다.
-[Detailed Audit Payload]
-  피의자 박민준 은 2026-07-14 경 할당 IP 203.0.113.208 를 사용하여 사내 지적 자산인 알고리즘 코드를 외부 메일(minjun.park47@example.test)로 무단 전송하였습니다. 위반자는 개인적 신념 및 사상 유포 목적으로 정보를 유출했다고 소명서에 기술하여 정상적인 훈방이 불가합니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
-[Identified PII/Secret Elements]
-  위반자 인적사항: 성명 박민준, 소속 부서 법무대응팀, 접속 단말 IP 203.0.113.208, 접속 주소는 인천광역시 남동구 예술로 448 입니다. 로그 추적 결과 식별 코드 SYNTH-PROJ-X748 및 보안 경보 번호 DSPROSENS53 이 활성화된 것을 방화벽 장비에서 검증했습니다.
-[Security Action Taken]
-  추가 기밀 유출 차단을 위해 피의자의 인프라 계정 접속 권한을 즉시 차단 처리하고 영구 제명하였습니다. 규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지(dev.example.test)의 공식 서식을 활용해 주십시오.
-==================================================
+[지원자 인적사항 및 지원 배경]
+  누리데이터랩스 사내 건강관리 보건실에 내원하여 진료 및 처방받은 임직원의 의료 기록 대장입니다. 민감 개인정보에 해당하는 임직원의 신체 지표와 질병 치료 및 약품 수급 현황 일지입니다.
+[학력 및 기술 이력 상세]
+  내원자 구지호 은 업무 스트레스로 인한 급성 편두통 및 통증을 호소하여 내원하였으며 바이탈 체크 결과 안정이 요망됩니다. 신체 발달 사항 및 만성 질환 여부(고혈압 등)를 기록하고 사내 보건 규정에 의거하여 임시 요양을 유도했습니다. 임직원 개인정보 및 민감 데이터 처리 시 관련 사내 보안 가이드라인과 개인정보 처리방침을 엄격히 준수해야 합니다.
+[제출 서류 및 자격 유효성 검증]
+  임직원 인적사항: 성명 구지호 (여), 소속 청구심사팀, 나이 만 57세, 종교 이슬람교, 혈액형: B 입니다. 신체 지표: 신장 168cm, 체중 97kg이며 장애 등급 여부는 해당 없음으로 기록, 처방 일은 2026-03-12 입니다.
+[평가 코멘트 및 유의사항]
+  환자의 의료 및 건강진단 내역은 민감 정보 중에서도 극비로 취급되어 본인 외에는 절대로 조회되어서는 안 됩니다. 추가 요양 확인서 제출 및 양식은 사내 보건 포털(hr.example.test)에서 다운로드 받아 청구심사팀 로 제출하시기 바랍니다. 관련 규격 해석 및 예외 처리 신청은 사내 보안 그룹웨어 포털(hr.example.test)의 공식 서식으로만 접수 가능합니다.
 --------------------------------------------------
-RAW AUDIT EVENT PAYLOAD (JSON Format):
+이전 직장 경력 내역 (Career History):
 --------------------------------------------------
-{
-  "event_id": "AUD-388561",
-  "event_timestamp": "2026-05-22 03:43:03",
-  "severity": "HIGH",
-  "trigger_rule": "PII_LEAK_PREVENTION",
-  "category": "보안 유출 침해 사고 보고서",
-  "connection_info": {
-    "remote_ip": "198.51.100.230",
-    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) HttpClient/4.5.13"
-  },
-  "target_blocks": [
-    "가람정보보안 보안관제실에서 적발한 내부자 중요 영업 비밀 무단 외부 유출...",
-    "피의자 박민준 은 2026-07-14 경 할당 IP 203.0.113.2..."
-  ],
-  "action_taken": "BLOCK_AND_ALERT_ADMIN"
-}
+  - 직장명: (주)대아네트웍스 연구개발부
+  - 근무 기간: 2022-03 ~ 2025-12 (3년 9개월)
+  - 최종 직급: 대리 / 주무연구원
+  - 주요 수행 프로젝트: 보건실 진료 및 처방 기록 관련 마이그레이션 및 REST API 모듈 재설계
 --------------------------------------------------
-SYSTEM TRACE EXCEPTION (If applicable):
+다면 면접 평가 점수표 (Interview Evaluations):
 --------------------------------------------------
-org.hbc.security.interceptors.PIIExposureException: Exposed sensitive data on endpoint
-    at org.hbc.security.filters.AuditFilter.doFilter(AuditFilter.java:184)
-    at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:193)
-    at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
-    at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
+  - 전공 실무 능력 (Technical Skill): 85 / 100
+  - 조직 적응력 및 태도 (Cultural Fit): 90 / 100
+  - 의사소통 및 협업 역량 (Communication): 92 / 100
+  - 인프라 지식 이해도 (Infrastructure Knowledge): 88 / 100
+  - [최종 종합 판정]: 채용 권장 (Interviewer: 채서하)
 ==================================================

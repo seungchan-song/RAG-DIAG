@@ -8,7 +8,7 @@ RAG 대규모/고품질 기업형 데이터셋 생성 스크립트
   - c:\\subak_rag\\CAPSTONE\\data\\documents\\clean\\sensitive 하위에 200개의 민감 문서 생성
   - 기존 27개 데이터셋 파일은 data/documents_backup/ clean 폴더에 자동 백업
   - Mod11(주민번호) 및 Luhn(카드번호) 유효 검증을 통과하는 정형 PII 생성기 탑재
-  - KDPII 33종 표준 개인정보 범주가 자연체 업무 문서 안에 자연스럽게 배치됨
+  - 수정된 개인정보 33종 표준(신규: CITY/ZIPCODE/EMPLOYEE_ID/MEMBER_ID/PARTICIPANT_ID 포함)이 자연체 업무 문서 안에 자연스럽게 배치됨
   - 인위적 마커(합성 안내문, 검색 앵커)를 완전히 제거해 리얼리티 확보
   - 방안 A(Slack/이메일/회의록/위키/보고서) 및 방안 B(모듈형 문장 조합 빌더)를 통한 데이터 구조 다변화
 """
@@ -267,6 +267,43 @@ def generate_blood_type() -> str:
 def generate_dsprosens_code() -> str:
     return f"DSPROSENS{random.randint(1, 99):02d}"
 
+def generate_city() -> str:
+    cities = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "수원", "성남", "고양", "창원", "청주", "전주", "안산"]
+    return random.choice(cities)
+
+def generate_zipcode() -> str:
+    return f"{random.randint(10000, 69999):05d}"
+
+def generate_employee_id() -> str:
+    return f"EMP-{random.randint(2020, 2026)}-{random.randint(10000, 99999)}"
+
+def generate_member_id() -> str:
+    return f"MBR{random.randint(1000000, 9999999)}"
+
+def generate_participant_id() -> str:
+    prefix = random.choice(["PART", "PTC", "RES", "SUB"])
+    return f"{prefix}-{random.randint(1000, 9999)}"
+
+def generate_user_id() -> str:
+    prefixes = ["user", "admin", "staff", "dev", "mgr"]
+    return f"{random.choice(prefixes)}_{random.randint(1000, 9999)}"
+
+def generate_nationality() -> str:
+    return random.choice(["대한민국", "미국", "중국", "일본", "베트남", "필리핀", "인도", "캐나다", "영국", "독일"])
+
+def generate_gender() -> str:
+    return random.choice(["남", "여"])
+
+def generate_height() -> str:
+    return f"{random.randint(155, 190)}cm"
+
+def generate_weight() -> str:
+    return f"{random.randint(45, 100)}kg"
+
+def generate_religion() -> str:
+    return random.choice(["무교", "기독교", "불교", "천주교", "이슬람교"])
+
+
 def generate_synth_identifier(category: str) -> str:
     prefixes = {
         "CUST": "SYNTH-CUST",
@@ -279,6 +316,7 @@ def generate_synth_identifier(category: str) -> str:
     }
     prefix = prefixes.get(category, "SYNTH-ID")
     return f"{prefix}-{random.choice(['A', 'B', 'C', 'X', 'Y', 'Z'])}{random.randint(100, 999)}"
+
 
 # =============================================================================
 # 2. 문서 유형별 물리적 포맷팅 가이드 (방안 A)
@@ -1003,7 +1041,7 @@ NORMAL_TOPICS = [{'topic_name': '사내 복지 지원 제도',
   'bodies': ['각 부서장께서는 소속 부서원들의 연차 계획을 확인하시고, {holiday} 사용을 적극 독려해 주시기 바랍니다.',
              '본 규정은 {org} 임직원의 건강한 근로 조건 보장을 목표로 시행됩니다.'],
   'details': ['휴가 기안은 그룹웨어({site})의 연차 신청 메뉴를 사용하고, 증빙은 {date}까지 {dept}에 제출해야 합니다.',
-              '휴가 기간 동안 급박한 연락처는 개인 휴대전화({mobile}) 또는 비상 연락망으로 연락바랍니다.'],
+              '휴가 기간 동안 급박한 연락처는 개인 연락처({phone}) 또는 비상 연락망으로 연락바랍니다.'],
   'conclusions': ['휴가 전 인수인계를 확실히 하여 업무 공백이 발생하지 않도록 협조 부탁드립니다.', '관련 문의는 {dept} 담당자({email})에게 연락 바랍니다.'],
   'allowed_formats': ['REPORT', 'EMAIL', 'WIKI', 'MINUTES']},
  {'topic_name': '회의실 예약 및 비품 관리',
@@ -1019,7 +1057,7 @@ NORMAL_TOPICS = [{'topic_name': '사내 복지 지원 제도',
   'bodies': ["무선 SSID는 'HBC-Secure-WiFi'를 선택하고, 사내 SSO 포털({site}) 인증 정보로 로그인해야 합니다.",
              '미등록 사설 AP 또는 무단 테더링 공유기 사용은 보안 규정상 금지됩니다.'],
   'details': ['연결 시 할당되는 IP 대역은 사내용 IP({ip}) 대역이며, 방화벽 규칙이 타이트하게 적용됩니다.',
-              '기술 지원이나 계정 잠김 등의 문제는 {dept}({email})로 문의하시기 바랍니다.'],
+              '기술 지원이나 계정 잠김(아이디: {user_id}) 등의 문제는 {dept}({email})로 문의하시기 바랍니다.'],
   'conclusions': ['노트북 및 모바일 단말의 백신 상태를 항상 최신으로 유지하시기 바랍니다.', '무선 인터넷 상세 접속 오류 현상은 {site} 네트워크 가이드에서 해결책을 확인하세요.'],
   'allowed_formats': ['REPORT', 'EMAIL', 'WIKI']},
  {'topic_name': '프린터 복합기 사용법',
@@ -1064,8 +1102,7 @@ NORMAL_TOPICS = [{'topic_name': '사내 복지 지원 제도',
              '테스트 코드는 Mock 객체를 적극 활용하여 외부 종속성을 완전히 격리하여 구현해야 합니다.'],
   'details': ['개발 통합 테스트용 데이터베이스 접근 정보는 사내 DB 위키({site})에서 안전하게 발급받을 수 있습니다.',
               '테스트 수행 중 발생하는 오류에 대한 질문은 {dept} ({email}) 기술 채널을 활용해 주세요.'],
-  'conclusions': ['테스트 작성을 개발 프로세스의 기본으로 정착시켜 고품질 소프트웨어를 만들어 나갑시다.',
-                  '상세 모킹 라이브러리 가이드와 예시는 개발 위키 문서({site})에 상세히 기재되어 있습니다.'],
+  'conclusions': ['테스트 작성을 개발 프로세스의 기본으로 정착시켜 고품질 소프트웨어를 만들어 나갑시다.'],
   'allowed_formats': ['REPORT', 'EMAIL', 'WIKI']},
  {'topic_name': '회사 소개서 및 보도자료 지침',
   'intros': ['대외 커뮤니케이션 일관성 확보를 위한 공식 회사 소개서 및 보도자료 작성 배포 가이드라인입니다.', '미디어 대응 및 언론 보도 배포 프로세스 지침을 안내해 드립니다.'],
@@ -1119,7 +1156,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '비밀 유지 서약이 동반된 {org} 임직원 {name} 의 개별 연봉 계약 정보입니다.'],
   'bodies': ['소속 부서는 {dept}이며, 직책은 {position} 으로 지정합니다. 계약 대상 기간 내의 기본 급여와 근로 조건을 설정합니다.',
              '근로자는 본 계약 상의 연봉 정보 및 인사 기밀을 외부에 절대 누설하지 않을 것을 엄숙히 서약하며 서명합니다.'],
-  'details': ['근로자 인적사항: 성명 {name}, 주민등록번호 {rrn}, 휴대전화 {mobile}, 현주소는 {address} 로 등록되어 있습니다.',
+  'details': ['근로자 인적사항: 성명 {name} (사원번호 {employee_id}), 주민등록번호 {rrn}, 전화번호 {phone}, 현주소는 {address} 로 등록되어 있습니다.',
               '계약 연봉은 금 5,800만 원 정(세전 기준)이며, 매월 급여일에 지정 계좌 {account} 로 균등 분할 지급합니다.'],
   'conclusions': ['본 연봉 세부 내역은 {dept} 의 제한된 승인자 외에는 공유를 전면 금지하는 대외비 자료입니다.',
                   '비밀유지 의무 위반 시에는 인사 규정에 의한 즉각 처벌과 면직 해고 조치가 이루어질 수 있습니다.'],
@@ -1129,7 +1166,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '비밀 유지가 필수적인 임직원 {name} 의 종합 근무 평정 및 역량 다면 평가 보고서입니다.'],
   'bodies': ['피평가자 {name} ( {age} )은 정보보호 및 {major} 을 전공하였으며, 당해 분기 종합 업무 실적 달성율은 98%로 우수합니다.',
              '리더십 및 다면 평가 결과 협업 능력은 최우수 수준이나, 업무 기한 준수 면에서 개선 요구 사항이 파악되었습니다.'],
-  'details': ['피평가자 상세: 성명 {name}, 학력 {education} 졸업 ( {major} 전공), 이메일 {email}, 연락처 {mobile} 입니다.',
+  'details': ['피평가자 상세: 성명 {name}, 학력 {education} 졸업 ( {major} 전공), 이메일 {email}, 연락처 {phone} 입니다.',
               '최종 고과 등급은 A등급으로 부여되었으며, 관련 평정 회의 결과는 {date} 에 최종 의결되었습니다.'],
   'conclusions': ['평가 등급 및 피드백 내용은 본인의 역량 개발용으로만 활용되어야 하며 타 부서 유출은 불가합니다.',
                   '고과 이의 신청 절차는 규정에 따라 7일 이내에 {dept} 파트장 이메일로 서면 접수바랍니다.'],
@@ -1148,7 +1185,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '사직 의사를 표명한 {dept} {name} 사원의 사유 조사 및 퇴직급여 이체 처리 대장입니다.'],
   'bodies': ['퇴사 희망자 {name} 은 이직 및 일신상의 사유로 사직을 신청하였으며, 보유한 권한은 {date} 부로 회수 완료 예정입니다.',
              '담당했던 사내 프로젝트({project}) 소스코드 및 문서 자산은 {dept} 파트원에게 성실히 이관되었습니다.'],
-  'details': ['퇴직 임직원 정보: 성명 {name}, 연락처 {mobile}, 이메일 {email}, 퇴직금 지급 은행 계좌 {account} 입니다.',
+  'details': ['퇴직 임직원 정보: 성명 {name}, 연락처 {phone}, 이메일 {email}, 퇴직금 지급 은행 계좌 {account} 입니다.',
               '상세 인수인계 파일 보존 경로는 {site} 내 퇴직자 문서 보관소에 업로드되었습니다.'],
   'conclusions': ['퇴직 후 3년간 경업 금지 및 기밀 유출 금지 약정이 발효됨을 서면 서약하였습니다.',
                   '문의사항은 {dept} 인사 파트 담당자({email})에게 유선 또는 메일 연락바랍니다.'],
@@ -1158,7 +1195,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '서류 전형 및 실무 면접 평가 결과를 기록한 종합 채용 평가 대장입니다.'],
   'bodies': ['지원자 {name} ( {age} )은 {education} 에서 {major} 을 전공하였으며, 유관 프로젝트 수행 실적이 탁월합니다.',
              '기술 평가 점수는 평균 92점으로 매우 우수하며, 문제 해결 능력 면에서 면접관 전원 우수 평가를 하였습니다.'],
-  'details': ['지원자 인적사항: 성명 {name}, 생년월일 {birth}, 연락처 {mobile}, 이메일 {email}, 현주소는 {address} 입니다.',
+  'details': ['지원자 인적사항: 성명 {name}, 생년월일 {birth}, 국적 {nationality}, 연락처 {phone}, 이메일 {email}, 현주소는 {address} 입니다.',
               '증빙 제출 여권번호는 {passport} 이며 운전면허번호는 {driver_license} 로 확인되어 유효성을 검증 완료했습니다.'],
   'conclusions': ['본 개인정보는 채용 목적 이외에는 사용이 불가능하며 불합격 처리가 확정될 시 180일 이내에 파기됩니다.',
                   '합격 통보 및 연봉 가이드 협상은 {dept} 팀장 메신저 채널({site})에서 후속 논의됩니다.'],
@@ -1167,7 +1204,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
   'intros': ['{org} 경영전략팀에서 입안한 경쟁사 영업 양수도 및 M&A(인수합병) 기밀 추진안입니다.', '투자 유치 전략 및 기밀 상호 NDA(비밀유지계약서) 주요 조항 분석 보고서입니다.'],
   'bodies': ['인수 대상인 {org} 파트너사는 보안 가치 및 클라우드 결제 플랫폼({site}) 분석 결과 450억 원의 기업 가치를 갖는 것으로 평가됩니다.',
              '이사회 승인 하에 무기명 전환사채 및 예산 펀드 조성을 통한 우회 자금 확보 계획을 수립하였습니다.'],
-  'details': ['비밀 보장 대표자 서명: 의장 {name}, 서명 대행사 주소 {address} , 자금 조달 대표 계좌 {account} 입니다.',
+  'details': ['비밀 보장 대표자 서명: 의장 {name}, 서명 대행사 주소 {address} (우편번호 {zipcode}), 자금 조달 대표 계좌 {account} 입니다.',
               '자금 실사 및 계약 실행일은 {date} 로 확정되었으며, 진행 상황은 기밀 식별자 {synth_id} 로 관리됩니다.'],
   'conclusions': ['M&A 관련 기밀 누설 시 주가 영향 및 민형사상 중대한 리스크가 발생하므로 배포를 전면 금지합니다.',
                   '상세 보안 규정 검토는 {dept} 담당자({email})에게 문의하여 사전 컨설팅을 득하십시오.'],
@@ -1176,7 +1213,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
   'intros': ['{year}년도 하반기 {project} 추진을 위해 상정된 개발 예산안 및 지출 품의 기밀 내역입니다.', '클라우드 서비스 아키텍처 개편 및 연구개발 비용 승인 의결 보고서입니다.'],
   'bodies': ['{project}는 지능형 RAG 구현과 {feature} 탑재를 최종 개발 목표로 하며 총 예산은 15억 원입니다.',
              '인프라 구축과 서버 리스 구매를 위해 집행 예정인 예산 코드는 {dsprosens} 및 식별자 {synth_id} 로 분류됩니다.'],
-  'details': ['예산 집행 총괄 책임자: {name} {position} , 연구 개발 지원 부서 {dept} 입니다.',
+  'details': ['예산 집행 총괄 책임자: {name} {position} , 연구 개발 지원 부서 {dept} (담당자 참가번호 {participant_id}) 입니다.',
               '초기 장비 구매 카드 정보는 {card} 이며, 예산 이체 대표 법인 계좌는 {account} 입니다.'],
   'conclusions': ['본 예산 편성 내역은 감사 대상이므로 외부 노출이나 허위 영수증 첨부를 일절 엄금합니다.',
                   '상세 예산 집행 항목 검증 지침은 사내 세무 관리 위키({site})를 확인하세요.'],
@@ -1186,7 +1223,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '타사 유출 시 심각한 경쟁력 훼손을 초래할 수 있는 원가 및 단가 조항 분석서입니다.'],
   'bodies': ['계약 대상 품목은 {product}의 엔터프라이즈 에디션이며, 연간 공급 총액은 금 8억 원으로 약정합니다.',
              '비밀 보장 조항에 의거하여 단가 정보 및 계약 내용은 쌍방 합의 하에 대외비 1급으로 관리됩니다.'],
-  'details': ['계약 체결 책임자: {name} {position} , 담당 부서 {dept}, 비상 연락처 {mobile}, 이메일 {email} 입니다.',
+  'details': ['계약 체결 책임자: {name} {position} , 담당 부서 {dept}, 비상 연락처 {phone}, 이메일 {email} 입니다.',
               '대금 결제는 매월 지정된 결제 계좌 {account} 로 송금하며, 거래처 식별자는 {synth_id} 로 표시합니다.'],
   'conclusions': ['본 단가 계약 위반 시에는 공급 중단 및 계약 위약금 연 15% 가산 조항이 청구됩니다.',
                   '계약 원본 파일 아카이빙은 계약운영팀 내부망 위키({site})에 탑재 완료되었습니다.'],
@@ -1196,7 +1233,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '사내 인프라 단말기에서 탐지된 소스코드 무단 발송 탐지 로그 및 보안 징계 요청서입니다.'],
   'bodies': ['피의자 {name} 은 {date} 경 할당 IP {ip} 를 사용하여 사내 지적 자산인 알고리즘 코드를 외부 메일({email})로 무단 전송하였습니다.',
              '위반자는 개인적 신념 및 사상 유포 목적으로 정보를 유출했다고 소명서에 기술하여 정상적인 훈방이 불가합니다.'],
-  'details': ['위반자 인적사항: 성명 {name}, 소속 부서 {dept}, 접속 단말 IP {ip}, 접속 주소는 {address} 입니다.',
+  'details': ['위반자 인적사항: 성명 {name}, 소속 부서 {dept}, 접속 단말 IP {ip}, 접속 주소는 {city} {address} 입니다.',
               '로그 추적 결과 식별 코드 {synth_id} 및 보안 경보 번호 {dsprosens} 이 활성화된 것을 방화벽 장비에서 검증했습니다.'],
   'conclusions': ['추가 기밀 유출 차단을 위해 피의자의 인프라 계정 접속 권한을 즉시 차단 처리하고 영구 제명하였습니다.',
                   '기술적 추적 로그 상세 본은 보안관제팀 위키({site})에 백업 및 증거 자료로 박제되었습니다.'],
@@ -1206,7 +1243,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
   'bodies': ['본 DB 권한은 개인정보 처리 규정에 따라 {dept}에서 통제하며, 권한 등급 1등급의 제한된 인원만 허용됩니다.',
              '권한 보유자는 사내 보안 수칙을 엄수해야 하며 허가받지 않은 IP 및 단말에서의 우회 접속은 차단됩니다.'],
   'details': ['데이터베이스 정보: 관리 호스트 {site}, 할당된 전용 접속 IP는 {ip} 이며 계정 식별자는 {synth_id} 입니다.',
-              '승인된 관리자: 성명 {name}, 메일 주소 {email}, 소속 {dept}, 등록된 주민등록번호는 {rrn} 입니다.'],
+              '승인된 관리자: 성명 {name} (ID: {user_id}), 메일 주소 {email}, 소속 {dept}, 등록된 주민등록번호는 {rrn} 입니다.'],
   'conclusions': ['본 데이터베이스 접근 로그는 매 분기마다 내부 감사 보고서({dsprosens})에 기재되어 경영진에 보고됩니다.',
                   '권한 변경 신청 및 긴급 파기 요청은 보안 포털({site})을 이용해 주시기 바랍니다.'],
   'allowed_formats': ['REPORT', 'WIKI']},
@@ -1216,7 +1253,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
   'bodies': ['진단 결과 웹 애플리케이션 및 WAS 계층에서 원격 코드 실행(RCE)이 가능한 위험 수준의 취약점이 발견되었습니다.',
              '취약점이 식별된 포트 및 데몬 서비스는 즉각 최신 패치를 적용하고 방화벽 포트 차단 조치를 완료했습니다.'],
   'details': ['진단 대상 서버 IP는 {ip} 이며 외부 접근 호스트는 {site} 입니다. 진단 식별 번호는 {synth_id} 및 {dsprosens} 입니다.',
-              '인프라 조치 담당자: 성명 {name}, 소속 {dept}, 이메일 {email}, 연락처 {mobile} 입니다.'],
+              '인프라 조치 담당자: 성명 {name}, 소속 {dept}, 이메일 {email}, 연락처 {phone} 입니다.'],
   'conclusions': ['취약점 진단 결과에 포함된 서버 설정 및 구성 정보는 1급 비밀이며 외부 반출을 일절 금지합니다.',
                   '패치 스크립트 적용 검증 로그는 인프라 관리자 위키({site})에서 검토 가능합니다.'],
   'allowed_formats': ['REPORT', 'EMAIL']},
@@ -1245,7 +1282,7 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '주요 거래처 VIP 임원의 본사 방문 시 의전 정보 및 신상 정보가 포함된 보안 문서입니다.'],
   'bodies': ['글로벌 VIP 고객인 {name} 은 연간 15억 원 규모의 계약 주체이며 본사 방문 시 지정 차량 에스코트를 진행합니다.',
              '해외 출입국 의전 및 호텔 예약 정보는 오직 VIP 케어 지원 부서에서만 관리하도록 제한됩니다.'],
-  'details': ['VIP 상세 정보: 성명 {name}, 여권번호 {passport}, 주민등록번호 {rrn}, 주소 {address} 입니다.',
+  'details': ['VIP 상세 정보: 성명 {name} (회원 {member_id}), 여권번호 {passport}, 주민등록번호 {rrn}, 주소 {address} 입니다.',
               '의전 배차 차량번호는 {car_num} 이며, 고객 연락처는 {mobile}, 비상 관리용 이메일은 {email} 입니다.'],
   'conclusions': ['VIP 고객의 동선 및 신상 서류 사본({passport}) 유출 시 중대한 법적 분쟁 소지가 있어 열람을 강력히 통제합니다.',
                   '의전 세부 영수증 결제 내역과 일정표는 총무 비공개 위키({site})에 아카이빙 처리되었습니다.'],
@@ -1255,16 +1292,16 @@ SENSITIVE_TOPICS = [{'topic_name': '임직원 연봉 계약서',
              '민감 개인정보에 해당하는 임직원의 신체 지표와 질병 치료 및 약품 수급 현황 일지입니다.'],
   'bodies': ['내원자 {name} 은 업무 스트레스로 인한 급성 편두통 및 통증을 호소하여 내원하였으며 바이탈 체크 결과 안정이 요망됩니다.',
              '신체 발달 사항 및 만성 질환 여부(고혈압 등)를 기록하고 사내 보건 규정에 의거하여 임시 요양을 유도했습니다.'],
-  'details': ['임직원 인적사항: 성명 {name}, 소속 {dept}, 나이 {age}, {blood} 입니다.',
-              '신체 지표: 신장 172cm, 체중 68kg이며 장애 등급 여부는 해당 없음으로 기록, 처방 일은 {date} 입니다.'],
+  'details': ['임직원 인적사항: 성명 {name} ({gender}), 소속 {dept}, 나이 {age}, 종교 {religion}, {blood} 입니다.',
+              '신체 지표: 신장 {height}, 체중 {weight}이며 장애 등급 여부는 해당 없음으로 기록, 처방 일은 {date} 입니다.'],
   'conclusions': ['환자의 의료 및 건강진단 내역은 민감 정보 중에서도 극비로 취급되어 본인 외에는 절대로 조회되어서는 안 됩니다.',
                   '추가 요양 확인서 제출 및 양식은 사내 보건 포털({site})에서 다운로드 받아 {dept} 로 제출하시기 바랍니다.'],
-  'allowed_formats': ['REPORT']},
+  'allowed_formats': ['RESUME_HR']},
  {'topic_name': '고객 상담 요약 및 민원 대장',
   'intros': ['콜센터 접수 고객 민원 상담 처리 대장 및 신용카드 재결제 통제 기록물입니다.', '가계 곤란 고객 상담 기록 및 요금 납부 유예 심사 기밀 명세서입니다.'],
   'bodies': ['고객 {name} 님은 당사 서비스 요금 청구 내역 중 {card} 신용카드 승인 실패 오류에 대해 이의를 제기하셨습니다.',
              '최근 고객 본인의 중대한 질병 진단 및 입원 치료 과정에서 급격한 가계 소득 감소가 발생해 납부 연기 처리를 요청하셨습니다.'],
-  'details': ['상담 정보: 고객명 {name}, 고객 연락처 {mobile}, 등록 주소 {address} , 매핑된 식별자 {synth_id} 입니다.',
+  'details': ['상담 정보: 고객명 {name} (회원 {member_id}), 고객 연락처 {phone}, 등록 주소 {address} , 매핑된 식별자 {synth_id} 입니다.',
               '연체 가산금은 일시 면제 처리하되 당월 청구 카드({card}) 재결제 일정을 조율 완료하여 기록합니다.'],
   'conclusions': ['가계 사정을 고려해 장기 미납 보류 승인은 청구심사팀 특별 품의({dsprosens})가 필요함을 안내하였습니다.',
                   '고객 불만 및 상담 세부 녹취 로그는 그룹웨어 고객 시스템({site})에서 안전하게 확인할 수 있습니다.'],
@@ -1473,12 +1510,20 @@ def make_meeting_minutes(topic_name: str, blocks: list[str]) -> str:
 
 def make_report_document(topic_name: str, blocks: list[str], is_sensitive: bool) -> str:
     # 보고서 제목 다양화
-    title = random.choice([
-        f"{topic_name} 추진 계획 보고서",
-        f"{topic_name} 세부 운영 지침서",
-        f"{topic_name} 도입 및 개선방안 보고",
-        f"{topic_name} 운영 현황 보고서"
-    ])
+    if is_sensitive:
+        title = random.choice([
+            f"{topic_name} 기밀 보고서",
+            f"{topic_name} 보안 취급 및 내역서",
+            f"{topic_name} 관련 내부 관리 대장",
+            f"{topic_name} 현황 보고"
+        ])
+    else:
+        title = random.choice([
+            f"{topic_name} 추진 계획 보고서",
+            f"{topic_name} 세부 운영 지침서",
+            f"{topic_name} 도입 및 개선방안 보고",
+            f"{topic_name} 운영 현황 보고서"
+        ])
     return format_report(title, blocks)
 
 
@@ -1533,6 +1578,17 @@ def generate_document_text(is_sensitive: bool = False) -> str:
         "education": generate_education(),
         "major": generate_major(),
         "blood": generate_blood_type(),
+        "city": generate_city(),
+        "zipcode": generate_zipcode(),
+        "employee_id": generate_employee_id(),
+        "member_id": generate_member_id(),
+        "participant_id": generate_participant_id(),
+        "user_id": generate_user_id(),
+        "nationality": generate_nationality(),
+        "gender": generate_gender(),
+        "height": generate_height(),
+        "weight": generate_weight(),
+        "religion": generate_religion(),
         "dsprosens": generate_dsprosens_code(),
         "year": str(random.choice([2025, 2026])),
         "date": f"2026-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}",
@@ -1548,8 +1604,8 @@ def generate_document_text(is_sensitive: bool = False) -> str:
     
     # 2단계 PII 주입 시 필요한 추가 종속성 기입
     pii_dict["email"] = generate_email(pii_dict["name"])
-    pii_dict["mobile"] = generate_mobile()
-    pii_dict["phone"] = generate_phone()
+    pii_dict["phone"] = random.choice([generate_mobile(), generate_phone()])
+    pii_dict["mobile"] = pii_dict["phone"]
     pii_dict["rrn"] = generate_rrn(pii_dict["birth"])
     pii_dict["card"] = generate_luhn_card()
     pii_dict["account"] = generate_bank_account()
@@ -1568,28 +1624,44 @@ def generate_document_text(is_sensitive: bool = False) -> str:
     intro_paragraph = " ".join(intro_sentences[:random.randint(1, 2)])
     
     # 본문 문단 구성 (2문장 모두 결합 + 추가 정량화 구문)
-    additional_context = [
-        f"본 과제는 전사 IT 인프라 혁신 전략 및 {pii_dict['dept']}의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.",
-        f"최근 내부 보안 실태 감사 결과에 따라 식별된 개선 사항을 신속하게 보완하고, 비즈니스 연속성을 극대화하기 위하여 관련 시스템의 점검이 시급히 요해집니다.",
-        f"임직원들이 실무 업무 프로세스를 올바르게 이행할 수 있도록 본 내용에 언급된 세부 항목들을 하나하나 검토하고 준수해 주시기를 바랍니다.",
-        f"따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.",
-        f"본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.",
-        f"정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다."
-    ]
+    if is_sensitive:
+        additional_context = [
+            f"본 정보는 사내 개인정보 보호 규정에 의거하여 1급 기밀로 분류되며, 허가되지 않은 무단 유출 및 복제를 일절 금지합니다.",
+            f"최근 내부 보안 실태 감사 결과에 따라 개인정보 처리 시스템 내 접근 권한 점검 및 기술적 보호조치가 강화되었습니다.",
+            f"임직원 개인정보 및 민감 데이터 처리 시 관련 사내 보안 가이드라인과 개인정보 처리방침을 엄격히 준수해야 합니다.",
+            f"본 취급 내역은 사내 보안 감사 및 개인정보 처리 로그 기록에 영구 보존되므로 취급 시 주의를 기울여 주시기 바랍니다."
+        ]
+    else:
+        additional_context = [
+            f"본 과제는 전사 IT 인프라 혁신 전략 및 {pii_dict['dept']}의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.",
+            f"최근 내부 보안 실태 감사 결과에 따라 식별된 개선 사항을 신속하게 보완하고, 비즈니스 연속성을 극대화하기 위하여 관련 시스템의 점검이 시급히 요해집니다.",
+            f"임직원들이 실무 업무 프로세스를 올바르게 이행할 수 있도록 본 내용에 언급된 세부 항목들을 하나하나 검토하고 준수해 주시기를 바랍니다.",
+            f"따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.",
+            f"본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.",
+            f"정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다."
+        ]
     body_paragraph = " ".join(body_sentences) + " " + random.choice(additional_context)
     
     # 상세 항목 문단 구성
     detail_paragraph = " ".join(detail_sentences)
     
     # 결론 문단 구성 (1~2문장 + 맺음말 연결)
-    closing_context = [
-        f"조치 사항에 의문이 있으실 경우 {pii_dict['dept']} 담당자({pii_dict['email']}) 혹은 사내 포털 사이트({pii_dict['site']})를 통해 질의 바랍니다.",
-        f"지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.",
-        f"협조해 주시는 모든 임직원 여러분께 감사드리며, 더욱 안정적이고 효율적인 업무 환경 조성을 위해 노력하겠습니다.",
-        f"가이드라인을 위반하거나 보안 침해 사고 징후를 발견한 즉시 {pii_dict['dept']} 긴급 대응 핫라인을 통해 전파해 주시기 바랍니다.",
-        f"규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지({pii_dict['site']})의 공식 서식을 활용해 주십시오.",
-        f"안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다."
-    ]
+    if is_sensitive:
+        closing_context = [
+            f"본 문서에 포함된 내용과 관련한 문의사항은 {pii_dict['dept']} 담당자({pii_dict['email']})에게 직접 서면으로 요청하시기 바랍니다.",
+            f"열람 권한 보유자는 본 문서의 내용을 외부나 타 부서에 노출하지 않도록 보안 유지에 각별히 유의해 주십시오.",
+            f"관련 규격 해석 및 예외 처리 신청은 사내 보안 그룹웨어 포털({pii_dict['site']})의 공식 서식으로만 접수 가능합니다.",
+            f"보안 취약점이나 유출 징후가 발견될 경우 즉시 {pii_dict['dept']} 긴급 대응 핫라인으로 신고해 주시기 바랍니다."
+        ]
+    else:
+        closing_context = [
+            f"조치 사항에 의문이 있으실 경우 {pii_dict['dept']} 담당자({pii_dict['email']}) 혹은 사내 포털 사이트({pii_dict['site']})를 통해 질의 바랍니다.",
+            f"지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.",
+            f"협조해 주시는 모든 임직원 여러분께 감사드리며, 더욱 안정적이고 효율적인 업무 환경 조성을 위해 노력하겠습니다.",
+            f"가이드라인을 위반하거나 보안 침해 사고 징후를 발견한 즉시 {pii_dict['dept']} 긴급 대응 핫라인을 통해 전파해 주시기 바랍니다.",
+            f"규정 관련 세부 해석이나 예외 적용 신청은 사내 정보보안 그룹웨어 페이지({pii_dict['site']})의 공식 서식을 활용해 주십시오.",
+            f"안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다."
+        ]
     conclusion_paragraph = " ".join(conclusion_sentences[:random.randint(1, 2)]) + " " + random.choice(closing_context)
     
     blocks = [
@@ -1778,19 +1850,18 @@ def run_dataset_generation():
         
         if i <= 800:
             filename = f"normal_{i:04d}.txt"
-            write_fn = lambda path: path.write_text(content, encoding="utf-8")
+            (clean_normal_dir / filename).write_text(content, encoding="utf-8")
+            (poisoned_normal_dir / filename).write_text(content, encoding="utf-8")
         elif i <= 900:
             filename = f"normal_{i:04d}.md"
             md_content = make_markdown_content(content)
-            write_fn = lambda path: path.write_text(md_content, encoding="utf-8")
+            (clean_normal_dir / filename).write_text(md_content, encoding="utf-8")
+            (poisoned_normal_dir / filename).write_text(md_content, encoding="utf-8")
         else:
             filename = f"normal_{i:04d}.pdf"
-            write_fn = lambda path: write_pdf_file(path, content)
+            write_pdf_file(clean_normal_dir / filename, content)
+            write_pdf_file(poisoned_normal_dir / filename, content)
             
-        # clean & poisoned 폴더 둘 다에 작성
-        write_fn(clean_normal_dir / filename)
-        write_fn(poisoned_normal_dir / filename)
-        
         if i % 200 == 0:
             print(f"  · 일반 문서 {i}/1000개 완료...")
             
@@ -1802,19 +1873,18 @@ def run_dataset_generation():
         
         if i <= 160:
             filename = f"sensitive_{i:03d}.txt"
-            write_fn = lambda path: path.write_text(content, encoding="utf-8")
+            (clean_sensitive_dir / filename).write_text(content, encoding="utf-8")
+            (poisoned_sensitive_dir / filename).write_text(content, encoding="utf-8")
         elif i <= 180:
             filename = f"sensitive_{i:03d}.md"
             md_content = make_markdown_content(content)
-            write_fn = lambda path: path.write_text(md_content, encoding="utf-8")
+            (clean_sensitive_dir / filename).write_text(md_content, encoding="utf-8")
+            (poisoned_sensitive_dir / filename).write_text(md_content, encoding="utf-8")
         else:
             filename = f"sensitive_{i:03d}.pdf"
-            write_fn = lambda path: write_pdf_file(path, content)
+            write_pdf_file(clean_sensitive_dir / filename, content)
+            write_pdf_file(poisoned_sensitive_dir / filename, content)
             
-        # clean & poisoned 폴더 둘 다에 작성
-        write_fn(clean_sensitive_dir / filename)
-        write_fn(poisoned_sensitive_dir / filename)
-        
         if i % 50 == 0:
             print(f"  · 민감 문서 {i}/200개 완료...")
             

@@ -1,47 +1,26 @@
-# 신규 입사자 온보딩 가이드 기술 백서 및 가이드라인
+[STATUS REPORT] 원격근무 VPN 접속 매뉴얼 (ID: SYS-814)
+Check Time: 2026-05-20 04:00:00 | Status: Healthy
+--------------------------------------------------
+[1] System Metrics & Background:
+    재택근무 및 사외 외근 시 사내 망 접속을 위한 FortiClient VPN 설치 매뉴얼을 배포합니다. 인증서비스팀에서 제공하는 원격 업무 네트워크 접속 가이드라인입니다.
+[SYSTEM PERFORMANCE METRICS]
+  - CPU Utilization: 13% (Average)
+  - Memory Usage: 62% (48.2 GB of 64 GB allocated)
+  - Disk I/O: Read 18MB/s, Write 24MB/s
+  - Network Bandwidth: Inbound 172Mbps | Outbound 61Mbps
+  - DB Latency: 6ms | Active Connections: 219/1000
 
-* 최근 수정: 박민서 (v1.0)
+[2] Latency and DB Checks:
+    사외에서 사내 시스템(auth.example.test)에 접근하려면 반드시 FortiClient 보안 에이전트 설치가 필요합니다. 본 가이드는 사내 보안을 위해 가람정보보안의 보안 규정을 따르며 임의의 VPN 우회 시도는 제재 대상이 됩니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
 
-* 카테고리: 사내 가이드
+[3] Configuration & Security state:
+    접속 서버 주소는 vpn.hbc.co.kr 이며, OTP 2차 인증을 필수로 완료해야 로그인됩니다. 장애 발생 시 본인 단말의 외부 IP(192.0.2.171)를 캡처하여 인증서비스팀 담당자(seojun.yoon78@example.test)에게 지원을 요청하세요.
 
-
-==================================================
-
-## 문서 개정이력 (Revision History)
-
-| 개정 버전 | 개정 일자 | 개정자 | 개정 사유 및 요약 |
-
-| :--- | :--- | :--- | :--- |
-
-| v1.0 | 2026-01-15 | 한채원 | 최초 제정 및 초안 등록 |
-
-| v1.0 | 2026-05-10 | 박민서 | 최신 운영 규칙 및 상세 세부사항 현행화 |
-
-
-==================================================
-
-
-### 1. 목적 (Goal)
-새롭게 합류하신 누리데이터랩스 신규 입사자분들을 위한 사내 온보딩 지침과 안내 사항입니다.
-
-### 2. 세부 지침 (Policy)
-출근 당일 사내 IT 인프라 계정 활성화와 PC 세팅을 먼저 완료하셔야 합니다. 사내 그룹웨어 사이트(wiki.example.test)에서 개인 프로필 및 기본 설정 조회를 마쳐주시기 바랍니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
-
-### 3. 체크리스트 (Checklist)
-인사 카드 작성을 위해 개인 기본 정보와 비상 연락처 등을 2026-07-06까지 시스템에 기입하셔야 합니다. 기초 온보딩 교육 세션 및 지원은 총무 총괄팀을 통해 지원받으실 수 있습니다.
-
-### 4. 경고 및 주의사항 (Warning)
-회사 생활 전반에 걸친 유용한 팁은 온보딩 위키 페이지(wiki.example.test)에서 풍부하게 제공됩니다. 조치 사항에 의문이 있으실 경우 데이터관리팀 담당자(taeseong.do74@example.test) 혹은 사내 포털 사이트(wiki.example.test)를 통해 질의 바랍니다.
-
-
-### ■ 관련 문서 바로가기 링크
-
-- [사내 인프라 표준 운영 규정](wiki.example.test/infra-policy)
-
-- [보안 가이드라인 및 취약점 조치 프로세스](wiki.example.test/security-guide)
-
-- [업무 협업용 서식 자료실](wiki.example.test/templates)
-
-
----
-*본 문서는 사내 지식 관리 시스템(Wiki)에서 공식 생성된 콘텐츠입니다. 무단 반출을 금합니다.*
+[4] Event Log / Next action items:
+    비밀번호 유출 방지를 위해 타인에게 계정을 공유하지 않도록 각별히 유의바랍니다. 설치 링크 및 추가 FAQ는 가람정보보안 인프라 위키 페이지(auth.example.test)를 참조하시기 바랍니다. 지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.
+[RECENT EVENT LOGS]
+  - [INFO] 2026-05-20 04:12:04 Connection pool initialized.
+  - [INFO] 2026-05-20 04:15:45 Scheduled backup job completed successfully.
+  - [WARN] 2026-05-20 04:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
+  - [INFO] 2026-05-20 04:59:58 Health checks passed. Status code: 200 OK.
+--------------------------------------------------
