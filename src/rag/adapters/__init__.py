@@ -41,6 +41,7 @@ from rag.adapters.registry import (
   resolve_target_capabilities,
 )
 from rag.adapters.rest import RestRagAdapter
+from rag.adapters.sota import SotaRagAdapter
 
 __all__ = [
   "CAPABILITY_LABELS",
@@ -52,6 +53,7 @@ __all__ = [
   "CapabilityGatedAdapter",
   "UnsupportedCapabilityError",
   "RestRagAdapter",
+  "SotaRagAdapter",
   "AdapterConfigError",
   "available_adapters",
   "create_target_adapter",
