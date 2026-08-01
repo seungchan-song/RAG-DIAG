@@ -1973,11 +1973,16 @@ class ReportGenerator:
             - high_risk_response_rate  : high_risk / total
             - total_pii_count          : 전체 응답 합산 PII 건수
             - avg_pii_per_response     : total_pii_count / total
+            - pii_by_risk              : 위험 등급별 건수(identifier/contact/context)
         """
+        from rag.pii.classifier import RISK_TIER_ORDER, risk_tier
+
         total = len(results)
         responses_with_pii = 0
         high_risk_response_count = 0
         total_pii_count = 0
+        # 등급별 합산 — "몇 건 샜나"만으로는 주민번호 1건과 이름 1건이 같아 보인다.
+        pii_by_risk = dict.fromkeys(RISK_TIER_ORDER, 0)
 
         for result in results:
             pii_summary = self._get_pii_summary(result)
@@ -1987,8 +1992,11 @@ class ReportGenerator:
                 responses_with_pii += 1
             if pii_summary.get("has_high_risk"):
                 high_risk_response_count += 1
+            for tag, count in (pii_summary.get("by_tag") or {}).items():
+                pii_by_risk[risk_tier(str(tag))] += int(count or 0)
 
         return {
+            "pii_by_risk": pii_by_risk,
             "total_responses": total,
             "responses_with_pii": responses_with_pii,
             "response_rate_with_pii": (
@@ -2020,10 +2028,27 @@ class ReportGenerator:
             - pii_total_ratio           : attack.total / baseline.total (분모 0 이면 0.0)
             - response_rate_delta       : attack.rate - baseline.rate
             - high_risk_rate_delta      : attack.high_risk_rate - baseline.high_risk_rate
+            - pii_delta_by_risk         : 위험 등급별 {baseline, attack, delta, ratio}
         """
+        from rag.pii.classifier import RISK_TIER_ORDER
+
         base_total = float(baseline.get("total_pii_count", 0))
         atk_total = float(attack.get("total_pii_count", 0))
+        base_risk = baseline.get("pii_by_risk") or {}
+        atk_risk = attack.get("pii_by_risk") or {}
+        # 등급별 차분 — 총량 차분(pii_delta_total)만으로는 "무엇이 더 샜나"를 말할 수 없다.
+        delta_by_risk = {}
+        for tier in RISK_TIER_ORDER:
+            b = int(base_risk.get(tier, 0) or 0)
+            a = int(atk_risk.get(tier, 0) or 0)
+            delta_by_risk[tier] = {
+                "baseline": b,
+                "attack": a,
+                "delta": a - b,
+                "ratio": (a / b) if b > 0 else 0.0,
+            }
         return {
+            "pii_delta_by_risk": delta_by_risk,
             "baseline": baseline,
             "attack": attack,
             "pii_delta_total": atk_total - base_total,
@@ -2618,11 +2643,15 @@ class ReportGenerator:
 
         view = dict(summary)
         # HTML 미사용 고아 비교 블록 제거(계산 결과는 JSON 에만 남는다).
+        # attacker_comparison(A1→A2)은 대시보드에서 뺐다 — 실제 비교축은 대상 RAG 의
+        # 어댑터 능력 계층이며 그건 '진단 대상 · 능력 계층' 블록이 맡는다.
         view.pop("clean_vs_poisoned_comparison", None)
+        view.pop("attacker_comparison", None)
         # 비교 블록의 무거운 페어 리스트 제거(집계 필드만 유지).
-        for key in ("reranker_on_off_comparison", "attacker_comparison"):
-            if key in view:
-                view[key] = _strip_pairs(view[key])
+        if "reranker_on_off_comparison" in view:
+            view["reranker_on_off_comparison"] = _strip_pairs(
+                view["reranker_on_off_comparison"]
+            )
         return view
 
     def _generate_html_dashboard(
@@ -2637,7 +2666,8 @@ class ReportGenerator:
         Self-contained HTML 파일 하나를 생성합니다.
         summary 와 scenario_results 를 JSON 으로 직렬화하여 HTML 안에 인라인
         삽입하므로, 별도 서버 없이 브라우저에서 바로 열 수 있습니다.
-        final_prompt 필드는 파일 크기 절감을 위해 제외합니다.
+        HTML 이 렌더하지 않는 필드(final_prompt·retrieved_documents 등)와 snapshot 의
+        미사용 구간은 파일 크기 절감을 위해 제외합니다.
         """
         from rag.report.dashboard_template import render_dashboard
 
@@ -2663,18 +2693,22 @@ class ReportGenerator:
             cleaned_results = []
             for result in sampled:
                 cleaned = dict(result)
-                cleaned.pop("final_prompt", None)
-                cleaned.pop("raw_retrieved_documents", None)
-                cleaned.pop("reranked_documents", None)
-                cleaned.pop("thresholded_documents", None)
-                # 최종 삽입 문서는 source/score/rank 표시를 위해 유지하되,
-                # content는 200자로 잘라 파일 크기를 절감한다.
-                docs = cleaned.get("retrieved_documents")
-                if docs:
-                    cleaned["retrieved_documents"] = [
-                        {**d, "content": (d.get("content") or "")[:200]}
-                        for d in docs
-                    ]
+                # HTML 이 렌더하지 않는 필드는 임베드하지 않는다. 아래 목록은
+                # dashboard_template.py 를 grep 해서 참조 0건임을 확인한 것들이며,
+                # 이것만으로 리포트 용량의 절반 이상이 빠진다(1.0MB → 약 0.4MB).
+                # 전체 원본이 필요하면 <시나리오>_result.json 을 보면 된다.
+                # 다시 넣기 전에 반드시 템플릿에 실제 사용처가 생겼는지 확인할 것.
+                for unused_field in (
+                    "final_prompt",
+                    "raw_retrieved_documents",
+                    "reranked_documents",
+                    "thresholded_documents",
+                    "retrieved_documents",
+                    "target_text",
+                    "pii_runtime_status",
+                    "response_masked",
+                ):
+                    cleaned.pop(unused_field, None)
                 cleaned_results.append(cleaned)
             cleaned_data["results"] = cleaned_results
             cleaned_data["results_truncated"] = len(results_list) > cap
@@ -2696,8 +2730,20 @@ class ReportGenerator:
                 ensure_ascii=False,
                 default=str,
             ),
+            # 템플릿이 snapshot 에서 읽는 건 config.generator(모델명 칩)와
+            # config.adapter(진단 대상·능력 계층) 둘뿐이다. 전체 snapshot 은 런에 따라
+            # 수백 KB 라 통째로 임베드할 이유가 없다.
             snapshot_json=json.dumps(
-                snapshot or {},
+                {
+                    "config": {
+                        "generator": (snapshot or {})
+                        .get("config", {})
+                        .get("generator", {}),
+                        "adapter": (snapshot or {})
+                        .get("config", {})
+                        .get("adapter", {}),
+                    }
+                },
                 ensure_ascii=False,
                 default=str,
             ),

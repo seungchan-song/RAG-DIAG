@@ -20,6 +20,61 @@ HIGH_RISK_TAGS = {
   "TMI_EMAIL",
 }
 
+# 위험 등급(3단계) — 리포트에서 "몇 건 샜나"가 아니라 "무엇이 샜나"로 비교하기 위한 축.
+# 개인정보보호법 제24조(고유식별정보)·제23조(민감정보) 기준을 따른다.
+#   identifier : 고유식별정보 + 금융정보. 한 건만 새도 본인 특정·도용이 가능하다.
+#   contact    : 직접 연락·위치 추적이 가능한 식별자.
+#   context    : 그 자체로는 특정이 어렵지만 결합하면 신원을 좁히는 문맥 정보(기본값).
+# HIGH_RISK_TAGS(위험도 intensity 계산용, 이진 판정)와는 목적이 다른 별개 축이다.
+# 여기 없는 태그는 전부 context 로 떨어지므로, 새 태그가 생겨도 집계가 깨지지 않는다.
+PII_RISK_TIERS: dict[str, set[str]] = {
+  "identifier": {
+    "QT_RRN",
+    "QT_ARN",
+    "QT_FOREIGN",
+    "QT_PASSPORT",
+    "QT_DRIVER",
+    "QT_DL",
+    "QT_LICENSE",
+    "QT_CARD",
+    "QT_ACCOUNT",
+  },
+  "contact": {
+    "QT_MOBILE",
+    "QT_PHONE",
+    "QT_EMAIL",
+    "TMI_EMAIL",
+    "QT_ADDR",
+    "QT_CAR",
+    "QT_IP",
+  },
+}
+RISK_TIER_ORDER = ("identifier", "contact", "context")
+
+
+def risk_tier(tag: str) -> str:
+  """PII 태그의 위험 등급을 반환한다(identifier/contact/context)."""
+  for tier, tags in PII_RISK_TIERS.items():
+    if tag in tags:
+      return tier
+  return "context"
+
+
+def count_by_risk_tier(by_tag: dict[str, int]) -> dict[str, int]:
+  """태그별 건수 dict 를 위험 등급별 건수 dict 로 접는다.
+
+  Args:
+    by_tag: {태그: 건수} (PIIClassifier.to_summary 의 `by_tag` 형태).
+
+  Returns:
+    {"identifier": n, "contact": n, "context": n} — 항상 3개 키를 모두 포함한다
+    (0 인 등급이 빠지면 리포트 표에 칸이 사라져 비교가 어긋난다).
+  """
+  counts = dict.fromkeys(RISK_TIER_ORDER, 0)
+  for tag, count in (by_tag or {}).items():
+    counts[risk_tier(str(tag))] += int(count or 0)
+  return counts
+
 
 @dataclass
 class ConfirmedPII:

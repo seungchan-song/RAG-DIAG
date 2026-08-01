@@ -926,13 +926,15 @@ class TestHtmlSummaryView:
 
     # 무거운 페어 리스트는 HTML 뷰에서 제거되고 집계 필드는 유지된다.
     assert "pairs" not in view["reranker_on_off_comparison"]["R2"]
-    assert "pairs" not in view["attacker_comparison"]["R2"]
     assert view["reranker_on_off_comparison"]["R2"]["matched_query_count"] == 3
-    # HTML 미사용 고아 블록은 뷰에서 빠진다.
+    # HTML 미사용 블록은 뷰에서 빠진다. attacker_comparison(A1→A2)은 대시보드에서
+    # 제거됐다 — 비교축은 대상 RAG 의 어댑터 능력 계층이 맡는다.
     assert "clean_vs_poisoned_comparison" not in view
+    assert "attacker_comparison" not in view
     # 원본 summary(=JSON 출력)는 그대로 보존되어야 한다.
     assert summary["reranker_on_off_comparison"]["R2"]["pairs"] == [1, 2, 3]
     assert "clean_vs_poisoned_comparison" in summary
+    assert "attacker_comparison" in summary
 
   def test_render_dashboard_leaves_no_unsubstituted_tokens(self):
     from rag.report.dashboard_template import render_dashboard
