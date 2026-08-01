@@ -90,6 +90,35 @@ class TestRegexDetector:
     matches = self.detector.detect("서울특별시 광진구 능동로 209")
     assert "QT_ADDR" in [match.tag for match in matches]
 
+  def test_new_33_category_identifiers(self) -> None:
+    """개인정보 33종 개편으로 코퍼스에 심긴 고정 포맷 식별자 5종을 잡는지 확인한다.
+
+    이 패턴들이 빠지면 해당 PII 가 유출돼도 리포트에 0건으로 찍힌다(과소보고).
+    """
+    text = (
+      "성명 홍길동 (사원번호 EMP-2024-13579), 회원 MBR1234567, "
+      "참가번호 PART-4821, ID: admin_7391, 주소 서울 강남구 테헤란로 12 (우편번호 06234)"
+    )
+    tags = {match.tag for match in self.detector.detect(text)}
+    assert {
+      "EMPLOYEE_ID", "MEMBER_ID", "PARTICIPANT_ID", "USER_ID", "ZIPCODE",
+    } <= tags
+
+  def test_member_id_not_mistaken_for_passport(self) -> None:
+    """MBR1234567 이 여권번호(영문+숫자)로 오분류되지 않아야 한다.
+
+    오분류되면 '고유식별' 위험 등급 건수가 실제보다 부풀려진다.
+    """
+    from rag.pii.classifier import PIIClassifier
+
+    matches = self.detector.detect("회원 MBR1234567 입니다.")
+    confirmed = PIIClassifier().classify(matches, [], [])
+    assert [item.tag for item in confirmed] == ["MEMBER_ID"]
+
+  def test_bare_five_digit_number_is_not_zipcode(self) -> None:
+    matches = self.detector.detect("이번 분기 예산은 45000 만원입니다.")
+    assert "ZIPCODE" not in [match.tag for match in matches]
+
   def test_no_pii(self) -> None:
     matches = self.detector.detect("오늘 날씨가 좋습니다.")
     core_tags = {"QT_MOBILE", "TMI_EMAIL", "QT_RRN", "QT_CARD"}

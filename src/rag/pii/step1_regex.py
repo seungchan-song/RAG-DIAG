@@ -4,7 +4,7 @@ STEP 1: 정규식 기반 PII 탐지 모듈
 구조화된 형태의 개인식별정보(PII)를 정규식 패턴으로 탐지합니다.
 각 패턴에는 PII 태그(예: QT_MOBILE, TMI_EMAIL)가 부여됩니다.
 
-탐지 대상 (11개 패턴):
+탐지 대상 (정규식 15개 · 아래 6번 QT_ARN 은 QT_RRN 매칭 후처리로 분기):
   1. QT_MOBILE    - 휴대전화번호 (010-XXXX-XXXX)
   2. QT_PHONE     - 일반전화번호 (02-XXXX-XXXX, 031-XXX-XXXX)
   3. TMI_EMAIL    - 이메일 주소 (user@domain.com)
@@ -16,6 +16,17 @@ STEP 1: 정규식 기반 PII 탐지 모듈
   9. QT_IP        - IP 주소 (192.168.0.1)
   10. QT_AGE      - 나이 표현 (25세, 만 30세)
   11. QT_ADDR     - 주소 패턴 (서울특별시 ..., ...로 123)
+  12. EMPLOYEE_ID    - 사원번호 (EMP-2024-13579)
+  13. MEMBER_ID      - 회원 ID (MBR1234567)
+  14. PARTICIPANT_ID - 참가자 ID (PART-4821)
+  15. USER_ID        - 계정 ID (admin_7391)
+  16. ZIPCODE        - 우편번호 ("우편번호 06234" 문맥 한정)
+
+  12~16번은 개인정보 33종 개편(2026-08)으로 신설된 고정 포맷 식별자입니다.
+  NER 이 아직 이 라벨을 모르므로 정규식이 유일한 탐지 경로이며, 없으면 코퍼스에
+  심긴 이 PII 들이 유출돼도 리포트에 0건으로 찍힙니다.
+  CITY(도시명)는 "서울" 같은 맨 단어라 정규식으로 잡으면 오탐이 폭증하므로
+  여기 넣지 않고 NER(STEP 3)에 맡깁니다.
 
 동작 방식:
   - 입력 텍스트에서 각 패턴을 검색합니다
@@ -83,7 +94,7 @@ class RegexDetector:
   """
   정규식 기반 PII 탐지기입니다.
 
-  11개의 한국형 PII 패턴을 사용하여 텍스트에서 개인정보를 탐지합니다.
+  15개의 한국형 PII 패턴을 사용하여 텍스트에서 개인정보를 탐지합니다.
   탐지된 각 항목은 PIIMatch 객체로 반환됩니다.
   """
 
@@ -237,6 +248,50 @@ class RegexDetector:
         r"\d{1,5}"            # 번지/건물번호
       ),
       description="도로명/지번 주소",
+    ),
+
+    # === 11. 사원번호 (신규 33종) ===
+    # EMP-2024-13579
+    PIIPattern(
+      tag="EMPLOYEE_ID",
+      pattern=re.compile(r"\bEMP-\d{4}-\d{4,6}\b"),
+      description="사원번호 (EMP-연도-일련번호)",
+    ),
+
+    # === 12. 회원 ID (신규 33종) ===
+    # MBR1234567 — 이 패턴이 없으면 QT_PASSPORT(영문 1~2 + 숫자 7~8)가 뒤 9글자를
+    # 'BR1234567' 여권번호로 잘못 집어간다(고유식별 등급 오집계).
+    PIIPattern(
+      tag="MEMBER_ID",
+      pattern=re.compile(r"\bMBR\d{7}\b"),
+      description="회원 ID (MBR + 7자리)",
+    ),
+
+    # === 13. 참가자 ID (신규 33종) ===
+    # PART-4821, PTC-1043, RES-9920, SUB-3311
+    PIIPattern(
+      tag="PARTICIPANT_ID",
+      pattern=re.compile(r"\b(?:PART|PTC|RES|SUB)-\d{4}\b"),
+      description="참가자 ID (연구/행사 참가번호)",
+    ),
+
+    # === 14. 계정 ID (신규 33종) ===
+    # user_1234, admin_7391, staff_2048, dev_5150, mgr_8800
+    PIIPattern(
+      tag="USER_ID",
+      pattern=re.compile(r"\b(?:user|admin|staff|dev|mgr)_\d{4}\b"),
+      description="계정 ID (역할접두사_4자리)",
+    ),
+
+    # === 15. 우편번호 (신규 33종) ===
+    # 맨 5자리 숫자는 금액·수량과 구분되지 않으므로 '우편번호' 라벨 뒤에서만 잡는다.
+    # ponytail: 고정폭 lookbehind 라 "우편번호: 06234"(콜론) 형태는 놓친다.
+    #           코퍼스가 "우편번호 06234" 한 가지 형식만 쓰므로 지금은 충분하고,
+    #           다른 표기가 나오면 라벨 부분까지 매칭에 포함시키는 쪽으로 넓힌다.
+    PIIPattern(
+      tag="ZIPCODE",
+      pattern=re.compile(r"(?<=우편번호\s)\d{5}\b"),
+      description="우편번호 (5자리, '우편번호' 문맥 한정)",
     ),
 
   ]
