@@ -73,7 +73,8 @@ class TestThesis:
     th = nar["thesis"]
     assert th["headline"]
     # R2(3.4배) > R4(2.7배) 이므로 headline 은 R2 를 가리켜야 한다.
-    assert "R2" in th["headline"]
+    # 리포트 노출 문구에서는 코드(R2) 대신 시나리오 이름을 쓴다(사용자가 코드를 모른다).
+    assert "검색 데이터 유출" in th["headline"]
     assert "3.4배" in th["headline"]
     assert set(th["by_scenario"].keys()) == {"R2", "R4"}
 
@@ -227,11 +228,11 @@ class TestHeadlineMetrics:
     }
     metrics = build_report_narrative(s)["overall"]["metrics"]
     assert len(metrics) == 3
-    assert metrics[0]["value"] == "408건"          # 공격 응답 PII 총량(NORMAL 제외)
-    assert metrics[1]["value"] == "+289건"         # 대조군 대비 추가 유출
-    # ③ 은 성공률이 아니라 '가장 위험한 등급이 몇 건 새었나'다(원장이 성공률을 이미 보여줌).
-    assert metrics[2]["value"] == "55건"
-    assert "13%" in metrics[2]["sub"]              # 408건 중 55건
+    # ① 첫 칸은 '뚫렸는가' — 최고 종합 위험도 + 그 공격의 성공률.
+    assert metrics[0]["label"] == "최고 종합 위험도"
+    assert "공격 성공률" in metrics[0]["sub"]
+    assert metrics[1]["value"] == "408건"          # 공격 응답 PII 총량(NORMAL 제외)
+    assert metrics[2]["value"] == "+289건"         # 대조군 대비 추가 유출
 
   def test_metrics_omitted_when_no_leakage_data(self):
     metrics = build_report_narrative(_summary())["overall"]["metrics"]
