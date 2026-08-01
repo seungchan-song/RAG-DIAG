@@ -521,6 +521,33 @@ def test_r9_inject_poison_skipped_without_index_write():
   assert attack.inject_poison(_NoWriteTarget(), ["기밀자료"]) == 0
 
 
+def test_r9_resolve_trigger_keywords_ignores_bystander_docs():
+  """트리거 키워드는 attack 문서에서만 나와야 한다.
+
+  target_docs 에 normal/sensitive 문서가 대량으로 섞여 있어도(-n 캡이 attack
+  문서에만 적용되고 나머지는 그대로 통과하므로 실제로 그렇다), poison 주입에
+  쓰이는 키워드 수가 attack 문서 수를 넘지 않아야 한다. 이 불변식이 깨지면
+  poison 문서가 target_docs 크기에 비례해 과다 생성된다(트리거당
+  num_poison_docs 개씩 곱해지므로 수천 건까지 폭주할 수 있음).
+  """
+  from rag.attack.r9_injection import R9InjectionAttack
+
+  attack_docs = [
+    {"meta": {"doc_role": "attack", "keywords": []}, "keyword": "트리거A"},
+    {"meta": {"doc_role": "attack", "keywords": []}, "keyword": "트리거B"},
+  ]
+  # -n 캡이 attack 문서에만 적용되므로 실제로는 이런 식으로 normal 문서 수백 개가
+  # 그대로 섞여 들어온다(main.py:_apply_target_docs_cap 의 R9 분기).
+  bystander_docs = [
+    {"meta": {"doc_role": "normal"}, "keyword": f"일반키워드{i}"} for i in range(500)
+  ]
+
+  attack = R9InjectionAttack({})
+  keywords = attack.resolve_trigger_keywords(attack_docs + bystander_docs)
+
+  assert keywords == ["트리거A", "트리거B"]
+
+
 # === ② 외부 어댑터 주입 + truthful degrade (CapabilityGatedAdapter) ===
 def test_gated_adapter_strips_retrieval_when_not_declared():
   """RETRIEVAL_TRACE 미선언 시 검색 원문이 구조화 필드·raw dict 양쪽에서 비워져야 한다."""

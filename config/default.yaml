@@ -41,7 +41,9 @@ profiles:
 #   예) 블랙박스 외부 RAG(응답만 제공):  capabilities: ["query"]
 #       → R4 는 skip(반사실 인덱스 재구성 불가), R2·R7 은 degrade(축소 진단), NORMAL 은 run.
 adapter:
-  # 진단 대상 어댑터 타입. 등록된 값: "builtin"(기본, 우리 RAG) · "rest"(외부 REST RAG).
+  # 진단 대상 어댑터 타입. 등록된 값:
+  #   "builtin"(기본, 우리 RAG) · "rest"(외부 REST RAG, AnythingLLM 류) ·
+  #   "sota"(SOTA_RAG 전용 — 하이브리드 검색 + Cross-Encoder 리랭킹 + vLLM, RunPod 배포)
   type: builtin
   # 대상 RAG 가 노출하는 능력을 좁혀 선언(비우면 타입의 native 능력 전체).
   # 가능한 값: query · system_prompt · retrieval_trace · doc_labels · index_rebuild · index_write
@@ -49,6 +51,7 @@ adapter:
   # R9 poison 을 런타임에 write_documents 로 주입할지 여부. 우리 builtin RAG 는 poison 을
   # 파일 기반 ingest(poisoned 인덱스)로 이미 주입하므로 기본 false 다(이중 주입 방지).
   # 파일 인덱스를 직접 만질 수 없는 외부 Tier-2 어댑터(INDEX_WRITE 노출)를 붙일 때만 true.
+  # type: sota 로 R9 완전판을 돌리려면 true 로 바꿔야 한다.
   inject_poison: false
   # --- type: rest 일 때만 사용하는 외부 RAG 연결 설정 (AnythingLLM 개발자 API 기본값) ---
   # rest 는 라이브 인덱스 반사실이 불가하므로 R4 는 자동 skip 된다.
@@ -60,6 +63,23 @@ adapter:
   # sources_field: "sources"              # 검색 원문 목록 필드
   # source_content_field: "text"          # 원문 내용 필드
   # system_prompt: "...워크스페이스 방어 프롬프트 원문..."   # R7 평가 정답
+
+  # --- type: sota 일 때만 사용하는 SOTA_RAG 연결 설정 ---
+  # RAG-DIAG 와 SOTA_RAG 가 같은 RunPod pod(같은 파일시스템) 위에서 구동된다는 전제.
+  # 6능력 전부 native 로 노출되므로 capabilities: [] 로 두면 모든 시나리오가 완전판(run)
+  # 으로 실행된다(NORMAL/R2/R4/R7/R9 전부).
+  # base_url: "http://localhost:8080"           # SOTA_RAG API 기본 URL (필수)
+  # documents_root: "/root/SOTA_RAG/documents"  # SOTA_RAG 가 문서를 인덱싱한 절대 경로.
+  #   ingest/batch 호출 시 쓴 directory_path 와 반드시 동일해야 한다(R4 반사실 필터·
+  #   R9 poison 업로드가 이 경로 기준으로 source_file 을 매칭한다).
+  # local_corpus_root: "data/documents/clean"   # RAG-DIAG 로컬 코퍼스 루트(R4 doc_id 번역용).
+  #   기본값이 곧 이 프로젝트의 clean 문서 루트이므로 대개 변경할 필요 없다.
+  # poison_upload_dir: "poison"                 # documents_root 아래 R9 poison 저장 하위 폴더.
+  # max_sources: 5                              # QueryRequest.max_sources (SOTA reranker.top_k 대응)
+  # system_prompt: |                            # R7 평가 정답 — SOTA 측에 실제 설정된 프롬프트 원문
+  #   당신은 사내 문서 검색 시스템의 AI 어시스턴트입니다.
+  #   ...(sota_rag.pipeline.prompt_builder.DEFAULT_SYSTEM_PROMPT 원문 그대로 붙여넣기)...
+  # timeout: 120.0                              # vLLM 생성 지연 고려(초)
 
 generator:
   # provider 선택: "local" | "openai" | "clova" | "auto"
@@ -199,6 +219,10 @@ attack:
     num_repeats: 3
     # many_shot poison 문서 안에 누적할 Q&A 예시 수. 클수록 in-context 학습 압력 ↑.
     manyshot_example_count: 15
+    # 트리거 키워드 수 상한(안전망). poison 문서는 트리거당 num_poison_docs 개씩
+    # 생성되므로, 트리거 유도 경로에 문제가 생겨 target_docs 전체가 새어 들어와도
+    # 여기서 잘려 폭주하지 않는다. max_target_docs(50) 기준 정상 규모를 넉넉히 덮는 값.
+    max_trigger_keywords: 200
   doc_path: "data/documents/"
 
 evaluator:

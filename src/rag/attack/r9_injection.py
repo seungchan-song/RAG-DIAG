@@ -108,14 +108,18 @@ class R9InjectionAttack(BaseAttack):
     logger.info("R9 poison {}건을 write_documents 로 주입", len(poison_docs))
     return len(poison_docs)
 
-  def generate_queries(
+  def resolve_trigger_keywords(
     self, target_docs: list[dict[str, Any]]
-  ) -> list[dict[str, Any]]:
+  ) -> list[str]:
     """
-    R9 트리거 쿼리를 생성합니다.
+    트리거 키워드를 유도합니다 — 트리거 쿼리 생성과 poison 문서 주입이 함께 쓰는
+    단일 진실 공급원입니다.
 
-    논문 Def 5: Q_T = {q ∈ Q | ∃t ∈ T such that t ∈ q}
-    트리거 토큰이 포함된 쿼리를 생성합니다.
+    논문 Def 4+5 상 poison 문서(D_poi)와 트리거 쿼리(Q_T)는 반드시 같은 트리거
+    집합에서 나와야 합니다(트리거 쿼리가 그 트리거로 만든 poison 문서를 검색해야
+    공격이 성립). 이 메서드를 거치지 않고 두 경로가 각자 target_docs 에서 키워드를
+    유도하면, target_docs 에 섞인 일반/민감 문서 수만큼 poison 이 조용히 과다
+    생성될 수 있다(트리거 쿼리는 attack 문서 것만 쓰는데 poison 은 전체를 씀).
 
     트리거 키워드 우선순위:
       1. attack 문서(doc_role=attack)의 keyword/keywords → 공격 문서와 쿼리가 정확히 매칭됨
@@ -125,7 +129,7 @@ class R9InjectionAttack(BaseAttack):
       target_docs: 트리거 키워드가 담긴 문서 목록 (attack 문서 포함 권장)
 
     Returns:
-      list[dict]: 트리거 쿼리 목록
+      list[str]: 중복 제거된 트리거 키워드 목록
     """
     attack_docs = [
       doc for doc in target_docs
@@ -151,10 +155,35 @@ class R9InjectionAttack(BaseAttack):
         trigger_keywords[:5],
       )
     else:
-      trigger_keywords = [doc.get("keyword", "") for doc in target_docs]
+      # fallback 경로도 attack 경로와 동일하게 중복을 제거한다(일반 문서
+      # 다수가 같은 keyword 를 공유하는 경우 그대로 두면 poison 이 배로 늘어난다).
+      seen = set()
+      trigger_keywords = []
+      for doc in target_docs:
+        kw = doc.get("keyword", "")
+        if kw and kw not in seen:
+          seen.add(kw)
+          trigger_keywords.append(kw)
       logger.debug("R9 트리거: attack 문서 없음, 일반 문서 keyword 사용 (fallback)")
 
-    trigger_keywords = [t for t in trigger_keywords if t]
+    return [t for t in trigger_keywords if t]
+
+  def generate_queries(
+    self, target_docs: list[dict[str, Any]]
+  ) -> list[dict[str, Any]]:
+    """
+    R9 트리거 쿼리를 생성합니다.
+
+    논문 Def 5: Q_T = {q ∈ Q | ∃t ∈ T such that t ∈ q}
+    트리거 토큰이 포함된 쿼리를 생성합니다.
+
+    Args:
+      target_docs: 트리거 키워드가 담긴 문서 목록 (attack 문서 포함 권장)
+
+    Returns:
+      list[dict]: 트리거 쿼리 목록
+    """
+    trigger_keywords = self.resolve_trigger_keywords(target_docs)
     _, trigger_queries = self.query_gen.generate_r9_payloads(trigger_keywords)
     return trigger_queries
 

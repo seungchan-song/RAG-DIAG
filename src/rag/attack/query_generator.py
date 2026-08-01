@@ -477,12 +477,34 @@ class AttackQueryGenerator:
     return [(self._resolve_keyword(target_doc), "fallback")]
 
   def _resolve_trigger_keywords(self, trigger_keywords: list[str]) -> list[str]:
-    """R9 화이트박스 공격자(A3)의 트리거 키워드 셋을 그대로 반환합니다.
+    """R9 화이트박스 공격자(A3)의 트리거 키워드 셋을 정리해 반환합니다.
 
     옵션 B 매트릭스에서 R9 는 A3 단독으로 운영되므로 분기 없이 정밀 트리거를
     그대로 사용한다. (이전 A4 의 generic 트리거 fallback 경로는 제거됨.)
+
+    호출부(R9InjectionAttack.resolve_trigger_keywords)가 이미 중복을 제거하지만,
+    이 메서드가 poison 생성·쿼리 생성 양쪽이 공유하는 마지막 길목이므로 중복 제거와
+    상한을 한 번 더 건다 — 호출부 로직이 바뀌거나 우회되더라도 poison 폭주가
+    재발하지 않도록 하는 안전망이다(트리거 하나당 poison 문서가
+    num_poison_docs 개씩 생성되므로, 키워드 수가 커지면 선형으로 커진다).
     """
-    return list(trigger_keywords)
+    seen: set[str] = set()
+    deduped: list[str] = [
+      kw for kw in trigger_keywords if kw and not (kw in seen or seen.add(kw))
+    ]
+
+    r9_config = self.attack_config.get("r9", {})
+    max_keywords = int(r9_config.get("max_trigger_keywords", 200))
+    if max_keywords > 0 and len(deduped) > max_keywords:
+      logger.warning(
+        "R9 트리거 키워드 {}개가 상한 {}개를 초과해 앞에서부터 잘랐습니다. "
+        "target_docs 유도 경로를 확인하세요.",
+        len(deduped),
+        max_keywords,
+      )
+      deduped = deduped[:max_keywords]
+
+    return deduped
 
   def warn_if_incompatible(self, scenario: str) -> None:
     """시나리오와 공격자 유형의 호환성을 경고로만 검증합니다.
