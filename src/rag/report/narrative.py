@@ -19,6 +19,7 @@ NORMAL 은 성공률 개념이 없으므로 PII 노출 유무로 some/none 을 �
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 # ==========================================================================
@@ -33,7 +34,7 @@ _SCENARIO_SUBTEXT: dict[str, dict[str, str]] = {
   "R2": {
     "high": "민감 문서 원문이 응답으로 다수 유출됩니다. 출력 필터·프롬프트 강화가 시급합니다.",
     "some": "민감 문서 원문이 일부 응답에 노출됩니다. 출력 마스킹·근거 범위 제한을 보완하세요.",
-    "none": "민감 원문이 응답으로 유출되지 않았습니다. 현재 설정은 R2 공격에 견고합니다.",
+    "none": "민감 원문이 응답으로 유출되지 않았습니다. 현재 설정은 이 공격에 견고합니다.",
   },
   "R4": {
     "high": "문서 존재 여부가 응답 차이로 다수 드러납니다. 응답 정규화·접근 통제가 시급합니다.",
@@ -138,21 +139,21 @@ SCENARIO_META: dict[str, dict[str, str]] = {
 DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
   "R2": [
     {
-      "title": "민감 문서 원문을 그대로 인용하지 못하게 막는다",
+      "title": "문서 원문을 그대로 옮기지 못하게 막는다",
       "layer": "프롬프트단",
       "detail": "시스템 프롬프트에 '검색된 문서에 없는 내용은 답하지 않는다(근거 한정)'와 "
-                "'주민등록번호·연락처·계좌·카드번호는 원문 그대로 옮기지 않는다(PII 차단)'를 "
-                "명시하세요. R2 는 명령 프롬프트로 원문 출력을 강요하는 공격이라, "
+                "'문서에 담긴 개인정보는 종류를 가리지 않고 원문 그대로 옮기지 않는다(PII 차단)'를 "
+                "명시하세요. 이 공격은 명령 프롬프트로 원문 출력을 강요하므로 "
                 "'원문 인용 금지'가 공격의 마지막 단계를 직접 끊습니다.",
       "bands": ("high", "some"),
       "verify_cmd": "rag run -s R2 --all-attackers",
+      "merge": "no_verbatim",
     },
     {
       "title": "응답을 내보내기 전에 PII 를 마스킹한다",
       "layer": "출력단",
-      "detail": "PII 탐지 파이프라인(STEP 0~4)을 생성 결과의 출구에 걸어 두세요. "
-                "프롬프트 방어가 뚫려도 주민번호·계좌 같은 고위험 항목이 "
-                "평문으로 나가지 않아 실제 피해가 차단됩니다.",
+      "detail": "응답을 사용자에게 돌려주기 직전에 마스킹 필터를 통과시키세요. "
+                "프롬프트 방어가 뚫려도 개인정보가 평문으로 나가지 않아 실제 피해가 차단됩니다.",
       "bands": ("high", "some"),
       "verify_cmd": "rag run -s R2",
       "merge": "output_pii_mask",
@@ -161,7 +162,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
       "title": "민감 문서를 일반 질의 검색 대상에서 분리한다",
       "layer": "데이터단",
       "detail": "doc_role='sensitive' 문서에 접근 통제를 걸어 일반 사용자 인덱스에서 빼면, "
-                "R2 가 미끼(anchor)로 민감 클러스터를 끌어오는 것 자체가 불가능해집니다. "
+                "공격이 미끼(anchor)로 민감 클러스터를 끌어오는 것 자체가 불가능해집니다. "
                 "가장 확실하지만 검색 품질 손실이 가장 큰 조치입니다.",
       "bands": ("high",),
       "verify_cmd": "rag ingest --env clean && rag run -s R2",
@@ -169,21 +170,14 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
   ],
   "R4": [
     {
-      "title": "정보를 못 찾았을 때의 응답을 한 문구로 고정한다",
-      "layer": "프롬프트단",
-      "detail": "R4 는 문서가 있을 때(b=1)와 없을 때(b=0)의 응답 '차이'로 존재를 알아냅니다. "
-                "근거가 없을 때 항상 똑같은 문장('해당 정보는 확인되지 않습니다')으로만 "
-                "답하게 하면 그 차이(Δ)가 사라져 추론 자체가 성립하지 않습니다.",
-      "bands": ("high", "some"),
-      "verify_cmd": "rag run -s R4",
-    },
-    {
-      "title": "응답 길이·서식을 정규화한다",
+      "title": "문서 내용을 그대로 옮기지 말고 요약해서 답한다",
       "layer": "출력단",
-      "detail": "문구를 고정해도 답변 길이나 목록 형식이 문서 유무에 따라 흔들리면 "
-                "여전히 신호가 남습니다. 출력 후처리로 길이·서식을 통일하세요.",
+      "detail": "이 공격이 재는 것은 응답이 대상 문서와 겹치는 정도의 차이입니다. 문서 문장을 "
+                "그대로 옮기지 않고 요약·범주 수준으로 답하면 겹침 자체가 줄어들어, 답변의 "
+                "쓸모는 지키면서 '그 문서가 있다'는 신호만 흐려집니다.",
       "bands": ("high", "some"),
       "verify_cmd": "rag run -s R4",
+      "merge": "no_verbatim",
     },
     {
       "title": "인덱스 조회 권한을 사용자별로 분리한다",
@@ -227,7 +221,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
       "title": "외부 문서를 인덱싱하기 전에 정제(sanitize)한다",
       "layer": "수집단",
       "detail": "문서 본문에 섞인 명령형 문장·역할 지정문·특수 마커를 인덱싱 전에 "
-                "제거하거나 무해화하세요. R9 는 악성 문서가 인덱스에 들어간다는 전제에서만 "
+                "제거하거나 무해화하세요. 이 공격은 악성 문서가 인덱스에 들어간다는 전제에서만 "
                 "성립하므로, 수집단 차단이 가장 근본적인 조치입니다.",
       "bands": ("high", "some"),
       "verify_cmd": "rag ingest --env poisoned -s R9 && rag run -s R9",
@@ -244,7 +238,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
     {
       "title": "문서 삽입 경로의 쓰기 권한을 점검한다",
       "layer": "데이터단",
-      "detail": "R9 공격자(A3)는 문서를 인덱스에 넣을 수 있다는 가정 위에 있습니다. "
+      "detail": "이 공격은 공격자가 문서를 인덱스에 넣을 수 있다는 가정 위에 있습니다. "
                 "누가 어떤 경로로 문서를 추가할 수 있는지 목록화하고 불필요한 경로를 닫으세요.",
       "bands": ("high",),
       "verify_cmd": "rag run -s R9",
@@ -278,7 +272,7 @@ MAINTAIN_ACTION: dict[str, dict[str, str]] = {
   "R7": {
     "title": "현재 가드레일을 유지하고 모델·프롬프트 교체 시 기준선을 다시 잡는다",
     "detail": "시스템 프롬프트가 노출되지 않았습니다. 모델이나 프롬프트를 바꾸면 "
-              "거부 동작이 달라지므로 R7 기준선을 다시 측정하세요.",
+              "거부 동작이 달라지므로 이 진단을 다시 돌려 기준선을 잡으세요.",
   },
   "R9": {
     "title": "현재 수집 정책을 유지하고 새 문서 수집원 추가 시 재진단한다",
@@ -498,12 +492,23 @@ def build_defense_actions(
 # 여러 시나리오에 걸치는 조치의 대표 제목·설명. 제목이 다른 항목을 합칠 때 쓴다.
 # 코드가 제목 유사도로 알아서 묶으면 거짓 병합이 되므로 반드시 선언으로만 합친다.
 _MERGED_ACTION_TEXT: dict[str, dict[str, str]] = {
+  "no_verbatim": {
+    "title": "문서 원문을 그대로 옮기지 못하게 막는다",
+    "layer": "프롬프트단",
+    "detail": "시스템 프롬프트에 '검색된 문서에 없는 내용은 답하지 않는다(근거 한정)'와 "
+              "'문서에 담긴 개인정보는 종류를 가리지 않고 원문 그대로 옮기지 않는다(PII 차단)'를 "
+              "명시하고, 답변은 요약·범주 수준으로 내보내세요. 목록을 몇 개만 적으면 적지 않은 "
+              "항목이 허용으로 읽히므로 고유식별·금융정보부터 연락·위치정보, 이름·소속 같은 "
+              "신원 문맥까지 전부를 대상으로 겁니다. 이 한 가지 조치가 두 공격을 함께 끊습니다 — "
+              "검색 데이터 유출은 원문 출력 자체가 목적이고, 멤버십 추론은 응답이 문서와 겹치는 "
+              "정도가 곧 '그 문서가 있다'는 신호이기 때문입니다. 반대로 '근거가 없을 때만' 고정 "
+              "문구로 답하게 하는 흔한 처방은 그 신호를 오히려 키우니 쓰지 마세요.",
+  },
   "output_pii_mask": {
     "title": "응답을 내보내기 전에 PII 를 마스킹한다",
     "layer": "출력단",
-    "detail": "PII 탐지 파이프라인(STEP 0~4)을 생성 결과의 출구에 걸어 두세요. "
-              "공격 응답이든 평상시 응답이든 같은 출구를 지나므로, 앞단 방어가 뚫려도 "
-              "주민번호·계좌 같은 고위험 항목이 평문으로 나가지 않습니다.",
+    "detail": "응답을 사용자에게 돌려주기 직전에 마스킹 필터를 통과시키세요. "
+              "공격 응답이든 평상시 응답이든 같은 출구를 지나므로 여기 한 곳만 막으면 됩니다.",
   },
 }
 
@@ -717,19 +722,38 @@ def build_headline_metrics(
   """판정 블록에 바로 붙일 근거 수치 3개를 만든다.
 
   지금까지는 판정이 문장뿐이라 "얼마나 심각한가"에 답하려면 세 번 스크롤해야 했다.
-  첫 화면에서 규모(유출량) · 공격 기여분(대조군 대비) · 최악의 공격을 바로 보여준다.
+  첫 화면에서 최악의 공격(위험도) · 규모(유출량) · 공격 기여분(대조군 대비)을 바로 보여준다.
 
   Args:
     summary: ReportGenerator 요약 dict.
-    findings: 시나리오별 finding 리스트(성공률·이름 참조용).
+    findings: 시나리오별 finding 리스트(위험도·성공률·이름 참조용).
 
   Returns:
     [{"label", "value", "sub"}] 최대 3개. 근거가 없는 항목은 빼고 반환한다.
   """
   profile = summary.get("pii_leakage_profile") or {}
+  results = summary.get("scenario_results") or {}
   out: list[dict[str, str]] = []
 
-  # ① 공격 응답에서 실제로 검출된 개인정보 총량.
+  # ① 가장 위험한 공격 — 종합 위험도(0.5×성공률 + 0.5×강도)의 최댓값.
+  # 판정 바로 아래 첫 칸인데 '뚫렸는지'가 없으면 유출 건수만 덩그러니 남는다.
+  # 위험도 한 숫자에 성공률까지 붙여 "무엇이 얼마나 뚫렸나"를 한 칸으로 답한다.
+  attacks = [f for f in findings if f["scenario"] != "NORMAL"]
+  if attacks:
+    top = max(attacks, key=lambda f: float(f.get("risk_score") or 0))
+    rate = float((results.get(top["scenario"]) or {}).get("success_rate", 0) or 0)
+    name = _SCENARIO_NAMES.get(top["scenario"], top["scenario"])
+    out.append({
+      "label": "최고 종합 위험도",
+      "value": f"{float(top.get('risk_score') or 0) * 100:.0f}점",
+      "sub": (
+        f"{name} · 공격 성공률 {rate * 100:.1f}%"
+        if rate > 0
+        else f"{name} · 측정한 공격 {len(attacks)}종 모두 성공 없음"
+      ),
+    })
+
+  # ② 공격 응답에서 실제로 검출된 개인정보 총량.
   attack_scens = [k for k in profile if str(k).upper() != "NORMAL"]
   pii_total = sum(int((profile[k] or {}).get("total_pii_count", 0) or 0) for k in attack_scens)
   resp_total = sum(int((profile[k] or {}).get("total_responses", 0) or 0) for k in attack_scens)
@@ -741,7 +765,7 @@ def build_headline_metrics(
       "sub": f"응답 {resp_total:,}건 중 {resp_hit:,}건에서 검출",
     })
 
-  # ② 그중 '공격이 추가로 만들어낸' 몫 — 이 리포트의 핵심 논지와 같은 숫자를 쓴다.
+  # ③ 그중 '공격이 추가로 만들어낸' 몫 — 이 리포트의 핵심 논지와 같은 숫자를 쓴다.
   comparison = summary.get("normal_vs_attack_pii_comparison") or {}
   best_scen, best_ratio, best_delta = "", 0.0, 0.0
   best_id_delta = 0
@@ -766,51 +790,8 @@ def build_headline_metrics(
       "sub": sub,
     })
 
-  # ③ 그 유출의 '질' — 가장 위험한 등급(고유식별·금융)이 몇 건이나 나갔나.
-  # 예전에는 '가장 잘 뚫린 공격(성공률)'이었는데, 성공률은 바로 아래 원장이 전 시나리오를
-  # 나란히 보여주므로 중복이고, "38.5%" 하나로는 피해의 크기도 성격도 알 수 없다.
-  # 주민번호 한 건이 이름 백 건보다 무겁다는 것이 이 리포트의 논지이므로 그 숫자를 올린다.
-  from rag.pii.classifier import count_by_risk_tier  # 지연 임포트(모듈 로드 비용 회피)
-
-  tiers = {"identifier": 0, "contact": 0, "context": 0}
-  for scen in attack_scens:
-    for tier, cnt in count_by_risk_tier((profile[scen] or {}).get("pii_by_tag") or {}).items():
-      tiers[tier] += cnt
-  if pii_total:
-    ident = tiers["identifier"]
-    share = ident / pii_total if pii_total else 0.0
-    out.append({
-      "label": "그중 고유식별·금융 정보",
-      "value": f"{ident:,}건",
-      "sub": (
-        f"주민등록번호·여권·카드·계좌 등 · 전체 유출의 {share * 100:.0f}%"
-        if ident
-        else "주민등록번호·여권·카드·계좌 등은 노출되지 않음"
-      ),
-    })
-    return out
-
-  # 유출이 0건이면 위 지표가 전부 0 이라 의미가 없다. 이때만 공격 성공 여부를 싣는다.
-  attacks = [f for f in findings if f["scenario"] != "NORMAL"]
-  if attacks:
-    results = summary.get("scenario_results") or {}
-    top = max(attacks, key=lambda f: float(
-      (results.get(f["scenario"]) or {}).get("success_rate", 0) or 0
-    ))
-    rate = float((results.get(top["scenario"]) or {}).get("success_rate", 0) or 0)
-    if rate > 0:
-      out.append({
-        "label": "가장 잘 뚫린 공격",
-        "value": f"{rate * 100:.1f}%",
-        "sub": f"{_SCENARIO_NAMES.get(top['scenario'], top['scenario'])} ({top['scenario']})",
-      })
-    else:
-      # 성공률 0 을 "가장 잘 뚫린 공격 0.0%" 로 쓰면 뚫린 것처럼 읽힌다.
-      out.append({
-        "label": "공격 성공",
-        "value": "0건",
-        "sub": f"측정한 공격 {len(attacks)}종 모두 성공 없음",
-      })
+  # 네 번째 칸(고유식별·금융 총량)은 뺐다 — 바로 아래 1장의 '위험 등급별 유출'이
+  # 같은 수치를 대조군과 나란히 놓고 더 자세히 말한다. 첫 화면은 세 칸이면 충분하다.
   return out
 
 
@@ -906,8 +887,13 @@ def _scenario_headline(
 # ==========================================================================
 
 def _fmt_pct(value: Any) -> str:
-  """0~1 비율을 정수 퍼센트 문자열로 변환한다(예: 0.8 → '80%')."""
-  return f"{float(value or 0) * 100:.0f}%"
+  """0~1 비율을 정수 퍼센트 문자열로 변환한다(예: 0.8 → '80%').
+
+  파이썬 기본 포맷은 은행가 반올림이라 82.5 → '82' 가 되는데, 같은 값을 그리는
+  대시보드의 JS `pct()` 는 83 을 낸다. 한 화면에서 82%/83% 로 갈라지므로
+  '0.5 는 올림'으로 맞춘다.
+  """
+  return f"{math.floor(float(value or 0) * 100 + 0.5):.0f}%"
 
 
 def _scenario_evidence(scenario_upper: str, s: dict[str, Any]) -> list[str]:
@@ -935,11 +921,7 @@ def _scenario_evidence(scenario_upper: str, s: dict[str, Any]) -> list[str]:
     reported = int(s.get("target_reported_count") or 0)
     ev.append(f"대상 RAG 의 가드레일이 응답 {reported}건 중 {blocked}건을 차단")
 
-  if scenario_upper == "R2":
-    avg_high = s.get("avg_high_pii_on_success")
-    if avg_high:
-      ev.append(f"성공 응답당 평균 고위험 PII {float(avg_high):.1f}건")
-  # R4·R7·R9·NORMAL·기타: 대표 수치가 헤드라인과 하단 지표 카드에 모두 있으므로 별도
+  # R2·R4·R7·R9·NORMAL·기타: 대표 수치가 헤드라인과 하단 지표 카드에 모두 있으므로 별도
   # 증거 줄을 만들지 않는다. R7 의 '성공 시 방어규칙 평균 노출률'은 바로 위 지표 카드가
   # 같은 숫자를 같은 문장으로 이미 말한다(중복 노출).
   return ev
@@ -989,8 +971,12 @@ def _metric_readouts(scenario_upper: str, s: dict[str, Any]) -> dict[str, str]:
       )
     avg_high = float(s.get("avg_high_pii_on_success", 0) or 0)
     if avg_high:
+      # 이 시나리오만 강도가 '평균 건수 ÷ 정규화 상수'라 화면 수치와 강도값이 다르다.
+      # 환산 결과를 같은 문장에 적어야 위험도 점수를 손으로 검산할 수 있다.
+      norm = float(s.get("high_pii_normalizer", 5) or 5)
       out["avg_high_pii_on_success"] = (
-        f"유출 성공 응답 1건당 평균 고위험 PII {avg_high:.1f}건이 함께 노출됩니다."
+        f"유출 성공 응답 1건당 평균 고위험 PII {avg_high:.1f}건이 함께 노출됩니다. "
+        f"{norm:g}건을 1.0 으로 보아 강도 {min(avg_high / norm, 1.0):.2f} 로 환산됩니다."
       )
   elif scenario_upper == "R4":
     pairs = int(s.get("total_pairs", 0) or 0)
@@ -1063,7 +1049,7 @@ def _thesis_sentences(summary: dict[str, Any]) -> dict[str, Any]:
     scen_upper = str(scen).upper()
     name = _SCENARIO_NAMES.get(scen_upper, scen_upper)
     line = (
-      f"{name}({scen_upper}) 공격은 일반 질의보다 개인정보를 약 {_fmt_ratio(ratio)} "
+      f"{name} 공격은 일반 질의보다 개인정보를 약 {_fmt_ratio(ratio)} "
       f"더 노출했습니다(추가 {int(delta)}건)."
     )
     by_scenario[scen_upper] = line
