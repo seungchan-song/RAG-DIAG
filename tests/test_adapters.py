@@ -548,6 +548,27 @@ def test_r9_resolve_trigger_keywords_ignores_bystander_docs():
   assert keywords == ["트리거A", "트리거B"]
 
 
+def test_engine_dict_preserves_target_metadata():
+  """외부 어댑터가 보고한 metadata 가 공격 엔진 트레이스까지 살아남아야 한다.
+
+  대상 RAG 의 가드레일 판정(is_blocked/guardrails)이 여기서 유실되면 리포트가
+  "유출이 없었다"와 "대상의 방어가 막았다"를 구분하지 못한다 — 방어 효과 정량화가
+  이 프로젝트의 핵심 주장이므로 이 경로는 불변식이다.
+  """
+  trace = RagTrace(
+    answer="요청하신 정보는 제공할 수 없습니다.",
+    metadata={"is_blocked": True, "guardrails": [{"name": "PromptInjectionDetector"}]},
+  )
+  engine_dict = trace.to_engine_dict()
+
+  assert engine_dict["target_metadata"]["is_blocked"] is True
+  assert engine_dict["target_metadata"]["guardrails"][0]["name"] == "PromptInjectionDetector"
+
+  # 우리 파이프라인 경유(raw 존재)는 원본 dict 를 그대로 돌려주는 기존 동작 유지.
+  passthrough = RagTrace.from_engine_result({"generator": {"replies": ["원본"]}})
+  assert passthrough.to_engine_dict() == {"generator": {"replies": ["원본"]}}
+
+
 # === ② 외부 어댑터 주입 + truthful degrade (CapabilityGatedAdapter) ===
 def test_gated_adapter_strips_retrieval_when_not_declared():
   """RETRIEVAL_TRACE 미선언 시 검색 원문이 구조화 필드·raw dict 양쪽에서 비워져야 한다."""

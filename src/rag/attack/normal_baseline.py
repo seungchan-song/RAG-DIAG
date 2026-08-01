@@ -358,6 +358,9 @@ class NormalBaselineAttack(BaseAttack):
       success=False,
       score=0.0,
       metadata={
+        # 대상 RAG 가 보고한 부가 정보(가드레일 차단 여부 등). 우리 builtin
+        # 경로에서는 항상 빈 dict 이며, 외부 어댑터일 때만 채워진다.
+        "target_metadata": trace.get("target_metadata", {}),
         "payload_type": "normal",
         "query_type": query_type,
         "baseline": True,

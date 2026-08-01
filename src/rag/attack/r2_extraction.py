@@ -162,6 +162,9 @@ class R2ExtractionAttack(BaseAttack):
       final_prompt=trace.get("prompt", ""),
       retrieval_config=trace.get("retrieval_config", {}),
       metadata={
+        # 대상 RAG 가 보고한 부가 정보(가드레일 차단 여부 등). 우리 builtin
+        # 경로에서는 항상 빈 dict 이며, 외부 어댑터일 때만 채워진다.
+        "target_metadata": trace.get("target_metadata", {}),
         "anchor": query_info.get("anchor", ""),
         "command": query_info.get("command", ""),
         "query_type": query_info.get("query_type", "compound"),

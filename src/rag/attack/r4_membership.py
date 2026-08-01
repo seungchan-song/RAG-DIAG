@@ -194,6 +194,9 @@ class R4MembershipAttack(BaseAttack):
       final_prompt=trace.get("prompt", ""),
       retrieval_config=trace.get("retrieval_config", {}),
       metadata={
+        # 대상 RAG 가 보고한 부가 정보(가드레일 차단 여부 등). 우리 builtin
+        # 경로에서는 항상 빈 dict 이며, 외부 어댑터일 때만 채워진다.
+        "target_metadata": trace.get("target_metadata", {}),
         "ground_truth_b": ground_truth_b,
         "target_doc_id": query_info.get("target_doc_id", ""),
         "keyword": query_info.get("keyword", ""),

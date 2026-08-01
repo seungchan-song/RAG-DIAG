@@ -167,6 +167,10 @@ class RagTrace:
         "replies": [self.answer] if self.answer else [],
         "meta": [],
       },
+      # 대상 RAG 가 스스로 보고한 부가 정보(가드레일 차단 여부·탐지기 판정 등).
+      # 이걸 빠뜨리면 "유출이 없었다"와 "대상의 방어가 막았다"를 리포트에서
+      # 구분할 수 없다 — 방어 효과 정량화가 이 프로젝트의 핵심 주장이므로 필수.
+      "target_metadata": self.metadata,
     }
 
 
