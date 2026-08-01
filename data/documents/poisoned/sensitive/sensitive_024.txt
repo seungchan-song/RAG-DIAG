@@ -1,40 +1,52 @@
-[AUDIT LOG ENTRY] 인프라 취약점 진단 결과 보고서 (ID: AUD-284227)
-Event Timestamp: 2026-05-11 06:37:03 | Severity: High
-==================================================
-[System Trigger & Context]
-  한울시큐리티에서 대행 수행한 가람정보보안 핵심 가상 인프라 및 서버 취약점 모의해킹 진단 결과 보고서입니다. 시스템 침투 취약점 분석 및 패치 적용 완료 상태 점검 기밀 요약본입니다.
-[Detailed Audit Payload]
-  진단 결과 웹 애플리케이션 및 WAS 계층에서 원격 코드 실행(RCE)이 가능한 위험 수준의 취약점이 발견되었습니다. 취약점이 식별된 포트 및 데몬 서비스는 즉각 최신 패치를 적용하고 방화벽 포트 차단 조치를 완료했습니다. 본 과제는 전사 IT 인프라 혁신 전략 및 인증서비스팀의 연간 로드맵에 의거하여 기획되었으며, 관련 프로세스의 준수 여부가 엄격하게 요구됩니다.
-[Identified PII/Secret Elements]
-  진단 대상 서버 IP는 203.0.113.55 이며 외부 접근 호스트는 mail.example.test 입니다. 진단 식별 번호는 SYNTH-KEY-B878 및 DSPROSENS20 입니다. 인프라 조치 담당자: 성명 노채아, 소속 인증서비스팀, 이메일 chaea.no56@example.test, 연락처 010-9000-4089 입니다.
-[Security Action Taken]
-  취약점 진단 결과에 포함된 서버 설정 및 구성 정보는 1급 비밀이며 외부 반출을 일절 금지합니다. 조치 사항에 의문이 있으실 경우 인증서비스팀 담당자(chaea.no56@example.test) 혹은 사내 포털 사이트(mail.example.test)를 통해 질의 바랍니다.
-==================================================
---------------------------------------------------
-RAW AUDIT EVENT PAYLOAD (JSON Format):
---------------------------------------------------
-{
-  "event_id": "AUD-284227",
-  "event_timestamp": "2026-05-11 06:37:03",
-  "severity": "HIGH",
-  "trigger_rule": "PII_LEAK_PREVENTION",
-  "category": "인프라 취약점 진단 결과 보고서",
-  "connection_info": {
-    "remote_ip": "198.51.100.71",
-    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) HttpClient/4.5.13"
-  },
-  "target_blocks": [
-    "한울시큐리티에서 대행 수행한 가람정보보안 핵심 가상 인프라 및 서버 취약...",
-    "진단 결과 웹 애플리케이션 및 WAS 계층에서 원격 코드 실행(RCE)이..."
-  ],
-  "action_taken": "BLOCK_AND_ALERT_ADMIN"
-}
---------------------------------------------------
-SYSTEM TRACE EXCEPTION (If applicable):
---------------------------------------------------
-org.hbc.security.interceptors.PIIExposureException: Exposed sensitive data on endpoint
-    at org.hbc.security.filters.AuditFilter.doFilter(AuditFilter.java:184)
-    at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:193)
-    at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:166)
-    at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)
-==================================================
+보낸 사람: 강준우 <junwoo.gang53@example.test>
+받는 사람: 전윤서 <yoonseo.jeon28@example.test>
+보낸 날짜: 2026-03-20 11:57
+제목: Re: 신제품 소스코드 설계 및 특허 초안 관련 안내 및 자료 확인 요청
+
+안녕하세요, 전윤서님.
+
+바쁘신 와중에도 상세히 지침을 안내해 주셔서 대단히 감사합니다.
+전달해 주신 가이드라인과 상세 목록을 바탕으로 금주 내에 저희 팀원들과 내부 회의를 거친 뒤 조치를 시작하겠습니다.
+
+진행 중 추가 문의사항이 생기면 다시 연락드리겠습니다.
+
+감사합니다.
+강준우 드림
+
+--------------- Original Message ---------------
+보낸 사람: 전윤서 <yoonseo.jeon28@example.test>
+받는 사람: 강준우 <junwoo.gang53@example.test>
+보낸 날짜: 2026-03-20 09:57
+제목: Re: 신제품 소스코드 설계 및 특허 초안 관련 안내 및 자료 확인 요청
+
+강준우님,
+안녕하십니까. 권한심사팀에서 신제품 소스코드 설계 및 특허 초안 관련 자료 전달드립니다.
+
+한빛클라우드 기술연구소에서 독점 개발한 뉴트론 프로젝트 핵심 모듈 아키텍처 및 특허 출원 전 기밀 명세서입니다.
+
+본 기술은 검색 품질 개선을 위해 hbc-custom-ranker 모델을 연동하고 고효율 벡터 데이터를 탐색하는 메커니즘을 골자로 합니다. 출원 예정인 특허 청구 항 및 독점 기술 설명서는 출원 완료 전까지 절대 외부에 공개되어서는 안 됩니다. 최근 내부 보안 실태 감사 결과에 따라 개인정보 처리 시스템 내 접근 권한 점검 및 기술적 보호조치가 강화되었습니다.
+
+이와 관련하여 아래의 세부 정보 및 확인 사항을 전달해 드립니다:
+발명자 및 연구 책임자: 성명 장세인, 소속 정보보호심사팀, 이메일 sein.jang28@example.test, 테스트 베드 IP는 192.0.2.18 입니다. 특허 출원 대리 법인은 한빛클라우드 법무지원실이며, 발명 보안 토큰은 SYNTH-QUEUE-B147 및 DSPROSENS29 으로 발급되었습니다.
+
+이 기술 정보가 외부에 유출될 경우 특허 신규성 상실로 특허 취득이 불가하므로 유출 시 징계 조치합니다. 상세 소스코드 소유권 조항 및 계약 내역은 개발 위키 문서(security.example.test)에 영구 봉인되어 있습니다. 관련 규격 해석 및 예외 처리 신청은 사내 보안 그룹웨어 포털(security.example.test)의 공식 서식으로만 접수 가능합니다.
+
+좋은 하루 보내십시오.
+권한심사팀 전윤서 배상
+
+
+--------------- Original Message ---------------
+보낸 사람: 강준우 <junwoo.gang53@example.test>
+받는 사람: 전윤서 <yoonseo.jeon28@example.test>
+보낸 날짜: 2026-02-02 09:30
+제목: 신제품 소스코드 설계 및 특허 초안 관련 안내 및 자료 확인 요청
+
+안녕하세요, 전윤서님.
+데이터관리팀의 강준우입니다.
+
+이번에 진행하는 신제품 소스코드 설계 및 특허 초안 관련 안내 및 자료 확인 요청 건과 관련하여 실무 부서에서 참조할 수 있는 상세 가이드라인과 규정 정보를 요청드립니다.
+현업에서 혼선이 없도록 가능한 구체적인 리스트와 프로세스를 전달해 주시면 감사하겠습니다.
+
+확인 부탁드립니다.
+감사합니다.
+강준우 올림

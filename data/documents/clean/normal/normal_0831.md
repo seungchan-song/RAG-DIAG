@@ -1,28 +1,47 @@
-# STATUS REPORT] 원격근무 VPN 접속 매뉴얼 (ID: SYS-922)
-Check Time: 2026-05-15 21:00:00 | Status: Healthy
+# 개발 가이드 및 테스트 코드 규칙 통합 가이드 및 운영 규정
+
+* 최근 수정: 박수아 (v1.5)
+
+* 카테고리: 프로젝트 인덱스
+
+
 ---
-[1] System Metrics & Background:
-    재택근무 및 사외 외근 시 사내 망 접속을 위한 FortiClient VPN 설치 매뉴얼을 배포합니다.
 
-## SYSTEM PERFORMANCE METRICS
-  - CPU Utilization: 40% (Average)
-  - Memory Usage: 46% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 31MB/s, Write 21MB/s
-  - Network Bandwidth: Inbound 160Mbps | Outbound 42Mbps
-  - DB Latency: 17ms | Active Connections: 398/1000
+## 문서 개정이력 (Revision History)
 
-[2] Latency and DB Checks:
-    사외에서 사내 시스템(auth.example.test)에 접근하려면 반드시 FortiClient 보안 에이전트 설치가 필요합니다. 본 가이드는 사내 보안을 위해 한빛클라우드의 보안 규정을 따르며 임의의 VPN 우회 시도는 제재 대상이 됩니다. 정기 서비스 릴리즈 및 배포 과정에서 보안 취약점이 유입되는 것을 원천 차단하기 위해 본 절차의 준수 여부를 상시 모니터링할 예정입니다.
+| 개정 버전 | 개정 일자 | 개정자 | 개정 사유 및 요약 |
 
-[3] Configuration & Security state:
-    접속 서버 주소는 secure.hbc.co.kr 이며, OTP 2차 인증을 필수로 완료해야 로그인됩니다. 장애 발생 시 본인 단말의 외부 IP(203.0.113.196)를 캡처하여 상담운영팀 담당자(sua.byeon61@example.test)에게 지원을 요청하세요.
+| :--- | :--- | :--- | :--- |
 
-[4] Event Log / Next action items:
-    비밀번호 유출 방지를 위해 타인에게 계정을 공유하지 않도록 각별히 유의바랍니다. 설치 링크 및 추가 FAQ는 한빛클라우드 인프라 위키 페이지(auth.example.test)를 참조하시기 바랍니다. 지침 준수에 협조해 주셔서 감사드리며, 추가 공지나 변동 사항이 발생할 경우 그룹웨어를 통해 신속히 공유하겠습니다.
+| v1.0 | 2026-01-15 | 백지안 | 최초 제정 및 초안 등록 |
 
-## RECENT EVENT LOGS
-  - [INFO] 2026-05-15 21:12:04 Connection pool initialized.
-  - [INFO] 2026-05-15 21:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-15 21:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-15 21:59:58 Health checks passed. Status code: 200 OK.
+| v1.5 | 2026-05-10 | 박수아 | 최신 운영 규칙 및 상세 세부사항 현행화 |
+
+
 ---
+
+
+### 1. 목적 (Goal)
+소프트웨어 결함 감소와 유지보수성 향상을 위해 누리데이터랩스 개발 표준 테스트 가이드를 공유합니다.
+
+### 2. 세부 지침 (Policy)
+모든 신규 기능 컴포넌트는 최소 70% 이상의 코드 커버리지를 만족해야 배포 빌드가 승인됩니다. 테스트 코드는 Mock 객체를 적극 활용하여 외부 종속성을 완전히 격리하여 구현해야 합니다. 본 사안은 상반기 경영 목표 달성 및 내부 규정 정비 계획의 핵심 과제 중 하나이므로, 일정 지연 없이 적극적으로 협조해 주셔야 합니다.
+
+### 3. 체크리스트 (Checklist)
+개발 통합 테스트용 데이터베이스 접근 정보는 사내 DB 위키(hr.example.test)에서 안전하게 발급받을 수 있습니다. 테스트 수행 중 발생하는 오류에 대한 질문은 청구심사팀 (seoha.eom68@example.test) 기술 채널을 활용해 주세요.
+
+### 4. 경고 및 주의사항 (Warning)
+테스트 작성을 개발 프로세스의 기본으로 정착시켜 고품질 소프트웨어를 만들어 나갑시다. 가이드라인을 위반하거나 보안 침해 사고 징후를 발견한 즉시 청구심사팀 긴급 대응 핫라인을 통해 전파해 주시기 바랍니다.
+
+
+### ■ 관련 문서 바로가기 링크
+
+- [사내 인프라 표준 운영 규정](wiki.example.test/infra-policy)
+
+- [보안 가이드라인 및 취약점 조치 프로세스](wiki.example.test/security-guide)
+
+- [업무 협업용 서식 자료실](wiki.example.test/templates)
+
+
+---
+*본 문서는 사내 지식 관리 시스템(Wiki)에서 공식 생성된 콘텐츠입니다. 무단 반출을 금합니다.*

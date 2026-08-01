@@ -1,28 +1,20 @@
-# STATUS REPORT] 사내 Wi-Fi 연결 가이드 (ID: SYS-721)
-Check Time: 2026-05-18 22:00:00 | Status: Healthy
+# 사내 QA 게시판] 사내 메신저 사용 수칙 질문드립니다.
+작성자: 서지아 | 조회수: 114 | 등록일: 2026-05-12
 ---
-[1] System Metrics & Background:
-    본사 오피스 건물 내 무선 네트워크(Wi-Fi) 연결 설정 및 단말 등록 방법입니다.
+Q: 비대면 협업 및 효율적인 의사소통을 위한 사내 협업 메신저 사용 규칙과 에티켓 가이드입니다. 사내 메신저를 통한 소통 시 정보 유출 방지 및 상호 존중을 위해 필요한 공지사항입니다.
+   업무 시간 외 급박하지 않은 메시지 전송은 지양하며, 상태 메시지를 활용해 부재 상황을 공유하세요. 메신저를 통해 기밀 정보나 소스코드 원본을 암호화 없이 외부 채널로 송신하는 행위는 제한됩니다. 따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.
 
-## SYSTEM PERFORMANCE METRICS
-  - CPU Utilization: 31% (Average)
-  - Memory Usage: 58% (48.2 GB of 64 GB allocated)
-  - Disk I/O: Read 35MB/s, Write 15MB/s
-  - Network Bandwidth: Inbound 186Mbps | Outbound 23Mbps
-  - DB Latency: 4ms | Active Connections: 440/1000
+Re: 답변드립니다. (답변자: 변해솔)
+A: 메신저 계정 분실 및 다중 접속 해제는 포털(infra.example.test)에서 직접 초기화할 수 있습니다. 인터넷 방화벽 장애 및 메신저 차단은 보안관제팀 보안 헬프데스크(내선 010-9000-5833)로 지원받으십시오.
+   편안하고 배려 있는 대화 분위기를 위해 상호 존중과 신뢰의 태도로 임해주시기 바랍니다. 자세한 가이드와 예시 템플릿은 사내 복지 채널(infra.example.test)을 확인해 주세요. 안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다.
 
-[2] Latency and DB Checks:
-    무선 SSID는 'HBC-Secure-WiFi'를 선택하고, 사내 SSO 포털(wiki.example.test) 인증 정보로 로그인해야 합니다. 미등록 사설 AP 또는 무단 테더링 공유기 사용은 보안 규정상 금지됩니다. 따라서 각 담당자는 본 가이드라인의 세부 사항을 명확히 인지하고, 실무 적용 시 발생할 수 있는 취약점을 사전 예방하는 데 만전을 기해주시기 바랍니다.
-
-[3] Configuration & Security state:
-    연결 시 할당되는 IP 대역은 사내용 IP(192.0.2.107) 대역이며, 방화벽 규칙이 타이트하게 적용됩니다. 기술 지원이나 계정 잠김 등의 문제는 정보보호심사팀(yujin.seo57@example.test)로 문의하시기 바랍니다.
-
-[4] Event Log / Next action items:
-    노트북 및 모바일 단말의 백신 상태를 항상 최신으로 유지하시기 바랍니다. 무선 인터넷 상세 접속 오류 현상은 wiki.example.test 네트워크 가이드에서 해결책을 확인하세요. 안정적인 비즈니스 운영과 고객 신뢰 확보를 위한 조치이오니 임직원 여러분의 아낌없는 협조와 적극적인 동참을 부탁드립니다.
-
-## RECENT EVENT LOGS
-  - [INFO] 2026-05-18 22:12:04 Connection pool initialized.
-  - [INFO] 2026-05-18 22:15:45 Scheduled backup job completed successfully.
-  - [WARN] 2026-05-18 22:32:19 DNS lookup latency spike (exceeded 250ms), auto-resolved.
-  - [INFO] 2026-05-18 22:59:58 Health checks passed. Status code: 200 OK.
+---
+댓글 (Comments Thread)
+---
+ㄴ 장아름 (2026-05-13 10:24):
+   상세히 답변 주셔서 감사합니다. 알려주신 사내 메신저 사용 수칙 조치법대로 하니 한결 수월해졌습니다! 혹시 이 가이드는 외부망에서도 접속 가능할까요?
+ㄴ 백지안 (2026-05-13 11:05):
+   @장아름님, 사외 접속은 VPN 권한이 신청되어 있어야 하며, OTP 승인을 거쳐야 정상 접속되는 것으로 알고 있습니다.
+ㄴ 서지아 (작성자) (2026-05-13 13:40):
+   모두 친절하게 정보 덧붙여 주셔서 감사합니다. 많은 도움이 되었습니다.
 ---
