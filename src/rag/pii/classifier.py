@@ -47,6 +47,9 @@ PII_RISK_TIERS: dict[str, set[str]] = {
     "QT_ADDR",
     "QT_CAR",
     "QT_IP",
+    # 우편번호는 주소 계열이라 contact. 사원번호·회원 ID·참가자 ID·계정 ID(33종 신규)는
+    # 그 자체로 본인 특정·도용이 되지 않으므로 기본값 context 에 그대로 둔다.
+    "ZIPCODE",
   },
 }
 RISK_TIER_ORDER = ("identifier", "contact", "context")

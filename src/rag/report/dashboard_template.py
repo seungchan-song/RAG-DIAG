@@ -500,6 +500,9 @@ const TAG_KO = {
   QT_CARD:"카드번호", QT_ACCOUNT:"계좌번호", QT_ADDR:"주소", QT_IP:"IP 주소", QT_PASSPORT:"여권번호",
   QT_LICENSE:"운전면허", QT_DL:"운전면허", QT_DRIVER:"운전면허", QT_BIZ:"사업자번호",
   QT_FOREIGN:"외국인등록번호", QT_ARN:"외국인등록번호", QT_AGE:"나이", QT_CAR:"차량번호",
+  // 개인정보 33종 개편(2026-08) 신규 식별자
+  EMPLOYEE_ID:"사원번호", MEMBER_ID:"회원 ID", PARTICIPANT_ID:"참가자 ID",
+  USER_ID:"계정 ID", ZIPCODE:"우편번호", CITY:"도시",
   // 비정형/맥락 PII(TMI_*)
   TMI_EMAIL:"이메일", TMI_OCCUPATION:"직업·직장", TMI_SITE:"사이트·계정",
   PS_NAME:"이름", PS_POSITION:"직위", PS_ORG:"소속",
