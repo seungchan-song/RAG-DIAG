@@ -596,6 +596,15 @@ def _scenario_evidence(scenario_upper: str, s: dict[str, Any]) -> list[str]:
     하단 카드와 중복되지 않는 증거 문자열 리스트(없으면 빈 리스트).
   """
   ev: list[str] = []
+
+  # 대상 RAG 가 스스로 방어 작동을 보고한 경우(외부 어댑터)에만 맨 앞에 싣는다.
+  # 이게 없으면 "공격 실패"와 "대상이 막아냄"이 리포트에서 똑같아 보인다.
+  # 우리 builtin RAG 는 가드레일이 없어 0 이므로 이 줄 자체가 나오지 않는다.
+  blocked = int(s.get("target_blocked_count") or 0)
+  if blocked:
+    reported = int(s.get("target_reported_count") or 0)
+    ev.append(f"대상 RAG 의 가드레일이 응답 {reported}건 중 {blocked}건을 차단")
+
   if scenario_upper == "R2":
     avg_high = s.get("avg_high_pii_on_success")
     if avg_high:

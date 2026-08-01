@@ -255,7 +255,70 @@ def _aggregate_r4_by_identifier_category(
   return aggregated
 
 
+def _target_defense_stats(results: list[AttackResult]) -> dict[str, Any]:
+  """대상 RAG 가 스스로 보고한 방어 작동 통계를 집계합니다.
+
+  외부 어댑터(예: SotaRagAdapter)는 가드레일 차단 여부를 `RagTrace.metadata` 에 실어
+  보내고, 그 값이 `AttackResult.metadata["target_metadata"]` 까지 관통한다. 여기서 세어
+  두지 않으면 리포트가 **"유출이 없었다"와 "대상의 방어가 막았다"를 구분하지 못한다**
+  — 방어 효과 정량화가 이 프로젝트의 핵심 주장이므로 필요한 집계다.
+
+  우리 builtin RAG 는 가드레일이 없어 `target_metadata` 가 비므로 전부 0 이 되고,
+  그때는 리포트가 이 문장을 렌더하지 않는다(빈 섹션 방지).
+
+  Args:
+    results: 평가가 끝난 공격 결과 목록.
+
+  Returns:
+    dict: `target_reported_count`(대상이 메타데이터를 보고한 응답 수) ·
+      `target_blocked_count`(그 중 차단된 응답 수).
+  """
+  # ponytail: is_blocked 만 센다. 대상이 함께 주는 guardrails 배열은 "실행된 탐지기
+  # 목록"인지 "발동한 탐지기 목록"인지 스키마가 확정되지 않아, 세면 숫자가 거짓이 될
+  # 수 있다. 탐지기별 분해가 필요해지면 SOTA_RAG 응답 스키마를 먼저 확정하고 여기에
+  # target_guardrail_hits 를 추가할 것.
+  reported = 0
+  blocked = 0
+  for result in results:
+    target_meta = (result.metadata or {}).get("target_metadata") or {}
+    if not target_meta:
+      continue
+    reported += 1
+    if target_meta.get("is_blocked"):
+      blocked += 1
+
+  return {
+    "target_reported_count": reported,
+    "target_blocked_count": blocked,
+  }
+
+
 def summarize_evaluated_results(
+  scenario: str,
+  config: dict[str, Any],
+  results: list[AttackResult],
+) -> dict[str, Any]:
+  """시나리오 요약을 만들고, 대상 RAG 의 방어 작동 통계를 함께 실어 반환합니다.
+
+  집계 본체는 `_summarize_scenario_core` 가 담당한다. 이 얇은 래퍼를 둔 이유는
+  시나리오별 분기마다 return 문이 흩어져 있어, 공통 집계를 각 분기에 중복으로
+  끼워 넣으면 새 시나리오가 추가될 때 조용히 누락되기 때문이다. 여기서 한 번만
+  합치면 호출부도 미래의 시나리오도 자동으로 이 값을 받는다.
+
+  Args:
+    scenario: 시나리오 코드(NORMAL/R2/R4/R7/R9).
+    config: 실험 설정.
+    results: 평가가 끝난 공격 결과 목록.
+
+  Returns:
+    dict: 시나리오 요약 + `target_reported_count`/`target_blocked_count`.
+  """
+  summary = _summarize_scenario_core(scenario, config, results)
+  summary.update(_target_defense_stats(results))
+  return summary
+
+
+def _summarize_scenario_core(
   scenario: str,
   config: dict[str, Any],
   results: list[AttackResult],
