@@ -62,7 +62,7 @@ CAPSTONE/
 │   │   ├── retriever.py
 │   │   ├── reranker.py
 │   │   └── prompt_builder.py
-│   ├── generator/           # LLM 응답 생성 (OpenAI/Clova 추상화)
+│   ├── generator/           # LLM 응답 생성 (Local/OpenAI/Clova 추상화, provider="local"이 대회 제출 경로)
 │   │   └── generator.py
 │   ├── adapters/            # BYO-RAG 어댑터 (A-2, 남의 RAG에 진단 붙이기)
 │   │   ├── base.py                  # Capability / RagTrace / TargetRAG 프로토콜 + has_capability
@@ -70,7 +70,8 @@ CAPSTONE/
 │   │   ├── builtin.py               # BuiltinHaystackAdapter (우리 RAG 감싸는 첫 참조 어댑터)
 │   │   ├── gated.py                 # CapabilityGatedAdapter (선언 능력 밖 출력 차단 → truthful degrade)
 │   │   ├── registry.py              # 어댑터 레지스트리 (config.adapter.type 확장점) + create_target_adapter
-│   │   └── rest.py                  # RestRagAdapter (외부 REST RAG 참조 구현, transport 주입식)
+│   │   ├── rest.py                  # RestRagAdapter (외부 REST RAG 참조 구현, transport 주입식)
+│   │   └── sota.py                  # SotaRagAdapter (SOTA_RAG 전용, 6능력 전부 native → 전 시나리오 완전판)
 │   ├── attack/              # 공격 엔진 (NORMAL / R2 / R4 / R7 / R9)
 │   │   ├── base.py                  # BaseAttack(target 주입 + _run_rag_query 어댑터 경유), AttackResult, ExecutionFailureRecord
 │   │   ├── runner.py                # AttackRunner, SCENARIO_MAP
@@ -101,6 +102,7 @@ CAPSTONE/
 │   │   └── artifacts.py     # 실험 결과 저장 전 PII 마스킹 처리
 │   ├── report/              # 자동 리포트 생성
 │   │   ├── generator.py             # ReportGenerator (JSON/CSV/HTML)
+│   │   ├── narrative.py             # 해석+권고 서사 + 방어 조치 카탈로그 (CLI/HTML 공용)
 │   │   └── dashboard_template.py    # HTML 대시보드 템플릿 (ruff 제외)
 │   └── utils/               # 설정/로깅/실험관리/텍스트 유틸
 │       ├── config.py        # load_config, load_env, build_retrieval_config
@@ -109,6 +111,7 @@ CAPSTONE/
 │       └── text.py          # 키워드 추출, slugify_token, stopwords
 ├── data/
 │   ├── documents/
+│   │   ├── demo/            # `rag demo` 전용 격리 데이터셋 (심사위원용, data/indexes/_demo 로 인덱싱)
 │   │   ├── clean/
 │   │   │   ├── normal/      # 일반 문서 (NORMAL/R2/R4/R7 의 clean DB 구성)
 │   │   │   └── sensitive/   # 민감 문서 (R2/R4 의 유출 타깃)
@@ -279,7 +282,18 @@ ruff check src/
 - **RestRagAdapter** (`rest.py`): 외부 REST RAG(AnythingLLM 류) 첫 참조 구현. transport 주입식(서버 없이
   테스트). query→answer+sources 매핑(필드 경로 설정 가능), declare_sensitive/write_documents/system_prompt.
   `build_variant` 미지원 → R4 자동 skip(라이브 인덱스 반사실 불가).
-- **대상 능력 선언**: `config/default.yaml:adapter` — `type`(builtin/rest) · `capabilities`(좁혀 선언;
+- **SotaRagAdapter** (`sota.py`): 외부 SOTA_RAG(하이브리드 검색+리랭킹+vLLM, 팀원 저장소) 전용 참조 구현.
+  **6능력 전부 native** → NORMAL/R2/R4/R7/R9 전부 완전판(`run`). rest.py 를 상속하지 않고 별도 파일인 이유는
+  요청/업로드 스키마와 R4 지원 여부가 다르기 때문(rest.py 오염 방지). R4 반사실은 인덱스 재구성 없이
+  요청 시점 `{"source_file": {"$nin": [...]}}` 필터로 구현하고, doc_id 는 청킹 방식이 달라 `::chunk-`
+  앞부분만 취해 **파일 단위로 번역**한다. 가드레일 판정(`is_blocked`/`guardrails`)은 `RagTrace.metadata`
+  → `to_engine_dict()["target_metadata"]` → 각 시나리오 `AttackResult.metadata` 로 관통한다 — 이 경로가
+  끊기면 "유출 없음"과 "방어가 막음"을 리포트가 구분 못 하니 건드리지 말 것(`tests/test_adapters.py`
+  `test_engine_dict_preserves_target_metadata` 가 고정). poison 업로드 폴더는 `attack` 고정
+  (`infer_doc_role` 이 경로로 역할을 판정하므로 이름을 바꾸면 오분류).
+  ⚠️ 리랭커 on/off 를 대상에 전달할 수 없고 SOTA 는 항상 자체 리랭커를 쓰므로, **외부 어댑터에는
+  `--all-profiles` 를 쓰지 말 것** — `reranker_on/off` 라벨이 거짓으로 붙는다.
+- **대상 능력 선언**: `config/default.yaml:adapter` — `type`(builtin/rest/sota) · `capabilities`(좁혀 선언;
   비움=native) · `inject_poison`(외부 Tier-2 런타임 주입) · rest 연결 설정(base_url 등).
   `["query"]`(블랙박스) → R4 skip, R2/R7 degrade, NORMAL run.
 - 새 어댑터 붙이는 법 + 설계 논리는 Notion "A-2 BYO-RAG 어댑터 구현 기록" 페이지 §9~§10 참조.
@@ -337,11 +351,47 @@ HTML 은 사용자·심사위원용 요약 대시보드로 역할을 분리한�
 - **HTML 경량화(`generator.py`)**: `_html_summary_view` 가 HTML 임베드용으로 무거운 페어 리스트(`pairs`)와
   고아 블록(`clean_vs_poisoned_comparison`)을 걷어내고, 상세 케이스는 시나리오당 소수 대표 표본만 임베드한다
   (JSON 원본은 불변). 저장 전 모든 응답·문서는 `mask_raw_pii: true` 설정에 따라 PII 마스킹 적용.
+- **방어 조치 카탈로그(`narrative.py:DEFENSE_ACTIONS`)**: 시나리오·위험구간(high/some/none)별로 "이렇게
+  고치세요" 조치를 계층(검색단/프롬프트단/출력단/수집단/데이터단/운영) 태그와 함께 제공. 각 조치는 왜 이
+  공격을 막는지 설명(`detail`)과, 실제로 이번 진단에서 효과를 측정한 조치(예: 리랭커 on/off)는 측정값을,
+  측정 안 한 조치는 "미검증 권고"로 솔직히 구분 표기(`bands`/`verify_cmd`). **예전의 시나리오별 복붙용
+  config 스니펫 방식은 우리 저장소 설정을 전제해 외부 RAG 진단에 무의미하고 검증 근거도 없어 폐기됨** —
+  재도입하지 말 것. 대시보드 "이렇게 고치세요" 카드가 이 카탈로그를 그대로 렌더.
 
 ## 실험 환경
 - **Clean DB**: normal + sensitive 문서. NORMAL/R2/R4/R7 모두 이 환경에서 실행 (대조군 공유).
 - **Poisoned DB**: normal + sensitive + attack(R9 트리거 악성) 문서. R9 전용.
 - NORMAL baseline 과 공격 시나리오의 PII 노출량 차이로 "공격이 추가로 만들어낸 유출"을 정량화.
+
+## 작업 기록 (Notion) — 매 작업 후 필수
+디벨롭 진행 상황은 Notion **"⭐ 디벨롭 실행 총정리본"** 페이지가 source of truth 다.
+page_id: `39f539e9-8608-81b1-885a-f08b41222548`
+
+**코드를 바꾸거나 PR 을 머지했으면 이 페이지를 같은 턴에 갱신한다.** 사용자가 따로
+요청하지 않아도 한다. 갱신 없이 작업을 마쳤다고 보고하지 말 것.
+
+페이지 구조와 갱신 규칙:
+- **§0 진행 현황 표** — 완료 항목은 `D<n>`, 미완 항목은 `U<n>`. 상태는 ✅완료 / 🟡부분완료 /
+  ⬜예정 / 🔴대회규정필수. 새 작업이 끝나면 **D 번호를 새로 붙여 행을 추가**하고, 그 작업이
+  기존 U 항목을 (부분이라도) 해소했으면 **해당 U 행의 상태·비고도 같이 고친다**(한쪽만
+  고치면 표가 거짓말을 한다).
+- **§2 완료된 디벨롭** — 새 `### D<n>. 제목 ✅` 섹션을 §3 바로 앞에 추가. 형식은 기존 D1~D6 과
+  동일하게 `<callout icon="✅" color="green_bg">` 안에 **요약 5줄**, 그 아래 `**바뀐 파일**` 한 줄.
+  미해결 사항이 있으면 `<callout icon="⚠️" color="yellow_bg">` 로 따로 뺀다.
+- **§3 남은 디벨롭** — 실행 중 알아낸 사실(측정값·함정·설계 제약)은 해당 U 항목 안에 callout 으로
+  넣는다. 다음 사람이 그대로 지시서로 쓸 수 있어야 하므로 **근거 수치를 반드시 함께 적는다**.
+- **§6 상세 구현 페이지** — 작업이 커서 별도 페이지를 만들었으면 링크를 여기 추가.
+
+작성 원칙(이 페이지의 기존 톤):
+- **측정하지 않은 것을 측정한 척하지 않는다.** "효과 미측정"이라고 쓰는 편이 낫다.
+- 실패·미해결·트레이드오프를 숨기지 않는다(예: D6 의 "리랭커는 만능 스위치가 아니다").
+- 파일·심볼은 `path:symbol` 로 정확히 적는다. 나중에 grep 으로 찾을 수 있어야 한다.
+
+도구: `mcp__claude_ai_Notion__notion-fetch` 로 읽고,
+`mcp__claude_ai_Notion__notion-update-page`(command: `update_content`)로 부분 수정.
+전체 덮어쓰기(`replace_content`)는 쓰지 말 것 — 다른 사람이 쓴 내용을 날린다.
+**수정 후 반드시 다시 fetch 해서 반영됐는지 확인한다** — `update_content` 는 old_str 이
+안 맞아도 에러 없이 조용히 넘어가는 경우가 있다.
 
 ## 데이터 정책
 - KDPII 데이터셋: 연구 목적으로만 사용, 외부 배포 금지
