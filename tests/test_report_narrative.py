@@ -162,3 +162,78 @@ class TestMeasuredEvidence:
   def test_no_comparison_data_yields_empty_effects(self):
     nar = build_report_narrative(_summary())
     assert nar["defense_effects"] == {}
+
+
+class TestActionPlan:
+  """조치를 시나리오가 아니라 '조치'를 단위로 합치는 실행 계획.
+
+  이 구조가 깨지면 리포트가 다시 산만해진다 — 같은 조치가 시나리오 카드마다 반복되고,
+  리랭커처럼 효과가 엇갈리는 설정은 정반대 조치가 동시에 제시된다(재설계 이전 상태).
+  """
+
+  def test_same_action_across_scenarios_is_merged_once(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    steps = nar["action_plan"]["steps"]
+    titles = [s["title"] for s in steps]
+    # 제목이 중복되면 합치기가 깨진 것이다.
+    assert len(titles) == len(set(titles))
+    # R2 와 NORMAL 의 PII 마스킹은 merge 키로 한 항목이 되어야 한다.
+    masking = next(s for s in steps if "마스킹" in s["title"])
+    assert set(masking["scenarios"]) == {"R2", "NORMAL"}
+
+  def test_reranker_becomes_one_decision_not_scattered_actions(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    plan = nar["action_plan"]
+    # 실측 기반 리랭커 항목은 steps 에 남아 있으면 안 된다(의사결정으로 승격).
+    assert all("리랭커" not in s["title"] for s in plan["steps"])
+    decision = plan["decisions"][0]
+    assert decision["badge"] == "warning"  # 좋아진 쪽·나빠진 쪽이 공존
+    assert [i["scenario"] for i in decision["improves"]] == ["R2"]
+    assert [w["scenario"] for w in decision["worsens"]] == ["R4"]
+
+  def test_order_follows_leakage_not_success_rate_alone(self):
+    """성공률만으로 줄 세우면 '가장 많이 새는 곳'의 조치가 뒤로 밀린다."""
+    s = _summary()
+    # R2 는 성공률 5%(최저)지만 PII 는 408건(최다)이다.
+    s["pii_leakage_profile"] = {
+      "R2": {"total_pii_count": 408}, "R4": {"total_pii_count": 329},
+      "R9": {"total_pii_count": 20}, "NORMAL": {"total_pii_count": 119},
+    }
+    steps = build_report_narrative(s)["action_plan"]["steps"]
+    r2_rank = min(st["rank"] for st in steps if "R2" in st["scenarios"])
+    r9_rank = min(st["rank"] for st in steps if "R9" in st["scenarios"])
+    # 성공률은 R9(32.5%) > R2(5%) 지만, 유출량 때문에 R2 조치가 앞서야 한다.
+    assert r2_rank < r9_rank
+
+  def test_steps_carry_their_own_evidence(self):
+    nar = build_report_narrative(_summary_with_reranker())
+    for step in nar["action_plan"]["steps"]:
+      # 각 항목이 자기 순위의 근거(어느 시나리오에서 얼마나 샜나)를 들고 있어야 한다.
+      assert step["impact"] and all(step["impact"])
+      assert step["rank"] >= 1
+
+
+class TestHeadlineMetrics:
+  def test_verdict_carries_three_supporting_numbers(self):
+    s = _summary()
+    s["pii_leakage_profile"] = {
+      "R2": {
+        "total_pii_count": 408,
+        "total_responses": 480,
+        "responses_with_pii": 66,
+        "pii_by_tag": {"QT_RRN": 55, "QT_MOBILE": 200, "PER": 153},
+      },
+      "NORMAL": {"total_pii_count": 119, "total_responses": 360, "responses_with_pii": 32},
+    }
+    metrics = build_report_narrative(s)["overall"]["metrics"]
+    assert len(metrics) == 3
+    assert metrics[0]["value"] == "408건"          # 공격 응답 PII 총량(NORMAL 제외)
+    assert metrics[1]["value"] == "+289건"         # 대조군 대비 추가 유출
+    # ③ 은 성공률이 아니라 '가장 위험한 등급이 몇 건 새었나'다(원장이 성공률을 이미 보여줌).
+    assert metrics[2]["value"] == "55건"
+    assert "13%" in metrics[2]["sub"]              # 408건 중 55건
+
+  def test_metrics_omitted_when_no_leakage_data(self):
+    metrics = build_report_narrative(_summary())["overall"]["metrics"]
+    # pii_leakage_profile 이 없으면 유출량 지표는 만들지 않는다(빈 값 노출 금지).
+    assert all(m["label"] != "공격 응답에 노출된 개인정보" for m in metrics)

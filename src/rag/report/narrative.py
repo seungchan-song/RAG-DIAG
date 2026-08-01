@@ -105,8 +105,7 @@ SCENARIO_META: dict[str, dict[str, str]] = {
   },
   "R7": {
     "name": "시스템 프롬프트 노출",
-    "what": "generator 의 방어 규칙이 담긴 시스템 프롬프트 자체를 뱉어내게 만드는 공격입니다. "
-            "다른 정보를 섞는 게 아니라, 방어 설계 원문·규칙이 곧 타깃입니다.",
+    "what": "generator 의 방어 규칙이 담긴 시스템 프롬프트 자체를 뱉어내게 만드는 공격입니다.",
     "target": "시스템 프롬프트 원문·방어 규칙",
     "signal": "응답이 시스템 프롬프트와 의미·표면상 일치(cosine·ROUGE-L)",
   },
@@ -156,6 +155,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
                 "평문으로 나가지 않아 실제 피해가 차단됩니다.",
       "bands": ("high", "some"),
       "verify_cmd": "rag run -s R2",
+      "merge": "output_pii_mask",
     },
     {
       "title": "민감 문서를 일반 질의 검색 대상에서 분리한다",
@@ -258,6 +258,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
                 "유출이 일어난다는 뜻입니다. 공격 방어보다 먼저 기본 출력 경로를 막아야 합니다.",
       "bands": ("some",),
       "verify_cmd": "rag run -s NORMAL",
+      "merge": "output_pii_mask",
     },
   ],
 }
@@ -480,8 +481,337 @@ def build_defense_actions(
       "measured": [],
       "caveat": "",
       "verify_cmd": spec.get("verify_cmd", ""),
+      # 제목이 달라도 실질이 같은 조치를 한 항목으로 합치기 위한 선언적 키.
+      "merge": spec.get("merge", ""),
     })
   return actions
+
+
+# ==========================================================================
+# 3c. 실행 계획 — 시나리오가 아니라 '조치'를 단위로 뒤집는다
+#     ─ 리포트는 공격 시나리오(R2/R4/R7/R9)를 뼈대로 짜여 있지만, 사용자가 실제로
+#       바꿀 수 있는 것은 공격이 아니라 조치(검색단/프롬프트단/출력단…)다. 이 불일치
+#       때문에 같은 조치가 여러 시나리오 카드에 흩어져 반복되고(리랭커는 5곳),
+#       심지어 정반대 조치가 동시에 제시됐다. 여기서 한 번만 합쳐 순서를 매긴다.
+# ==========================================================================
+
+# 여러 시나리오에 걸치는 조치의 대표 제목·설명. 제목이 다른 항목을 합칠 때 쓴다.
+# 코드가 제목 유사도로 알아서 묶으면 거짓 병합이 되므로 반드시 선언으로만 합친다.
+_MERGED_ACTION_TEXT: dict[str, dict[str, str]] = {
+  "output_pii_mask": {
+    "title": "응답을 내보내기 전에 PII 를 마스킹한다",
+    "layer": "출력단",
+    "detail": "PII 탐지 파이프라인(STEP 0~4)을 생성 결과의 출구에 걸어 두세요. "
+              "공격 응답이든 평상시 응답이든 같은 출구를 지나므로, 앞단 방어가 뚫려도 "
+              "주민번호·계좌 같은 고위험 항목이 평문으로 나가지 않습니다.",
+  },
+}
+
+
+def _reranker_decision(effects: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+  """리랭커 ON/OFF 실측을 시나리오별 조치가 아니라 **하나의 의사결정**으로 합친다.
+
+  같은 스위치인데 어떤 공격은 좋아지고 어떤 공격은 나빠지므로, 시나리오마다
+  "켜라"/"켜지 마라"를 따로 말하면 사용자는 5곳을 뒤져 손으로 합쳐야 한다.
+  한 항목으로 놓고 좋아진 쪽·나빠진 쪽을 나란히 보여준 뒤 판정을 붙인다.
+
+  판정은 **개수 비교로만** 낸다. 시나리오마다 분모(질의 수)가 달라 성공 건수를
+  합산하면 의미 없는 '순효과'가 만들어지기 때문이다.
+
+  Args:
+    effects: `reranker_effects` 결과.
+
+  Returns:
+    의사결정 dict, 또는 측정 데이터가 없으면 None.
+  """
+  if not effects:
+    return None
+  improves, worsens = [], []
+  for scen, e in effects.items():
+    label = _SCENARIO_NAMES.get(scen, "대조군(일반 질의)" if scen == "NORMAL" else scen)
+    entry = {"scenario": scen, "name": label, "lines": e.get("lines", [])}
+    if e["direction"] == "improve":
+      improves.append(entry)
+    elif e["direction"] == "worsen":
+      worsens.append(entry)
+  if not improves and not worsens:
+    return None
+
+  if improves and worsens:
+    verdict, badge = "판단 필요 — 트레이드오프", "warning"
+    guide = (
+      f"공격 {len(improves)}종은 막았지만 {len(worsens)}종은 오히려 키웠습니다. "
+      "한 시나리오만 보고 켜면 다른 공격 표면이 넓어지므로, 켜려면 "
+      f"{' · '.join(w['name'] for w in worsens)} 대책을 함께 준비하세요."
+    )
+  elif improves:
+    verdict, badge = "권장 — 측정한 전 구간에서 위험 감소", "verified"
+    guide = "검색 정확도가 올라가 공격 질의가 끌어오려던 문서가 최종 근거에서 밀려납니다."
+  else:
+    verdict, badge = "권장하지 않음 — 위험 증가", "warning"
+    guide = "이번 진단의 공격들에는 대책이 되지 못했고, 오히려 성공률을 높였습니다."
+
+  return {
+    "layer": "검색단",
+    "question": "검색 리랭커(reranker)를 켜야 하나?",
+    "verdict": verdict,
+    "badge": badge,
+    "guide": guide,
+    "improves": improves,
+    "worsens": worsens,
+    "verify_cmd": "rag run --all-scenarios --all-profiles",
+  }
+
+
+# 시나리오마다 '한 번의 시도'가 세는 단위가 다르다. R4 는 두 응답이 한 페어라 페어가
+# 단위이고, R7 은 질의가 아니라 공격 프롬프트가 단위다. 성공률(%)만 적으면 무엇의 몇 %
+# 인지 알 수 없어서, 조치 근거 문장은 분모를 그대로 밝힌다.
+_ATTEMPT_UNITS: dict[str, tuple[str, str, str]] = {
+  # 시나리오: (분모 필드, 단위 이름, 성공을 부르는 말)
+  "R2": ("total", "질의", "성공"),
+  "R4": ("total_pairs", "페어", "성공"),
+  "R7": ("total", "공격 프롬프트", "성공"),
+  "R9": ("poisoned_total", "질의", "발동"),
+}
+
+
+def _action_impact_line(scen: str, summary: dict[str, Any]) -> str:
+  """조치 항목에 붙일 '이 조치가 무슨 공격을 막는가' 한 조각.
+
+  조치의 순서가 왜 그렇게 됐는지를 항목 자체가 설명하게 만든다. 이름만 나열하면
+  사용자가 다시 시나리오 섹션으로 올라가 숫자를 찾아야 한다. 성공률(%)은 분모가
+  시나리오마다 달라 그대로 쓰면 오히려 헷갈리므로 "N건 중 M건" 으로 편다.
+
+  Args:
+    scen: 대문자 시나리오 코드.
+    summary: ReportGenerator 요약 dict.
+
+  Returns:
+    "멤버십 추론 — 페어 200건 중 77건 성공, 개인정보 329건 노출" 형태의 한 조각.
+  """
+  name = _SCENARIO_NAMES.get(scen, "일반 질의" if scen == "NORMAL" else scen)
+  result = (summary.get("scenario_results") or {}).get(scen) or {}
+  pii = int(((summary.get("pii_leakage_profile") or {}).get(scen) or {})
+            .get("total_pii_count", 0) or 0)
+  parts = []
+  unit = _ATTEMPT_UNITS.get(scen)
+  if unit:
+    field, unit_name, verb = unit
+    total = int(result.get(field) or result.get("total") or 0)
+    success = int(result.get("success_count") or 0)
+    if total:
+      parts.append(f"{unit_name} {total:,}건 중 {success:,}건 {verb}")
+  if pii:
+    parts.append(f"개인정보 {pii:,}건 노출")
+  return f"{name} — {', '.join(parts)}" if parts else name
+
+
+def _scenario_action_weight(
+  summary: dict[str, Any],
+  findings: list[dict[str, Any]],
+) -> dict[str, float]:
+  """조치 정렬에 쓸 시나리오별 가중치 = 위험도 + 실제 유출 기여도.
+
+  `risk_score`(0.5×성공률 + 0.5×강도)만으로 조치를 줄 세우면 **성공률은 낮지만 한 번
+  뚫릴 때 대량으로 새는 시나리오가 뒤로 밀린다.** 실제로 R2 는 성공률 5% 라 risk_score
+  가 가장 낮은데 개인정보는 가장 많이(408건, 대조군의 3.4배) 흘린다. 그 상태로 정렬하면
+  리포트가 "가장 많이 샌 곳"과 "가장 먼저 할 일"로 서로 다른 순위를 주장하게 된다.
+
+  그래서 유출량 점유율을 같은 스케일(0~1)로 더한다. 조치의 목적이 결국 개인정보 유출
+  차단이므로, 많이 새는 곳을 막는 조치가 위로 와야 한다.
+
+  Args:
+    summary: ReportGenerator 요약 dict(`pii_leakage_profile` 참조).
+    findings: 시나리오별 finding 리스트(`risk_score` 참조).
+
+  Returns:
+    {시나리오: 가중치}.
+  """
+  profile = summary.get("pii_leakage_profile") or {}
+  pii = {
+    str(k).upper(): int((v or {}).get("total_pii_count", 0) or 0)
+    for k, v in profile.items()
+  }
+  total_pii = sum(pii.values())
+  return {
+    f["scenario"]: float(f.get("risk_score") or 0)
+    + (pii.get(f["scenario"], 0) / total_pii if total_pii else 0.0)
+    for f in findings
+  }
+
+
+def build_action_plan(
+  findings: list[dict[str, Any]],
+  effects: dict[str, dict[str, Any]],
+  summary: dict[str, Any],
+) -> dict[str, Any]:
+  """시나리오별로 흩어진 조치를 합쳐 '권고 조치' 한 덩어리로 만든다.
+
+  같은 조치가 여러 시나리오에 걸치면 한 항목으로 합치고 영향 시나리오를 나열한다.
+  순서는 `_scenario_action_weight`(위험도 + 유출 기여도) 합 내림차순 — 위에서부터
+  실행하면 그대로 우선순위가 된다. 효과가 시나리오마다 엇갈리는 설정(리랭커)은 조치가
+  아니라 **의사결정**으로 분리해, "하면 되는 일"과 "판단해야 할 일"을 섞지 않는다.
+
+  Args:
+    findings: `build_report_narrative` 가 만든 시나리오별 finding 리스트.
+    effects: `reranker_effects` 결과.
+    summary: ReportGenerator 요약 dict(가중치·영향 문구 계산용).
+
+  Returns:
+    {"steps": [...], "decisions": [...], "instance_count": int} —
+    steps 는 실행 순서대로, 각 항목에 영향 시나리오(`scenarios`)와 근거 문구(`impact`)가 붙는다.
+  """
+  weight_of = _scenario_action_weight(summary, findings)
+  grouped: dict[Any, dict[str, Any]] = {}
+  instance_count = 0
+
+  for finding in findings:
+    scen = finding["scenario"]
+    for action in finding.get("actions", []):
+      # 리랭커(실측 기반 verified/warning)는 아래 _reranker_decision 이 통째로 맡는다.
+      if action.get("kind") in ("verified", "warning"):
+        continue
+      instance_count += 1
+      merge_key = action.get("merge") or ""
+      key = merge_key or (action.get("layer", ""), action.get("title", ""))
+      text = _MERGED_ACTION_TEXT.get(merge_key, {}) if merge_key else {}
+      slot = grouped.setdefault(key, {
+        "layer": text.get("layer") or action.get("layer", ""),
+        "title": text.get("title") or action.get("title", ""),
+        "detail": text.get("detail") or action.get("detail", ""),
+        "kind": action.get("kind", "advice"),
+        "verify_cmd": action.get("verify_cmd", ""),
+        "scenarios": [],
+        "impact": [],
+        "weight": 0.0,
+      })
+      if scen not in slot["scenarios"]:
+        slot["scenarios"].append(scen)
+        slot["impact"].append(_action_impact_line(scen, summary))
+        slot["weight"] += weight_of.get(scen, 0.0)
+
+  steps = list(grouped.values())
+  # 위험도 합이 큰 조치 우선, 같으면 더 많은 시나리오를 덮는 조치 우선.
+  # 'maintain'(유지·재진단)은 실행할 일이 아니므로 항상 맨 뒤로 보낸다.
+  steps.sort(key=lambda a: (
+    a["kind"] == "maintain",
+    -a["weight"],
+    -len(a["scenarios"]),
+  ))
+  for rank, step in enumerate(steps, start=1):
+    step["rank"] = rank
+
+  decision = _reranker_decision(effects)
+  return {
+    "steps": steps,
+    "decisions": [decision] if decision else [],
+    # 합치기 전 조치 인스턴스 수 — "N건이 M건으로 합쳐졌다"를 리포트가 말할 수 있게.
+    "instance_count": instance_count,
+  }
+
+
+def build_headline_metrics(
+  summary: dict[str, Any],
+  findings: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+  """판정 블록에 바로 붙일 근거 수치 3개를 만든다.
+
+  지금까지는 판정이 문장뿐이라 "얼마나 심각한가"에 답하려면 세 번 스크롤해야 했다.
+  첫 화면에서 규모(유출량) · 공격 기여분(대조군 대비) · 최악의 공격을 바로 보여준다.
+
+  Args:
+    summary: ReportGenerator 요약 dict.
+    findings: 시나리오별 finding 리스트(성공률·이름 참조용).
+
+  Returns:
+    [{"label", "value", "sub"}] 최대 3개. 근거가 없는 항목은 빼고 반환한다.
+  """
+  profile = summary.get("pii_leakage_profile") or {}
+  out: list[dict[str, str]] = []
+
+  # ① 공격 응답에서 실제로 검출된 개인정보 총량.
+  attack_scens = [k for k in profile if str(k).upper() != "NORMAL"]
+  pii_total = sum(int((profile[k] or {}).get("total_pii_count", 0) or 0) for k in attack_scens)
+  resp_total = sum(int((profile[k] or {}).get("total_responses", 0) or 0) for k in attack_scens)
+  resp_hit = sum(int((profile[k] or {}).get("responses_with_pii", 0) or 0) for k in attack_scens)
+  if pii_total:
+    out.append({
+      "label": "공격 응답에 노출된 개인정보",
+      "value": f"{pii_total:,}건",
+      "sub": f"응답 {resp_total:,}건 중 {resp_hit:,}건에서 검출",
+    })
+
+  # ② 그중 '공격이 추가로 만들어낸' 몫 — 이 리포트의 핵심 논지와 같은 숫자를 쓴다.
+  comparison = summary.get("normal_vs_attack_pii_comparison") or {}
+  best_scen, best_ratio, best_delta = "", 0.0, 0.0
+  best_id_delta = 0
+  for scen, entry in comparison.items():
+    if not isinstance(entry, dict):
+      continue
+    ratio = float(entry.get("pii_total_ratio", 0) or 0)
+    if ratio > best_ratio:
+      best_scen, best_ratio = str(scen).upper(), ratio
+      best_delta = float(entry.get("pii_delta_total", 0) or 0)
+      # 총량 차분만 크게 쓰면 "이름 300건"과 "주민번호 300건"이 같아 보인다.
+      by_risk = entry.get("pii_delta_by_risk") or {}
+      best_id_delta = int((by_risk.get("identifier") or {}).get("delta", 0) or 0)
+  if best_scen:
+    sub = f"{_SCENARIO_NAMES.get(best_scen, best_scen)} · 일반 질의의 {_fmt_ratio(best_ratio)}"
+    if best_id_delta > 0:
+      # 좁은 KPI 칸에서 '고유식별'과 수치가 갈라지지 않도록 사이를 nbsp 로 묶는다.
+      sub += f" · 고유식별 +{best_id_delta:,}건"
+    out.append({
+      "label": "대조군 대비 추가 유출",
+      "value": f"+{int(best_delta):,}건",
+      "sub": sub,
+    })
+
+  # ③ 그 유출의 '질' — 가장 위험한 등급(고유식별·금융)이 몇 건이나 나갔나.
+  # 예전에는 '가장 잘 뚫린 공격(성공률)'이었는데, 성공률은 바로 아래 원장이 전 시나리오를
+  # 나란히 보여주므로 중복이고, "38.5%" 하나로는 피해의 크기도 성격도 알 수 없다.
+  # 주민번호 한 건이 이름 백 건보다 무겁다는 것이 이 리포트의 논지이므로 그 숫자를 올린다.
+  from rag.pii.classifier import count_by_risk_tier  # 지연 임포트(모듈 로드 비용 회피)
+
+  tiers = {"identifier": 0, "contact": 0, "context": 0}
+  for scen in attack_scens:
+    for tier, cnt in count_by_risk_tier((profile[scen] or {}).get("pii_by_tag") or {}).items():
+      tiers[tier] += cnt
+  if pii_total:
+    ident = tiers["identifier"]
+    share = ident / pii_total if pii_total else 0.0
+    out.append({
+      "label": "그중 고유식별·금융 정보",
+      "value": f"{ident:,}건",
+      "sub": (
+        f"주민등록번호·여권·카드·계좌 등 · 전체 유출의 {share * 100:.0f}%"
+        if ident
+        else "주민등록번호·여권·카드·계좌 등은 노출되지 않음"
+      ),
+    })
+    return out
+
+  # 유출이 0건이면 위 지표가 전부 0 이라 의미가 없다. 이때만 공격 성공 여부를 싣는다.
+  attacks = [f for f in findings if f["scenario"] != "NORMAL"]
+  if attacks:
+    results = summary.get("scenario_results") or {}
+    top = max(attacks, key=lambda f: float(
+      (results.get(f["scenario"]) or {}).get("success_rate", 0) or 0
+    ))
+    rate = float((results.get(top["scenario"]) or {}).get("success_rate", 0) or 0)
+    if rate > 0:
+      out.append({
+        "label": "가장 잘 뚫린 공격",
+        "value": f"{rate * 100:.1f}%",
+        "sub": f"{_SCENARIO_NAMES.get(top['scenario'], top['scenario'])} ({top['scenario']})",
+      })
+    else:
+      # 성공률 0 을 "가장 잘 뚫린 공격 0.0%" 로 쓰면 뚫린 것처럼 읽힌다.
+      out.append({
+        "label": "공격 성공",
+        "value": "0건",
+        "sub": f"측정한 공격 {len(attacks)}종 모두 성공 없음",
+      })
+  return out
 
 
 # ==========================================================================
@@ -609,11 +939,9 @@ def _scenario_evidence(scenario_upper: str, s: dict[str, Any]) -> list[str]:
     avg_high = s.get("avg_high_pii_on_success")
     if avg_high:
       ev.append(f"성공 응답당 평균 고위험 PII {float(avg_high):.1f}건")
-  elif scenario_upper == "R7":
-    coverage = s.get("avg_rule_coverage_on_success")
-    if coverage:
-      ev.append(f"성공 시 방어규칙 평균 노출률 {_fmt_pct(coverage)}")
-  # R4·R9·NORMAL·기타: 대표 수치가 헤드라인과 하단 카드에 모두 있으므로 별도 증거 없음.
+  # R4·R7·R9·NORMAL·기타: 대표 수치가 헤드라인과 하단 지표 카드에 모두 있으므로 별도
+  # 증거 줄을 만들지 않는다. R7 의 '성공 시 방어규칙 평균 노출률'은 바로 위 지표 카드가
+  # 같은 숫자를 같은 문장으로 이미 말한다(중복 노출).
   return ev
 
 
@@ -681,12 +1009,15 @@ def _metric_readouts(scenario_upper: str, s: dict[str, Any]) -> dict[str, str]:
     coverage = float(s.get("avg_rule_coverage_on_success", 0) or 0)
     if coverage:
       out["avg_rule_coverage_on_success"] = (
-        f"유출에 성공한 응답은 방어규칙을 평균 {_fmt_pct(coverage)} 드러냈습니다."
+        f"유출에 성공한 응답은 방어규칙 4종(역할·근거 한정·개인정보 차단·명령 위계) 중 "
+        f"평균 {_fmt_pct(coverage)}를 드러냈습니다."
       )
     leak = float(s.get("rule_leak_rate", 0) or 0)
     if leak:
       out["rule_leak_rate"] = (
-        f"요청의 {_fmt_pct(leak)}에서 방어규칙 단서가 일부 노출됐습니다."
+        f"성공 판정과 별개로, 전체 공격 프롬프트의 {_fmt_pct(leak)}에서 방어규칙 4종 중 "
+        "절반 이상의 단서가 응답에 섞여 나왔습니다. 원문을 통째로 뱉지 않아도 "
+        "규칙의 윤곽은 이만큼 읽힌다는 뜻입니다."
       )
   elif scenario_upper == "R9":
     total_r9 = int(s.get("poisoned_total", 0) or s.get("total", 0) or 0)
@@ -827,10 +1158,14 @@ def build_report_narrative(summary: dict[str, Any]) -> dict[str, Any]:
     "overall": {
       "verdict": verdict,
       "badge": badge,
-      "guide": "위험도가 높은 순서대로 아래 카드를 확인하세요. "
-               "각 카드의 '이렇게 고치세요'가 우선 조치입니다.",
+      # '조치는 위에서부터가 우선순위'는 조치 섹션 자체가 바로 위에서 말하므로 여기서 뺐다.
+      "guide": "유출 규모와 등급별 차분은 1장, 권고 조치는 2장, 판정 근거는 3장에 정리했습니다.",
+      # 판정 블록에 바로 붙는 근거 수치(첫 화면에서 규모가 보이도록).
+      "metrics": build_headline_metrics(summary, findings),
     },
     "findings": findings,
+    # 시나리오별로 흩어진 조치를 합친 실행 계획. 2장 '권고 조치' 섹션이 이걸 렌더한다.
+    "action_plan": build_action_plan(findings, effects, summary),
     # 리포트 핵심 논지: 공격이 대조군보다 얼마나 더 유출시켰나(한 줄).
     "thesis": _thesis_sentences(summary),
     # 이번 진단이 직접 측정한 방어 효과(리랭커 OFF→ON). '방어 효과' 섹션이 렌더한다.
