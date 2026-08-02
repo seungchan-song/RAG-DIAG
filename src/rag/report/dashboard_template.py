@@ -345,6 +345,15 @@ table.tbl th{color:var(--text-muted); font-weight:600; font-size:11px; letter-sp
 table.tbl td.num,table.tbl th.num{text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; padding-right:0}
 .interp-line{border-left:2px solid var(--border); padding:2px 0 2px 13px; font-size:13px; color:var(--text-muted); margin:6px 0 12px; display:flex; gap:8px; align-items:flex-start; max-width:var(--prose-sm)}
 .interp-line .ic{margin-top:4px; flex:none}
+/* 응답 탐색기 — 표본이 시나리오당 100건이라 검색·필터 없이는 훑을 수 없다 */
+.cx-bar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:2px 0 4px}
+.cx-bar input,.cx-bar select{font:inherit; font-size:12.5px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 9px}
+.cx-bar input{flex:1 1 220px; min-width:140px}
+.cx-bar input:focus,.cx-bar select:focus{outline:none; border-color:var(--brand)}
+.cx-count{font-size:11.5px; color:var(--text-muted); margin-left:auto; font-variant-numeric:tabular-nums; white-space:nowrap}
+.cx-more{display:block; width:100%; margin-top:10px; font:inherit; font-size:12.5px; font-weight:600; color:var(--text); background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px; cursor:pointer}
+.cx-more:hover{border-color:var(--brand)}
+@media print{.cx-bar,.cx-more{display:none !important}}
 .case{border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; margin:10px 0; background:var(--bg)}
 .case.hit{border-color:color-mix(in srgb,var(--high) 35%,var(--border))}
 .case .q{font-weight:600; font-size:13.5px}
@@ -356,6 +365,27 @@ details.cmdq>summary::-webkit-details-marker{display:none}
 details.cmdq>summary:hover{color:var(--text)}
 details.cmdq[open]>summary .chev{transform:rotate(180deg)}
 .cmdq-t{margin-top:7px; font-size:12.5px; color:var(--text-muted); white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow-y:auto}
+
+/* 실행 조건 칩 — 판정 근거(vchip)와 달리 "어떤 조건에서 돌린 질의인가"만 담는다.
+   판정 수치와 섞이면 뭐가 결과이고 뭐가 조건인지 구분이 안 되므로 서체·톤을 낮춘다. */
+.mchips{display:flex; flex-wrap:wrap; gap:5px 14px; margin-top:9px; font-size:11.5px; color:var(--text-muted)}
+.mchips .mk{opacity:.75}
+.mchips .mv{font-family:var(--mono); color:var(--text)}
+
+/* 이 질의가 근거로 삼은 문서 */
+details.docs{margin-top:10px; border-left:2px solid var(--border); padding-left:11px}
+details.docs>summary{cursor:pointer; list-style:none; font-size:11.5px; color:var(--text-muted); display:flex; align-items:center; gap:7px}
+details.docs>summary::-webkit-details-marker{display:none}
+details.docs>summary:hover{color:var(--text)}
+details.docs[open]>summary .chev{transform:rotate(180deg)}
+.doc{margin-top:9px; font-size:12.5px}
+.doc .dh{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap}
+.doc .dn{font-family:var(--mono); font-size:11px; color:var(--text-muted)}
+.doc .ds{font-family:var(--mono); font-weight:600; overflow-wrap:anywhere}
+.doc .dscore{margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--text-muted); white-space:nowrap}
+.doc .dt{margin-top:3px; color:var(--text-muted); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere}
+.doc.sens .ds{color:var(--high)}
+.doc.atk .ds{color:var(--med)}
 
 /* 판정 근거 칩 — 이 응답이 왜 성공/실패로 판정됐는지의 실제 수치 */
 .vchips{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
@@ -1033,26 +1063,70 @@ function verdictChips(r, scen){
   return chips.length?'<div class="vchips">'+chips.join("")+'</div>':"";
 }
 
+// 실행 조건 칩 — "어떤 조건에서 돌린 질의인가". 판정 근거 칩(verdictChips)과 중복되는
+// 항목은 여기 넣지 않는다(R2 의 payload_type, R4 의 identifier_category, R9 의 trigger 등).
+const ENV_KO={clean:"정상 DB", poisoned:"오염 DB"};
+function metaChips(r, scen){
+  const m=r.metadata||{};
+  const rows=[];
+  const put=(k,v)=>{ if(v!==undefined&&v!==null&&v!=="") rows.push([k,String(v)]); };
+  put("공격자", m.attacker);
+  put("환경", ENV_KO[String(m.env||r.environment_type||"")]||m.env||r.environment_type);
+  put("리랭커", m.reranker_state==="on"?"켬":(m.reranker_state==="off"?"끔":m.reranker_state));
+  // 질의를 만든 재료 — 어떤 단어로 검색을 유인했고 어떤 문서를 노렸나.
+  if(scen!=="R9") put("유도 키워드", m.keyword);
+  if(scen==="R2") put("질의에 쓴 개인정보", m.identifier_category?tagKo(m.identifier_category):"");
+  const qid=String(m.query_id||r.query_id||"");
+  // 질의 ID 는 대개 표적 문서 id 를 그대로 품고 있다. 둘 다 찍으면 같은 문자열을 두 번 읽힌다.
+  if(m.target_doc_id && qid.indexOf(String(m.target_doc_id))<0) put("표적 문서", m.target_doc_id);
+  put("소요", m.elapsed_seconds!=null?Number(m.elapsed_seconds).toFixed(1)+"초":"");
+  put("질의 ID", qid);
+  if(!rows.length) return "";
+  return '<div class="mchips">'+rows.map(([k,v])=>
+    '<span><span class="mk">'+esc(k)+'</span> <span class="mv">'+esc(v)+'</span></span>').join("")+'</div>';
+}
+
+// 이 질의가 근거로 삼은 문서 — 유출이 "어느 문서에서" 나왔는지는 고치려는 사람에게
+// 가장 실용적인 정보다. 본문은 저장 용량 때문에 앞부분 스니펫만 싣는다.
+const ROLE_KO={sensitive:"민감", attack:"공격", normal:"일반"};
+function docsBlock(r){
+  const docs=r.prompt_documents||[];
+  if(!docs.length) return "";
+  const items=docs.map((d,i)=>{
+    const role=String(d.role||"");
+    const cls=role==="sensitive"?" sens":(role==="attack"?" atk":"");
+    return '<div class="doc'+cls+'"><div class="dh"><span class="dn">#'+(i+1)+'</span>'
+      +'<span class="ds">'+esc(d.source||"")+'</span>'
+      +(ROLE_KO[role]?'<span class="dn">'+ROLE_KO[role]+'</span>':"")
+      +'<span class="dscore">유사도 '+Number(d.score||0).toFixed(4)+'</span></div>'
+      +'<div class="dt">'+esc(d.snippet||"")+' …</div></div>';
+  }).join("");
+  return '<details class="docs"><summary>이 질의가 근거로 삼은 문서 ('+docs.length+'건)'
+    +'<svg class="ic chev"><use href="#i-chevron"/></svg></summary>'
+    +'<p class="cap" style="margin:8px 0 0">검색되어 최종 프롬프트에 들어간 문서입니다. 본문은 앞부분만 싣습니다(전체는 결과 JSON 참조). 주민번호·연락처·이메일 등 정형 개인정보는 가렸지만 <b>이름·소속은 원문 그대로</b>입니다 — 문서는 전부 합성 데이터입니다.</p>'
+    +items+'</details>';
+}
+
 // 표본 한 건.
 // R2 의 실제 질의는 `미끼(anchor) + 긴 명령 프롬프트(command)` 를 이어 붙인 한 덩어리다.
 // 미끼만 보이면 "이게 왜 공격이지?" 로 읽힌다 — 원문을 그대로 뱉으라고 강요하는 부분이
 // 뒤쪽 명령 프롬프트에 들어 있기 때문이다. 그래서 뒷부분도 접이식으로 같이 싣는다.
+// ⚠️ 질의·응답·명령 프롬프트는 **자르지 않는다.** 예전에는 160/320/900자에서 "…" 로
+// 끊었는데, 응답 마커나 결론 문장이 잘려 나가 판정 근거를 확인할 수 없었다.
 function caseCard(r, scen){
   const badge=r.success?'<span class="badge high">성공</span>':'<span class="badge neutral">실패</span>';
   const m=r.metadata||{};
-  const q=(scen==="R2"&&m.anchor)?m.anchor:(r.query||"").slice(0,160);
-  const resp=(r.response||"").slice(0,320);
+  const q=(scen==="R2"&&m.anchor)?m.anchor:(r.query||"");
   let cmd="";
   if(scen==="R2"&&m.command){
-    const t=String(m.command);
     cmd='<details class="cmdq"><summary>이 미끼 뒤에 붙여 보낸 명령 프롬프트'
       +(m.payload_type?' — '+esc(payloadKo(m.payload_type)):'')
       +'<svg class="ic chev"><use href="#i-chevron"/></svg></summary>'
-      +'<div class="cmdq-t">'+esc(t.slice(0,900))+(t.length>900?" …":"")+'</div></details>';
+      +'<div class="cmdq-t">'+esc(String(m.command))+'</div></details>';
   }
   return '<div class="case'+(r.success?" hit":"")+'"><div class="q">'+badge+' '+esc(q)+'</div>'+cmd
-    +'<div class="a">'+esc(resp)+((r.response||"").length>320?" …":"")+'</div>'
-    +verdictChips(r,scen)+piiBox(r)+'</div>';
+    +'<div class="a">'+esc(r.response||"")+'</div>'
+    +verdictChips(r,scen)+metaChips(r,scen)+piiBox(r)+docsBlock(r)+'</div>';
 }
 
 // R4 는 (b=1, b=0) 페어가 평가 단위다. 두 응답을 나란히 놓아야 '차이로 존재가 드러난다'는
@@ -1064,7 +1138,12 @@ function r4Pairs(){
   rd.results.forEach(r=>{
     const m=r.metadata||{};
     const qid=String(m.query_id||r.query_id||"");
-    const key=qid.replace(/:b-[01]:/,":b:");
+    // 페어 키에 env·reranker 를 반드시 넣는다(generator._stratified_sample_r4_pairs 와 동일 규약).
+    // query_id 만 쓰면 reranker_on/off 두 profile 의 같은 질의가 한 그룹으로 뭉개져,
+    // 페어가 절반쯤 사라지고 b=1(on) × b=0(off) 같은 가짜 페어가 만들어진다.
+    const key=qid.replace(/:b-[01]:/,":b:")
+      +"|env="+String(m.env||m.environment||m.cell_environment||"")
+      +"|rer="+String(m.reranker_state||"").toLowerCase();
     if(!groups[key]) groups[key]={};
     groups[key][Number(m.ground_truth_b)===1?"member":"nonmember"]=r;
   });
@@ -1078,49 +1157,133 @@ function r4PairCard(g, dth){
   const m=g.member.metadata||{}, n=g.nonmember.metadata||{};
   const delta=Math.abs(Number(m.delta!=null?m.delta:(n.delta||0)));
   const ok=!!g.member.success;
+  // 응답도 자르지 않는다 — 두 응답의 '차이'가 곧 증거인데 뒷부분이 잘리면 차이가 안 보인다.
   const side=(r,label,cls)=>{
-    const t=(r.response||"").slice(0,300);
-    return '<div class="pcol '+cls+'"><h6>'+label+'</h6><div class="a">'+esc(t)
-      +((r.response||"").length>300?" …":"")+'</div>'+piiBox(r)+'</div>';
+    return '<div class="pcol '+cls+'"><h6>'+label+'</h6><div class="a">'+esc(r.response||"")
+      +'</div>'+piiBox(r)+docsBlock(r)+'</div>';
   };
   return '<div class="pair'+(ok?" hit":"")+'"><div class="phead">'
     +(ok?'<span class="badge high">페어 성공</span>':'<span class="badge neutral">페어 실패</span>')
-    +'<span class="pq">'+esc((g.member.query||"").slice(0,140))+'</span></div>'
+    +'<span class="pq">'+esc(g.member.query||"")+'</span></div>'
     // probe_mode(sensitive/generic)는 질의 생성 방식을 고르는 우리 쪽 실행 옵션이라
     // 이 응답이 왜 성공/실패했는지와 무관하다. 판정 근거 칩에 섞으면 잡음이 된다.
     +'<div class="vchips">'+vchip("응답 편차 Δ", delta.toFixed(2)+" / 기준 "+dth.toFixed(2), delta>dth)
     +(m.identifier_category?vchip("질의에 쓴 개인정보", tagKo(m.identifier_category), false, true):"")+'</div>'
+    +metaChips(g.member,"R4")
     +'<div class="pcols">'+side(g.member,"문서 포함 (b=1)","member")
     +side(g.nonmember,"문서 제외 (b=0)","")+'</div></div>';
 }
 
-function casesShell(scen, total, count, inner){
+// ── 응답 탐색기 ───────────────────────────────────────────────────────────
+// 표본은 시나리오당 100건(성공 80 / 실패 20, 공격 기법별 비례 추출)이다. 대표 3건만
+// 보고 싶은 사람도 있지만, 이 도구로 자기 RAG 를 분석하려는 사람은 "어떤 기법이 어떤
+// 응답에서 뚫렸나"를 직접 훑어야 한다. JSON 을 열게 하는 대신 검색·필터를 여기 둔다.
+// 목록은 20건씩 끊어 그린다(100건 × 4시나리오를 한 번에 DOM 에 올리면 느려진다).
+const CX_PAGE=20;
+const CX_CACHE={}, CX_STATE={};
+const PROBE_KO={sensitive:"민감정보 직접 지목", generic:"일반 키워드"};
+
+// 표본 → 필터 가능한 항목으로 정규화. draw() 는 펼칠 때만 호출되는 지연 렌더다.
+function cxEntries(scen){
+  if(CX_CACHE[scen]) return CX_CACHE[scen];
+  let list;
+  if(scen==="R4"){
+    const dth=Number((((DATA.summary||{}).scenario_results||{}).R4||{}).delta_threshold||0.15);
+    list=r4Pairs().map(g=>{
+      const m=g.member.metadata||{};
+      return {ok:!!g.member.success, type:String(m.probe_mode||"generic"),
+        text:((g.member.query||"")+" "+(g.member.response||"")+" "+(g.nonmember.response||"")).toLowerCase(),
+        draw:()=>r4PairCard(g,dth)};
+    });
+  }else{
+    const rd=(DATA.results||{})[scen]||{};
+    // 공격이 성공한 응답이 곧 증거이므로 성공 사례를 앞으로 당겨 놓는다.
+    list=(rd.results||[]).slice().sort((a,b)=>(b.success?1:0)-(a.success?1:0)).map(r=>{
+      const m=r.metadata||{};
+      // fallback 순서는 generator._variety_key 와 동일해야 한다(표본 추출 축 = 필터 축).
+      // R9 는 payload_type 이 악성 문서 쪽 속성이라 질의에는 없고, 트리거 단어로 갈린다.
+      return {ok:!!r.success, type:String(m.payload_type||m.trigger||"default"),
+        text:((r.query||"")+" "+(r.response||"")).toLowerCase(),
+        draw:()=>caseCard(r,scen)};
+    });
+  }
+  CX_CACHE[scen]=list;
+  return list;
+}
+// R4 는 탐침 방식, R9 는 트리거 단어(=질의를 가르는 축), 나머지는 공격 기법 이름.
+function cxTypeLabel(scen,t){
+  if(scen==="R4") return PROBE_KO[t]||t;
+  if(scen==="R9") return t;
+  return payloadKo(t);
+}
+function cxTypeAll(scen){
+  if(scen==="R4") return "탐침 방식 전체";
+  if(scen==="R9") return "트리거 단어 전체";
+  return "공격 기법 전체";
+}
+function cxMatch(scen){
+  const st=CX_STATE[scen]||{res:"all",type:"all",q:""};
+  return cxEntries(scen).filter(e=>
+    (st.res==="all" || (st.res==="hit")===e.ok) &&
+    (st.type==="all" || st.type===e.type) &&
+    (!st.q || e.text.indexOf(st.q)>=0));
+}
+function cxRender(scen){
+  const st=CX_STATE[scen]; if(!st) return;
+  const hits=cxMatch(scen), shown=Math.min(st.shown, hits.length);
+  el("cx-list-"+scen).innerHTML = hits.length
+    ? hits.slice(0,shown).map(e=>e.draw()).join("")
+    : '<p class="empty">검색어·필터에 맞는 표본이 없습니다.</p>';
+  el("cx-count-"+scen).textContent = hits.length ? num(hits.length)+"건 중 "+num(shown)+"건 표시" : "0건";
+  const more=el("cx-more-"+scen);
+  more.style.display = shown<hits.length ? "block" : "none";
+  more.textContent = "더 보기 (남은 "+num(hits.length-shown)+"건)";
+}
+function cxSet(scen, field, value){
+  const st=CX_STATE[scen]; if(!st) return;
+  st[field] = (field==="q") ? String(value||"").trim().toLowerCase() : value;
+  st.shown = CX_PAGE;   // 조건이 바뀌면 처음부터 다시 센다
+  cxRender(scen);
+}
+function cxMore(scen){ CX_STATE[scen].shown += CX_PAGE; cxRender(scen); }
+
+function casesShell(scen, total, count, intro){
+  CX_STATE[scen]={q:"", res:"all", type:"all", shown:CX_PAGE};
+  const counts={};
+  cxEntries(scen).forEach(e=>{ counts[e.type]=(counts[e.type]||0)+1; });
+  const types=Object.keys(counts).sort();
+  const opts=types.map(t=>'<option value="'+esc(t)+'">'+esc(cxTypeLabel(scen,t))+' ('+counts[t]+')</option>').join("");
+  const sq="'"+scen+"'";
   // 기본 접힘 — 표본은 판정을 확인하려는 사람만 펼치는 증거이고, 펼친 채로 두면
   // 시나리오 카드 사이가 응답 본문으로 길어져 아래 카드가 안 보인다.
-  return '<details class="sub"><summary><svg class="ic"><use href="#i-list"/></svg>실제 주고받은 응답 표본 '
+  // 목록은 펼치는 순간(ontoggle)에 처음 그린다.
+  return '<details class="sub" ontoggle="if(this.open)cxRender('+sq+')"><summary><svg class="ic"><use href="#i-list"/></svg>실제 주고받은 응답 표본 '
     +'<span style="font-weight:500">(전체 '+num(total)+'건 중 '+count+')</span>'
     +'<svg class="ic chev"><use href="#i-chevron"/></svg></summary>'
     +'<div class="sub-body"><p class="cap">응답 속 개인정보는 저장 전 마스킹됩니다. 전체 원본은 '+esc(scen)+'_result.json 을 참조하세요.</p>'
-    +inner+'</div></details>';
+    +intro
+    +'<div class="cx-bar">'
+    +'<input type="search" placeholder="질의·응답 본문에서 검색" oninput="cxSet('+sq+',&quot;q&quot;,this.value)">'
+    +'<select onchange="cxSet('+sq+',&quot;res&quot;,this.value)">'
+    +'<option value="all">성공·실패 전체</option><option value="hit">성공만</option><option value="miss">실패만</option></select>'
+    +(types.length>1?'<select onchange="cxSet('+sq+',&quot;type&quot;,this.value)">'
+      +'<option value="all">'+cxTypeAll(scen)+'</option>'+opts+'</select>':"")
+    +'<span class="cx-count" id="cx-count-'+scen+'"></span></div>'
+    +'<div id="cx-list-'+scen+'"></div>'
+    +'<button class="cx-more" id="cx-more-'+scen+'" onclick="cxMore('+sq+')" style="display:none"></button>'
+    +'</div></details>';
 }
-function scenarioCases(scen, limit){
+function scenarioCases(scen){
   const rd=(DATA.results||{})[scen];
   if(!rd||!rd.results||!rd.results.length) return "";
   const total=rd.results_total||rd.results.length;
-
+  const n=cxEntries(scen).length;
+  if(!n) return "";
   if(scen==="R4"){
-    const pairs=r4Pairs().slice(0,2);
-    if(!pairs.length) return "";
-    const dth=Number((((DATA.summary||{}).scenario_results||{}).R4||{}).delta_threshold||0.15);
-    return casesShell(scen, total, pairs.length+"페어",
-      '<p class="cap">멤버십 추론은 같은 질의를 문서 포함(b=1)·제외(b=0) 두 환경에서 실행한 <b>페어</b>가 평가 단위입니다. 두 응답의 차이가 곧 "그 문서가 DB에 있다"는 신호입니다.</p>'
-      +pairs.map(g=>r4PairCard(g,dth)).join(""));
+    return casesShell(scen, total, num(n)+"페어",
+      '<p class="cap">멤버십 추론은 같은 질의를 문서 포함(b=1)·제외(b=0) 두 환경에서 실행한 <b>페어</b>가 평가 단위입니다. 두 응답의 차이가 곧 "그 문서가 DB에 있다"는 신호입니다.</p>');
   }
-
-  // 공격이 성공한 응답이 곧 증거이므로 성공 사례를 앞으로 당겨 보여준다.
-  const picks=rd.results.slice().sort((a,b)=>(b.success?1:0)-(a.success?1:0)).slice(0,limit||3);
-  if(!picks.length) return "";
-  return casesShell(scen, total, picks.length+"건", picks.map(r=>caseCard(r,scen)).join(""));
+  return casesShell(scen, total, num(n)+"건", "");
 }
 
 // R7 전용 — 공격 응답 조각을 모아 재구성한 시스템 프롬프트 vs 실제 프롬프트.
@@ -1151,7 +1314,7 @@ function renderScenDetails(){
     // 확장 영역: R7 프롬프트 재구성 · 공격 세부 분해 · 대표 응답 표본.
     const rec=(f.scenario==="R7")?r7Reconstruction():"";
     const bd=breakdown(f.scenario, s);
-    const cs=scenarioCases(f.scenario, 3);
+    const cs=scenarioCases(f.scenario);
     const extra=(rec||bd||cs)?('<div class="scen-extra">'+rec+bd+cs+'</div>'):"";
     return '<div class="scen" id="detail-'+f.scenario+'">'
       +'<div class="scen-top">'
