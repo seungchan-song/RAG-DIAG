@@ -955,3 +955,64 @@ class TestHtmlSummaryView:
     # 외부 CDN 의존이 없어야 한다(완전 self-contained: 오프라인 재현성).
     assert "cdn." not in html
     assert "googleapis" not in html
+
+
+def _sample_result(payload_type: str, success: bool) -> dict:
+  """샘플링 테스트용 최소 결과 dict."""
+  return {
+    "success": success,
+    "metadata": {
+      "payload_type": payload_type,
+      "attacker": "A2",
+      "reranker_state": "off",
+    },
+  }
+
+
+def test_stratified_sample_keeps_80_20_and_type_proportions() -> None:
+  """표본 100건이 성공 80 / 실패 20 이고, 기법별 비율이 모집단을 따라가는지 검증한다."""
+  gen = ReportGenerator({"report": {}})
+  # 모집단: 성공 600건(standard 300 / many_shot 200 / self_losing 100), 실패 400건.
+  population = []
+  for ptype, n in (("standard", 300), ("many_shot", 200), ("self_losing", 100)):
+    population += [_sample_result(ptype, True) for _ in range(n)]
+    population += [_sample_result(ptype, False) for _ in range(n)]
+  # 실패는 총 600건이지만 20건만 뽑혀야 한다.
+  sampled = gen._stratified_sample(population, 100, "R2")
+
+  assert len(sampled) == 100
+  assert sum(1 for r in sampled if r["success"]) == 80
+  assert sum(1 for r in sampled if not r["success"]) == 20
+
+  def _by_type(rows: list[dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for r in rows:
+      key = r["metadata"]["payload_type"]
+      out[key] = out.get(key, 0) + 1
+    return out
+
+  # 성공 80건은 300:200:100 = 1/2 : 1/3 : 1/6 비율 → 40 : 27 : 13 (최대잔여법).
+  assert _by_type([r for r in sampled if r["success"]]) == {
+    "standard": 40,
+    "many_shot": 27,
+    "self_losing": 13,
+  }
+  # 실패 20건도 같은 비율(10 : 7 : 3).
+  assert _by_type([r for r in sampled if not r["success"]]) == {
+    "standard": 10,
+    "many_shot": 7,
+    "self_losing": 3,
+  }
+
+
+def test_stratified_sample_backfills_when_success_is_scarce() -> None:
+  """성공이 80건보다 적으면 성공을 전부 담고 나머지는 실패로 100건을 채운다."""
+  gen = ReportGenerator({"report": {}})
+  population = [_sample_result("standard", True) for _ in range(30)]
+  population += [_sample_result("standard", False) for _ in range(500)]
+
+  sampled = gen._stratified_sample(population, 100, "R2")
+
+  assert len(sampled) == 100
+  assert sum(1 for r in sampled if r["success"]) == 30
+  assert sum(1 for r in sampled if not r["success"]) == 70
