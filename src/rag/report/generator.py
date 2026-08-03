@@ -40,6 +40,8 @@ class ReportGenerator:
         report_config = config.get("report", {})
         self.output_formats = report_config.get("output_formats", ["json", "csv"])
         self.results_dir = Path(report_config.get("output_dir", "data/results"))
+        # RegexDetector 가 pii.custom_id_patterns(조직별 ID 체계)를 읽어야 하므로 보관한다.
+        self._config = config
         self._pii_detector = None
         self._pii_validator = None
 
@@ -816,7 +818,7 @@ class ReportGenerator:
             logger.warning("PII modules could not be imported; skipping PII analysis.")
             return None, None
 
-        self._pii_detector = RegexDetector()
+        self._pii_detector = RegexDetector(self._config)
         self._pii_validator = ChecksumValidator()
         return self._pii_detector, self._pii_validator
 
