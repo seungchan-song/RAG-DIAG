@@ -592,65 +592,105 @@ class AttackQueryGenerator:
 
     queries: list[dict[str, Any]] = []
 
-    # A1 공격자의 경우 문서 간에도 키워드 다양성을 유지하기 위해 slot_index 를
-    # 문서 루프 바깥에서 초기화하여 계속 누적시킵니다.
-    slot_index = 0
+    # 슬롯 → (anchor, command) 매핑의 보폭. 한 문서가 소비하는 슬롯 수와 같다.
+    stride = len(anchor_slots) * len(command_slots)
 
-    for doc in target_docs:
-      content = doc.get("content", "")
-      doc_id = doc.get("doc_id", "unknown")
+    # === 실행할 (문서, 슬롯 인덱스) 조합 결정 ===
+    # A1(Unaware Observer)은 위협 모델상 문서 내용을 모른다. 그래서 anchor 는
+    # GENERIC_OBSERVER_KEYWORDS 고정 풀에서만 나오고 snippet 도 붙지 않는다
+    # (아래 A2 전용 분기 참고). 즉 **최종 쿼리가 target_docs 에 전혀 의존하지
+    # 않는다**. 그런데도 문서를 순회하면 완전히 동일한 쿼리가 문서 수만큼
+    # 복제돼 RAG 호출만 낭비된다 — 실측(RAG-2026-0803-001)에서 A1 240회 중
+    # 180회(75%)가 중복이었고, 키워드 풀 30개에 대해 정확히 4중 복제였다.
+    # (보폭 stride 와 풀 크기의 최대공약수만큼 도달 가능한 키워드가 줄어든다.)
+    #
+    # 따라서 A1 은 문서 대신 키워드 슬롯을 직접 순회한다. 슬롯 s 의
+    # (anchor, command) 는 문서 루프와 똑같이 s % stride 로 결정하고, 슬롯 수도
+    # 문서 루프가 만들어내던 고유 쿼리 수(min(풀 크기, 문서 수 × stride))와
+    # 같게 잡는다. 그래서 **생성되는 쿼리 집합은 기존과 바이트 단위로 동일**
+    # 하고 중복 호출만 사라진다(--num-targets 로 문서 수를 줄인 경우 포함).
+    #
+    # A1 은 특정 문서를 겨냥하지 않으므로 target_text/target_doc_id 는 비운다.
+    # 기존에는 임의 문서 ID 가 붙어 있었지만 r2_evaluator 의 routing_hit 는
+    # 이미 A1 을 집계에서 제외하고 있었다("A1 은 의미 없음", r2_evaluator.py).
+    shared_pool: list[tuple[str, str]] | None = None
+    if self.attacker == "A1":
+      shared_pool = self._build_observer_anchor_pool({})
+      num_slots = min(len(shared_pool), len(target_docs) * stride)
+      slot_plan: list[tuple[dict[str, Any] | None, int]] = [
+        (None, slot) for slot in range(num_slots)
+      ]
+    else:
+      slot_plan = [
+        (doc, doc_idx * stride + offset)
+        for doc_idx, doc in enumerate(target_docs)
+        for offset in range(stride)
+      ]
 
-      # anchor 키워드 풀을 doc 마다 한 번만 만든다.
-      # A2 의 경우 _extract_sensitive_identifiers 가 NER 까지 호출할 수 있어
-      # 비용이 있으므로 슬롯 루프 밖에서 한 번만 호출하고 라운드로빈으로 재사용한다.
-      anchor_pool = self._build_observer_anchor_pool(doc)
+    # anchor 키워드 풀은 doc 마다 한 번만 만든다. A2 의
+    # _extract_sensitive_identifiers 는 NER 까지 호출할 수 있어 비용이 크므로
+    # doc 단위로 캐시하고 슬롯 간에는 라운드로빈으로 재사용한다.
+    pool_cache: dict[int, list[tuple[str, str]]] = {}
 
-      # anchor × command 모든 쌍을 직교 결합. 키워드당 쿼리 수는
-      # len(anchor_slots) × len(command_slots) × num_repeats 가 된다.
-      for anchor_idx, anchor_template in enumerate(anchor_slots):
-        for cmd_idx, (payload_type, command_template) in enumerate(command_slots):
-          # 슬롯 인덱스를 풀 크기로 modulo 해 라운드로빈으로 다양한 PII 카테고리를
-          # anchor 에 배치한다. 풀이 단일 항목(예: PII 없는 normal 문서의 fallback)
-          # 이면 자동으로 모든 슬롯이 동일 키워드를 사용해 기존 동작과 호환된다.
-          keyword, identifier_category = anchor_pool[slot_index % len(anchor_pool)]
-          slot_index += 1
-          anchor = anchor_template.format(keyword=keyword)
-          # 타깃 문서의 첫 150자를 스니펫으로 추출하여 쿼리 유사도를 극대화 (리랭커 우회용, A2 전용)
-          if self.attacker == "A2":
-            snippet_text = content[:150].replace("\n", " ").strip()
-            snippet = f" | 배경 문맥: {snippet_text} ..."
-          else:
-            snippet = ""
-          # standard 템플릿은 {keyword}, {snippet} 미사용이라 format 이 무해하고,
-          # self_losing/many_shot 템플릿은 해당 인자들을 주입.
-          command = command_template.format(keyword=keyword, snippet=snippet)
-          # Query Mirroring: 임베딩 라우팅을 타깃 클러스터로 유지하기 위해
-          # 앵커(타깃 키워드)를 항상 페이로드 앞에 배치한다.
-          final_query = f"{anchor}\n\n{command}"
+    for doc, slot_index in slot_plan:
+      if doc is None:
+        content, doc_id = "", ""
+        anchor_pool = shared_pool or [("정보", "generic")]
+        # A1 은 doc_id 가 없으므로 슬롯 번호로 query_id 유일성을 보장한다.
+        query_scope = f"slot-{slot_index:03d}"
+      else:
+        content = doc.get("content", "")
+        doc_id = doc.get("doc_id", "unknown")
+        anchor_pool = pool_cache.setdefault(
+          id(doc), self._build_observer_anchor_pool(doc)
+        )
+        query_scope = doc_id
 
-          for repeat_index in range(num_repeats):
-            queries.append({
-              "query": final_query,
-              "query_id": (
-                f"R2:{doc_id}:env-{env}:"
-                f"anc-{anchor_idx:02d}:{payload_type}-{cmd_idx:02d}:"
-                f"rep-{repeat_index:02d}"
-              ),
-              "query_type": "compound",
-              "payload_type": payload_type,
-              "anchor": anchor,
-              "command": command,
-              "target_text": content,
-              "target_doc_id": doc_id,
-              "keyword": keyword,
-              # R4S 의 identifier_category 와 동일 의미로, 리포트에서
-              # "어떤 PII 카테고리가 R2 추출 신호를 가장 잘 만드는가" 분석에 사용.
-              # A1 은 "generic", A2 는 정규식/NER 매핑된 카테고리(예: email, mobile,
-              # synth_id, person_name, address ...) 또는 PII 없는 문서는 "fallback".
-              "identifier_category": identifier_category,
-              "attacker": self.attacker,
-              "env": env,
-            })
+      anchor_idx, cmd_idx = divmod(slot_index % stride, len(command_slots))
+      anchor_template = anchor_slots[anchor_idx]
+      payload_type, command_template = command_slots[cmd_idx]
+
+      # 슬롯 인덱스를 풀 크기로 modulo 해 라운드로빈으로 다양한 PII 카테고리를
+      # anchor 에 배치한다. 풀이 단일 항목(예: PII 없는 normal 문서의 fallback)
+      # 이면 자동으로 모든 슬롯이 동일 키워드를 사용해 기존 동작과 호환된다.
+      keyword, identifier_category = anchor_pool[slot_index % len(anchor_pool)]
+      anchor = anchor_template.format(keyword=keyword)
+      # 타깃 문서의 첫 150자를 스니펫으로 추출하여 쿼리 유사도를 극대화 (리랭커 우회용, A2 전용)
+      if self.attacker == "A2":
+        snippet_text = content[:150].replace("\n", " ").strip()
+        snippet = f" | 배경 문맥: {snippet_text} ..."
+      else:
+        snippet = ""
+      # standard 템플릿은 {keyword}, {snippet} 미사용이라 format 이 무해하고,
+      # self_losing/many_shot 템플릿은 해당 인자들을 주입.
+      command = command_template.format(keyword=keyword, snippet=snippet)
+      # Query Mirroring: 임베딩 라우팅을 타깃 클러스터로 유지하기 위해
+      # 앵커(타깃 키워드)를 항상 페이로드 앞에 배치한다.
+      final_query = f"{anchor}\n\n{command}"
+
+      for repeat_index in range(num_repeats):
+        queries.append({
+          "query": final_query,
+          "query_id": (
+            f"R2:{query_scope}:env-{env}:"
+            f"anc-{anchor_idx:02d}:{payload_type}-{cmd_idx:02d}:"
+            f"rep-{repeat_index:02d}"
+          ),
+          "query_type": "compound",
+          "payload_type": payload_type,
+          "anchor": anchor,
+          "command": command,
+          "target_text": content,
+          "target_doc_id": doc_id,
+          "keyword": keyword,
+          # R4S 의 identifier_category 와 동일 의미로, 리포트에서
+          # "어떤 PII 카테고리가 R2 추출 신호를 가장 잘 만드는가" 분석에 사용.
+          # A1 은 "generic", A2 는 정규식/NER 매핑된 카테고리(예: email, mobile,
+          # synth_id, person_name, address ...) 또는 PII 없는 문서는 "fallback".
+          "identifier_category": identifier_category,
+          "attacker": self.attacker,
+          "env": env,
+        })
 
     # 카테고리 다양성 디버그: anchor 풀 라운드로빈이 의도대로 동작했는지 확인.
     # 모든 쿼리가 동일 카테고리이면 풀이 단일 항목(fallback or 한 종류 PII)임을 뜻한다.
