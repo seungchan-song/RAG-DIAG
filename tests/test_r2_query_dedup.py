@@ -110,3 +110,66 @@ def test_a2_still_targets_each_document() -> None:
   assert {q["target_doc_id"] for q in queries} == {d["doc_id"] for d in docs}
   # A2 는 문서 본문 스니펫을 쓰므로 target_text 가 채워져 있어야 한다.
   assert all(q["target_text"] for q in queries)
+
+
+def test_normal_queries_are_all_distinct() -> None:
+  """NORMAL baseline 도 문서 수와 무관하게 중복 쿼리를 만들지 않는다."""
+  from rag.attack.normal_baseline import NormalBaselineAttack
+
+  attack = NormalBaselineAttack(
+    {"attack": {"normal": {"num_templates": 9, "num_repeats": 1, "max_target_docs": 20}}},
+    attacker="A1",
+    env="clean",
+  )
+  queries = attack.generate_queries(_docs(20))
+
+  texts = [q["query"] for q in queries]
+  assert len(texts) == len(set(texts)), (
+    f"NORMAL 이 중복 쿼리를 생성했습니다: {len(texts)}개 중 고유 {len(set(texts))}개"
+  )
+  ids = [q["query_id"] for q in queries]
+  assert len(ids) == len(set(ids)), "query_id 가 중복됐습니다"
+
+
+def test_normal_query_set_matches_legacy_doc_loop() -> None:
+  """NORMAL 쿼리 '집합' 은 예전 문서 루프 구현과 정확히 같아야 한다.
+
+  대조군이므로 실험 의미가 바뀌면 공격 시나리오와의 비교 자체가 깨진다.
+  예전 구현(전역 카운터를 doc×template 로 누적)을 재현해 집합을 비교한다.
+  """
+  from rag.attack import normal_baseline as nb
+
+  cfg = {"attack": {"normal": {"num_templates": 9, "num_repeats": 1, "max_target_docs": 20}}}
+  attack = nb.NormalBaselineAttack(cfg, attacker="A1", env="clean")
+  docs = _docs(20)
+  actual = {q["query"] for q in attack.generate_queries(docs)}
+
+  # --- 예전 구현 재현 ---
+  template_pool = nb._NORMAL_QUERY_TEMPLATES
+  template_count = min(9, len(template_pool))
+  legacy: set[str] = set()
+  global_pick_index = 0
+  for _doc in docs:
+    for i in range(template_count):
+      _query_type, template_text = template_pool[i % len(template_pool)]
+      keyword = attack.keywords[global_pick_index % len(attack.keywords)]
+      global_pick_index += 1
+      legacy.add(template_text.format(keyword=keyword))
+
+  assert actual == legacy, (
+    f"쿼리 집합이 달라졌습니다 (신규 전용 {len(actual - legacy)}개, "
+    f"누락 {len(legacy - actual)}개)"
+  )
+
+
+def test_normal_respects_target_doc_count() -> None:
+  """--num-targets 로 문서를 줄이면 NORMAL 쿼리 수도 예전처럼 줄어야 한다."""
+  from rag.attack.normal_baseline import NormalBaselineAttack
+
+  cfg = {"attack": {"normal": {"num_templates": 9, "num_repeats": 1, "max_target_docs": 20}}}
+  attack = NormalBaselineAttack(cfg, attacker="A1", env="clean")
+
+  # 문서 3개 × 템플릿 9 = 27 슬롯 < lcm(9, 16)=144 → 27개 그대로
+  assert len(attack.generate_queries(_docs(3))) == 27
+  # 문서 20개면 180 슬롯이지만 서로 다른 조합이 144개뿐이라 144 가 상한
+  assert len(attack.generate_queries(_docs(20))) == 144

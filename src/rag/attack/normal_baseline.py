@@ -43,13 +43,13 @@ NORMAL 시나리오: 공격이 아닌 "가볍게 민감정보를 묻는 일반 �
   result = attack.execute(queries[0], rag_pipeline)
 """
 
+import math
 from typing import Any
 
 from haystack import Pipeline
 from loguru import logger
 
 from rag.attack.base import AttackResult, BaseAttack
-
 
 # === 공격성 표현 금지 목록 ===
 # generate_queries() 가 만든 모든 쿼리는 아래 토큰 중 무엇도 포함하지 않아야 한다.
@@ -249,69 +249,69 @@ class NormalBaselineAttack(BaseAttack):
     num_repeats = int(self.attack_config.get("num_repeats", 1))
     max_target_docs = int(self.attack_config.get("max_target_docs", 20))
 
-    # target_docs 가 비어 있어도 동일 정책으로 가상 doc_id 를 부여해 baseline 을 생성.
-    # NORMAL 은 본문을 참조하지 않으므로 "비어 있어 fallback" 이라는 분기 자체가 의미 없음.
-    effective_docs: list[dict[str, Any]]
-    if target_docs:
-      effective_docs = target_docs[:max_target_docs]
-    else:
-      logger.info(
-        "NORMAL: target_docs 가 비어 있어 가상 doc_id 로 baseline 쿼리를 생성합니다."
-      )
-      effective_docs = [
-        {"content": "", "doc_id": f"normal-pool-{i:03d}"}
-        for i in range(max_target_docs)
-      ]
-
     queries: list[dict[str, Any]] = []
     template_pool = _NORMAL_QUERY_TEMPLATES
     template_count = min(num_templates, len(template_pool))
 
-    # 풀 키워드를 모든 (doc, template) 조합에 걸쳐 연속 인덱스로 순환시키기 위해
-    # 전역 카운터를 둔다. 동일 doc 에서도 템플릿별로 키워드가 달라지도록 함.
-    global_pick_index = 0
+    # === 몇 개의 슬롯을 돌릴지 결정 ===
+    # NORMAL 은 본문을 전혀 참조하지 않는다 — 쿼리는 (템플릿 i, 풀 키워드) 두
+    # 축만의 함수다. 그래서 서로 다른 조합은 lcm(템플릿 수, 풀 크기) 개뿐이고,
+    # 그보다 많은 슬롯을 돌리면 **완전히 동일한 쿼리가 복제돼** RAG 호출(LLM+검색)
+    # 만 낭비된다. 예전에는 target_docs 를 순회하며 문서당 template_count 개씩
+    # 슬롯을 소비했기 때문에 문서가 많으면 자동으로 그 한계를 넘겼다 —
+    # 실측(RAG-2026-0803-001): 프로파일당 180회 중 36회(20%)가 중복이었다.
+    # 중복은 비용뿐 아니라 baseline PII 집계에서 같은 응답을 여러 번 세게 한다.
+    #
+    # 그래서 문서 대신 슬롯을 직접 순회한다. 슬롯 s 의 (템플릿, 키워드) 는
+    # 예전 문서 루프와 똑같이 (s % template_count, s % 풀 크기) 로 정하고,
+    # 슬롯 수도 예전 루프가 만들어내던 고유 쿼리 수와 같게 잡는다. 따라서
+    # **생성되는 쿼리 집합은 기존과 바이트 단위로 동일**하고 중복만 사라진다.
+    #
+    # target_docs 는 이제 "몇 개까지 돌릴지" 비용 상한으로만 쓰인다(기존
+    # `--num-targets` 사용감 유지). 본문·doc_id 는 애초에 쿼리에 관여하지 않았고
+    # NORMAL 평가·리포트도 읽지 않으므로, target_text 는 비우고 doc_id 는 풀 기반
+    # 라벨을 쓴다 — 예전에도 문서가 없을 때 쓰던 바로 그 라벨이다.
+    doc_budget = min(len(target_docs), max_target_docs) if target_docs else max_target_docs
+    max_distinct = math.lcm(template_count, len(self.keywords))
+    num_slots = min(max_distinct, doc_budget * template_count)
 
-    for doc_index, doc in enumerate(effective_docs):
-      doc_id = str(
-        doc.get("doc_id")
-        or doc.get("meta", {}).get("doc_id")
-        or f"normal-pool-{doc_index:03d}"
-      )
-      content = doc.get("content", "") or ""
+    for slot_index in range(num_slots):
+      template_index = slot_index % template_count
+      query_type, template_text = template_pool[template_index]
+      keyword = self._pick_keyword(slot_index)
+      query_text = template_text.format(keyword=keyword)
+      doc_id = f"normal-pool-{slot_index:03d}"
 
-      for i in range(template_count):
-        query_type, template_text = template_pool[i % len(template_pool)]
-        keyword = self._pick_keyword(global_pick_index)
-        global_pick_index += 1
-        query_text = template_text.format(keyword=keyword)
+      # 비공격성 보증: 생성된 쿼리에 공격성 표현이 절대 들어가지 않아야 한다.
+      offending = _contains_forbidden_token(query_text)
+      if offending is not None:
+        raise RuntimeError(
+          f"NORMAL 쿼리에 공격성 표현이 발견되었습니다 (token='{offending}'): {query_text}"
+        )
 
-        # 비공격성 보증: 생성된 쿼리에 공격성 표현이 절대 들어가지 않아야 한다.
-        offending = _contains_forbidden_token(query_text)
-        if offending is not None:
-          raise RuntimeError(
-            f"NORMAL 쿼리에 공격성 표현이 발견되었습니다 (token='{offending}'): {query_text}"
-          )
-
-        for repeat_index in range(num_repeats):
-          queries.append({
-            "query": query_text,
-            "query_id": (
-              f"NORMAL:{doc_id}:{query_type}-{i:02d}:rep-{repeat_index:02d}"
-            ),
-            "query_type": query_type,
-            "payload_type": "normal",
-            "target_text": content,
-            "target_doc_id": doc_id,
-            "keyword": keyword,
-            "attacker": self.attacker,
-            "env": self.env,
-            "baseline": True,
-          })
+      for repeat_index in range(num_repeats):
+        queries.append({
+          "query": query_text,
+          "query_id": (
+            f"NORMAL:{doc_id}:{query_type}-{template_index:02d}:rep-{repeat_index:02d}"
+          ),
+          "query_type": query_type,
+          "payload_type": "normal",
+          # NORMAL 은 특정 문서를 겨냥하지 않는다(대조군). 본문을 실어봤자
+          # 어느 평가기도 읽지 않으면서 결과 파일만 키운다.
+          "target_text": "",
+          "target_doc_id": doc_id,
+          "keyword": keyword,
+          "attacker": self.attacker,
+          "env": self.env,
+          "baseline": True,
+        })
 
     logger.info(
-      "NORMAL baseline 쿼리 {}개 생성 완료 (docs={}, templates={}, repeats={}, pool={}개)",
+      "NORMAL baseline 쿼리 {}개 생성 완료 (slots={}/{}, templates={}, repeats={}, pool={}개)",
       len(queries),
-      len(effective_docs),
+      num_slots,
+      max_distinct,
       template_count,
       num_repeats,
       len(self.keywords),
