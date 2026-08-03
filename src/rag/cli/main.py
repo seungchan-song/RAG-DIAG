@@ -588,18 +588,44 @@ def _resolve_max_target_docs(
     return value if value > 0 else None
 
 
+def _resolve_r9_trigger_role(config: dict[str, Any]) -> str:
+    """R9 트리거 키워드가 실제로 뽑히는 doc_role 을 config 에서 해석한다.
+
+    `R9InjectionAttack.resolve_trigger_keywords` 와 **같은 규칙**이어야 한다.
+    이 값은 `_apply_target_docs_cap` 의 cap 대상 선택에 쓰이는데, 둘이 어긋나면
+    cap 이 트리거가 아닌 그룹에 걸려 트리거 수가 코퍼스 크기에 비례해 늘어나고
+    poison 문서가 폭주한다(트리거당 num_poison_docs 개씩 생성되므로).
+
+    Args:
+      config: load_config 결과.
+
+    Returns:
+      str: cap 을 적용할 doc_role. attack_docs 모드면 "attack",
+        corpus 모드면 `attack.r9.trigger_corpus_role`(기본 "normal").
+    """
+    r9_config = (config.get("attack") or {}).get("r9") or {}
+    source = str(r9_config.get("trigger_source", "attack_docs")).lower()
+    if source == "corpus":
+      return str(r9_config.get("trigger_corpus_role", "normal")).lower()
+    return "attack"
+
+
 def _apply_target_docs_cap(
     target_docs: list[dict[str, Any]],
     scenario: str,
     max_n: int | None,
     random_seed: int | None = None,
+    r9_trigger_role: str = "attack",
 ) -> list[dict[str, Any]]:
     """시나리오별 정책에 따라 공격 대상 문서 수를 max_n 이하로 자른다.
 
     정책:
       - R7: target_docs 와 무관하게 system_prompt 가 타깃이므로 입력을 그대로 반환.
-      - R9: doc_role=attack 인 문서만 trigger 키워드 소스로 쓰이므로 attack 문서에만
-            cap 을 적용하고, 일반/민감 문서는 그대로 둔다.
+      - R9: **트리거 키워드 소스가 되는 역할의 문서에만** cap 을 적용하고 나머지는
+            그대로 둔다. 그 역할이 무엇인지는 `attack.r9.trigger_source` 에 따라
+            달라지므로 호출자가 `r9_trigger_role` 로 알려준다(attack_docs 모드면
+            "attack", corpus 모드면 trigger_corpus_role 값). cap 대상을 틀리면
+            트리거 수가 코퍼스 크기에 비례해 poison 이 폭주한다.
       - 그 외(NORMAL/R2/R4): doc_role=sensitive 를 우선 보존하도록 그룹화한 뒤,
             같은 그룹 내에서는 random_seed 기반 셔플로 N 개를 샘플링한다.
             (sensitive 그룹을 먼저 채우고, 부족분은 일반 그룹에서 채움.)
@@ -617,6 +643,8 @@ def _apply_target_docs_cap(
       scenario: 시나리오 이름 (대소문자 무관).
       max_n: 상한값. None = 무제한.
       random_seed: 그룹 내 셔플에 사용할 seed. 보통 config.experiment.random_seed.
+      r9_trigger_role: R9 에서 cap 을 적용할 doc_role. 트리거 키워드가 실제로
+        뽑히는 역할과 반드시 일치해야 한다(`_resolve_r9_trigger_role` 참조).
 
     Returns:
       cap 이 적용된 새 리스트 (원본 미변경).
@@ -650,16 +678,16 @@ def _apply_target_docs_cap(
       return ordered[:limit]
 
     if scenario_upper == "R9":
-      attack_docs: list[dict[str, Any]] = []
+      trigger_docs: list[dict[str, Any]] = []
       other_docs: list[dict[str, Any]] = []
       for doc in target_docs:
         role = (doc.get("meta") or {}).get("doc_role", "")
-        if role == "attack":
-          attack_docs.append(doc)
+        if role == r9_trigger_role:
+          trigger_docs.append(doc)
         else:
           other_docs.append(doc)
-      sampled_attack = _sample_group(attack_docs, max_n, seed_offset=0)
-      return other_docs + sampled_attack
+      sampled_trigger = _sample_group(trigger_docs, max_n, seed_offset=0)
+      return other_docs + sampled_trigger
 
     sensitive_docs: list[dict[str, Any]] = []
     normal_docs: list[dict[str, Any]] = []
@@ -2437,7 +2465,11 @@ def _execute_single_run(
         max_n = _resolve_max_target_docs(scenario, config, num_targets)
         random_seed = (config.get("experiment") or {}).get("random_seed")
         target_docs = _apply_target_docs_cap(
-            target_docs, scenario, max_n, random_seed=random_seed
+            target_docs,
+            scenario,
+            max_n,
+            random_seed=random_seed,
+            r9_trigger_role=_resolve_r9_trigger_role(config),
         )
         post_cap_count = len(target_docs)
 
