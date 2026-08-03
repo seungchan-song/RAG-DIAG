@@ -4,29 +4,29 @@ STEP 1: 정규식 기반 PII 탐지 모듈
 구조화된 형태의 개인식별정보(PII)를 정규식 패턴으로 탐지합니다.
 각 패턴에는 PII 태그(예: QT_MOBILE, TMI_EMAIL)가 부여됩니다.
 
-탐지 대상 (정규식 15개 · 아래 6번 QT_ARN 은 QT_RRN 매칭 후처리로 분기):
-  1. QT_MOBILE    - 휴대전화번호 (010-XXXX-XXXX)
-  2. QT_PHONE     - 일반전화번호 (02-XXXX-XXXX, 031-XXX-XXXX)
+여기에는 **국가·업계 표준으로 형식이 정해진 것만** 넣습니다(정규식 12개 ·
+아래 6번 QT_ARN 은 QT_RRN 매칭 후처리로 분기):
+  1. QT_MOBILE    - 휴대전화번호 (010-XXXX-XXXX) — 이동전화 번호계획
+  2. QT_PHONE     - 일반전화번호 (02-XXXX-XXXX) — 지역번호 체계
   3. TMI_EMAIL    - 이메일 주소 (user@domain.com)
-  4. QT_CARD      - 신용카드번호 (XXXX-XXXX-XXXX-XXXX)
-  5. QT_RRN       - 주민등록번호 (YYMMDD-XXXXXXX)
-  6. QT_ARN       - 외국인등록번호 (YYMMDD-XXXXXXX, 뒷자리 5~8)
-  7. QT_PASSPORT  - 여권번호 (M12345678)
-  8. QT_CAR       - 차량번호 (12가1234, 서울12가1234)
+  4. QT_CARD      - 신용카드번호 (16자리 + Luhn)
+  5. QT_RRN       - 주민등록번호 (YYMMDD-XXXXXXX + mod 11)
+  6. QT_ARN       - 외국인등록번호 (뒷자리 첫째 5~8)
+  7. QT_PASSPORT  - 여권번호 (영문 1 + 숫자 8, 구형)
+  8. QT_CAR       - 차량번호 (12가1234) — 등록번호판 규격
   9. QT_IP        - IP 주소 (192.168.0.1)
-  10. QT_AGE      - 나이 표현 (25세, 만 30세)
-  11. QT_ADDR     - 주소 패턴 (서울특별시 ..., ...로 123)
-  12. EMPLOYEE_ID    - 사원번호 (EMP-2024-13579)
-  13. MEMBER_ID      - 회원 ID (MBR1234567)
-  14. PARTICIPANT_ID - 참가자 ID (PART-4821)
-  15. USER_ID        - 계정 ID (admin_7391)
-  16. ZIPCODE        - 우편번호 ("우편번호 06234" 문맥 한정)
+  10. QT_AGE      - 나이 표현 (25세, 만 30세) — 한국어 표현 패턴
+  11. QT_ADDR     - 주소 (실제 광역자치단체명 + 시/군/구 + 로/길/동)
+  12. ZIPCODE     - 우편번호 (5자리, "우편번호 06234" 문맥 한정)
 
-  12~16번은 개인정보 33종 개편(2026-08)으로 신설된 고정 포맷 식별자입니다.
-  NER 이 아직 이 라벨을 모르므로 정규식이 유일한 탐지 경로이며, 없으면 코퍼스에
-  심긴 이 PII 들이 유출돼도 리포트에 0건으로 찍힙니다.
-  CITY(도시명)는 "서울" 같은 맨 단어라 정규식으로 잡으면 오탐이 폭증하므로
-  여기 넣지 않고 NER(STEP 3)에 맡깁니다.
+  ⚠️ **조직별 ID(사원번호·회원 ID·참가자 ID·계정 ID)는 여기 넣지 않습니다.**
+  회사마다 체계가 달라 표준 형식이라는 게 없기 때문입니다. 예전엔 우리 합성
+  코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)를 박아 뒀는데, 그러면 우리
+  데이터에서만 맞고 **남의 RAG 를 진단하면 무조건 0건**이 나옵니다. 지금은
+  `config` 의 `pii.custom_id_patterns` 로 배포처가 선언하며(기본 비움),
+  선언이 없으면 문맥을 보는 NER(STEP 3)이 전담합니다.
+  CITY(도시명)도 같은 이유로 NER 담당입니다 — "서울" 같은 맨 단어라 정규식으로
+  잡으면 오탐이 폭증합니다.
 
 동작 방식:
   - 입력 텍스트에서 각 패턴을 검색합니다
@@ -43,7 +43,7 @@ STEP 1: 정규식 기반 PII 탐지 모듈
 
 import re
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from loguru import logger
 
@@ -88,6 +88,21 @@ class PIIPattern:
   pattern: re.Pattern
   description: str
   needs_validation: bool = False
+
+
+# === 한국어 경계: `\b` 를 쓰면 안 되는 이유 ==================================
+# `\b` 는 유니코드 단어문자 기준이라 **한글도 단어문자로 본다.** 한국어는 조사가 값에
+# 바로 붙으므로("203.0.113.11를", "우편번호 06234가", "EMP-2024-13579로") 값과 조사
+# 사이에 단어 경계가 생기지 않아 `\b` 로 끝나는 패턴이 통째로 실패한다.
+#
+# 실측(2026-08-03): 우리 clean 코퍼스에서 IP 331건 중 **112건(34%)** 을 이 이유로
+# 놓치고 있었다. 더 나쁜 건 `MBR1234567은` 처럼 조사가 붙으면 MEMBER_ID 가 실패해
+# **D13 에서 고쳤던 여권번호 오분류(QT_PASSPORT)가 되살아난다** — 가장 위험한
+# 고유식별 등급의 건수를 부풀리는 그 문제다.
+#
+# 그래서 경계를 ASCII 영숫자/밑줄로만 한정한다. 한글·공백·문장부호는 경계로 인정한다.
+ASCII_LEFT_BOUNDARY = r"(?<![0-9A-Za-z_])"
+ASCII_RIGHT_BOUNDARY = r"(?![0-9A-Za-z_])"
 
 
 class RegexDetector:
@@ -179,14 +194,25 @@ class RegexDetector:
     ),
 
     # === 6. 여권번호 ===
-    # M12345678, S12345678 등 (영문 1~2자리 + 숫자 7~8자리)
+    # M12345678, S99585004 등 — 대한민국 여권번호는 **영문 1글자 + 숫자 8자리**다.
+    #
+    # 이전 패턴 `[A-Z]{1,2}\d{7,8}` 은 근거 없이 넓혀 놓은 것이라 두 방향으로 틀렸다.
+    #   · 너무 헐렁: `MBR1234567` 의 뒤 9글자를 `BR1234567` 여권번호로 집어가
+    #     고유식별 등급 건수를 부풀렸다. MEMBER_ID 정규식이 사실상 이 오탐을
+    #     막는 방패로 존재해 왔다(D13). 영문 1글자로 좁히면 방패가 필요 없다.
+    #   · 너무 좁음: 2021년 이후 신형 여권은 숫자 사이에 영문이 섞인다
+    #     (`M303C0624`). 이건 임의 영숫자 코드와 구조상 구분이 불가능해
+    #     정규식으로 잡으려 하면 오탐이 폭증한다 → **NER 에 맡긴다**
+    #     (실측: 팀원 데이터셋 48건 중 정규식 21건 / NER 48건 전량 탐지).
     PIIPattern(
       tag="QT_PASSPORT",
       pattern=re.compile(
-        r"[A-Z]{1,2}"         # 영문 대문자 1~2자리
-        r"\d{7,8}"            # 숫자 7~8자리
+        ASCII_LEFT_BOUNDARY
+        + r"[A-Z]"            # 영문 대문자 1자리 (여권 종류: M/S/R/D/O 등)
+        + r"\d{8}"            # 숫자 8자리
+        + ASCII_RIGHT_BOUNDARY
       ),
-      description="여권번호 (영문+숫자)",
+      description="여권번호 (영문 1자리 + 숫자 8자리, 구형)",
     ),
 
     # === 7. 차량번호 ===
@@ -210,10 +236,10 @@ class RegexDetector:
     PIIPattern(
       tag="QT_IP",
       pattern=re.compile(
-        r"\b"
-        r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"  # 앞 3개 옥텟
-        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"            # 마지막 옥텟
-        r"\b"
+        ASCII_LEFT_BOUNDARY
+        + r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"  # 앞 3개 옥텟
+        + r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"           # 마지막 옥텟
+        + ASCII_RIGHT_BOUNDARY
       ),
       description="IP 주소 (IPv4)",
     ),
@@ -250,51 +276,54 @@ class RegexDetector:
       description="도로명/지번 주소",
     ),
 
-    # === 11. 사원번호 (신규 33종) ===
-    # EMP-2024-13579
-    PIIPattern(
-      tag="EMPLOYEE_ID",
-      pattern=re.compile(r"\bEMP-\d{4}-\d{4,6}\b"),
-      description="사원번호 (EMP-연도-일련번호)",
-    ),
-
-    # === 12. 회원 ID (신규 33종) ===
-    # MBR1234567 — 이 패턴이 없으면 QT_PASSPORT(영문 1~2 + 숫자 7~8)가 뒤 9글자를
-    # 'BR1234567' 여권번호로 잘못 집어간다(고유식별 등급 오집계).
-    PIIPattern(
-      tag="MEMBER_ID",
-      pattern=re.compile(r"\bMBR\d{7}\b"),
-      description="회원 ID (MBR + 7자리)",
-    ),
-
-    # === 13. 참가자 ID (신규 33종) ===
-    # PART-4821, PTC-1043, RES-9920, SUB-3311
-    PIIPattern(
-      tag="PARTICIPANT_ID",
-      pattern=re.compile(r"\b(?:PART|PTC|RES|SUB)-\d{4}\b"),
-      description="참가자 ID (연구/행사 참가번호)",
-    ),
-
-    # === 14. 계정 ID (신규 33종) ===
-    # user_1234, admin_7391, staff_2048, dev_5150, mgr_8800
-    PIIPattern(
-      tag="USER_ID",
-      pattern=re.compile(r"\b(?:user|admin|staff|dev|mgr)_\d{4}\b"),
-      description="계정 ID (역할접두사_4자리)",
-    ),
-
-    # === 15. 우편번호 (신규 33종) ===
+    # === 11. 우편번호 (신규 33종) ===
     # 맨 5자리 숫자는 금액·수량과 구분되지 않으므로 '우편번호' 라벨 뒤에서만 잡는다.
     # ponytail: 고정폭 lookbehind 라 "우편번호: 06234"(콜론) 형태는 놓친다.
     #           코퍼스가 "우편번호 06234" 한 가지 형식만 쓰므로 지금은 충분하고,
     #           다른 표기가 나오면 라벨 부분까지 매칭에 포함시키는 쪽으로 넓힌다.
     PIIPattern(
       tag="ZIPCODE",
-      pattern=re.compile(r"(?<=우편번호\s)\d{5}\b"),
+      pattern=re.compile(r"(?<=우편번호\s)\d{5}" + ASCII_RIGHT_BOUNDARY),
       description="우편번호 (5자리, '우편번호' 문맥 한정)",
     ),
 
   ]
+
+  def __init__(self, config: dict[str, Any] | None = None) -> None:
+    """
+    내장 표준 패턴에 조직별 ID 패턴(`pii.custom_id_patterns`)을 얹어 초기화한다.
+
+    사원번호·회원 ID·참가자 ID·계정 ID 는 **조직마다 체계가 달라 국가 표준이
+    없다.** 예전엔 우리 합성 코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)를
+    코드에 박아 뒀는데, 그건 우리 데이터에서만 맞고 남의 RAG 를 진단하면
+    **무조건 0건**이 나온다. 이 도구의 목적이 남의 RAG 진단이므로 그런 값은
+    코드가 아니라 배포처 설정에 있어야 한다.
+
+    기본값은 비어 있다 — 아무것도 선언하지 않으면 ID 류는 문맥을 보는 NER 이
+    전담한다. 우리 코퍼스용 패턴은 `config/default.yaml` 에만 선언돼 있다.
+
+    Args:
+      config: 전체 설정 딕셔너리. `pii.custom_id_patterns` 를 {태그: 정규식}
+        형태로 읽는다. None 이면 내장 표준 패턴만 사용한다.
+    """
+    self.patterns: list[PIIPattern] = list(self.PATTERNS)
+
+    custom = ((config or {}).get("pii", {}) or {}).get("custom_id_patterns", {}) or {}
+    for tag, expression in custom.items():
+      try:
+        compiled = re.compile(
+          ASCII_LEFT_BOUNDARY + f"(?:{expression})" + ASCII_RIGHT_BOUNDARY
+        )
+      except re.error as error:
+        # 설정 오타로 전체 파이프라인이 죽으면 안 된다. 해당 항목만 건너뛴다.
+        logger.warning("custom_id_patterns[{}] 정규식 오류로 건너뜁니다: {}", tag, error)
+        continue
+      self.patterns.append(
+        PIIPattern(tag=str(tag), pattern=compiled, description=f"조직별 ID 패턴 ({tag})")
+      )
+
+    if custom:
+      logger.debug("조직별 ID 패턴 {}종 적용: {}", len(custom), sorted(custom))
 
   def detect(self, text: str) -> list[PIIMatch]:
     """
@@ -312,7 +341,7 @@ class RegexDetector:
     """
     matches: list[PIIMatch] = []
 
-    for pii_pattern in self.PATTERNS:
+    for pii_pattern in self.patterns:
       # 정규식으로 텍스트에서 모든 매칭을 찾습니다
       for match in pii_pattern.pattern.finditer(text):
         pii_match = PIIMatch(

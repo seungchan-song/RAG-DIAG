@@ -138,7 +138,7 @@ class TestPIIBenchmarkRunner:
     assert summary["overall_macro_precision"] == 1.0
     assert summary["overall_macro_recall"] == 1.0
     assert summary["overall_macro_f1"] == 1.0
-    assert summary["per_tag_metrics"]["QT_MOBILE"]["support"] == 1
+    assert summary["per_tag_metrics"]["QT_PHONE"]["support"] == 1
     assert summary["per_tag_metrics"]["TMI_EMAIL"]["support"] == 2
 
   def test_label_mismatch_is_recorded_with_masked_snippet(self, tmp_path) -> None:
@@ -163,7 +163,7 @@ class TestPIIBenchmarkRunner:
         sample_id="sample-001",
         start=13,
         end=29,
-        label="QT_MOBILE",
+        label="QT_PHONE",
         text="hong@example.com",
         route="STEP1_RAW",
         source="regex",
@@ -172,11 +172,11 @@ class TestPIIBenchmarkRunner:
 
     compared = runner._compare_entities(sample, predictions)
 
-    assert compared["fp"]["QT_MOBILE"] == 1
+    assert compared["fp"]["QT_PHONE"] == 1
     assert compared["fn"]["TMI_EMAIL"] == 1
     assert compared["errors"][0]["error_type"] == "label_mismatch"
     assert compared["errors"][0]["gold_label"] == "TMI_EMAIL"
-    assert compared["errors"][0]["pred_label"] == "QT_MOBILE"
+    assert compared["errors"][0]["pred_label"] == "QT_PHONE"
     assert "hong@example.com" not in compared["errors"][0]["masked_snippet"]
 
   def test_canonical_matching_credits_boundary_drift(self, tmp_path) -> None:
@@ -398,7 +398,7 @@ class TestPIIBenchmarkRunner:
             sample_id=sample.sample_id,
             start=22,
             end=38,
-            label="QT_MOBILE",
+            label="QT_PHONE",
             text="hong@example.com",
             route="STEP1_RAW",
             source="regex",

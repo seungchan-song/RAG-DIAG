@@ -104,7 +104,9 @@ class PIIClassifier:
     confirmed: list[ConfirmedPII] = []
 
     for match in regex_validated:
-      route = "A-2" if match.tag in {"QT_RRN", "QT_ARN", "QT_CARD"} else "A-1"
+      # A-2 = 체크섬을 실제로 통과한 항목. QT_ARN 은 검증 가능한 체크섬이 없어
+      # (step2_checksum docstring 참조) 구조 일치만으로 확정되므로 A-1 이다.
+      route = "A-2" if match.tag in {"QT_RRN", "QT_CARD"} else "A-1"
       confirmed.append(
         ConfirmedPII(
           tag=match.tag,

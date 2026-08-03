@@ -21,58 +21,74 @@ from typing import Any
 
 from loguru import logger
 
+from rag.pii.step2_checksum import RejectedPII
 
-# === KDPII NER 라벨 → 코드 내부 단축 PII 태그 정규화 매핑 ============
-# 좌: 모델(KPF-BERT-KDPII)이 출력하는 KDPII 33개 엔티티 라벨.
+
+# === NER 라벨 → 코드 내부 단축 PII 태그 정규화 매핑 ==================
+# 좌: 모델(townboy/kpfbert-ner)이 출력하는 개인정보 33종 라벨.
 # 우: 정규식/분류기/마스커가 공통으로 사용하는 단축 태그.
 #
+# 이 표가 "모델이 뱉는 이름 → 우리 내부 이름" 번역 경계다. 모델을 바꿔도
+# 여기 왼쪽 키만 갈아끼우면 정규식·위험도·마스커·리포트·테스트(12개 파일)는
+# 손대지 않아도 된다. 내부 태그는 밖으로 나가지 않는 이름일 뿐이다.
+#
 # 매핑 원칙:
-#   1. 정규식 태그와 의미가 동일한 경우 단축 형태로 통일한다
-#      (예: QT_CARD_NUMBER → QT_CARD, QT_RESIDENT_NUMBER → QT_RRN).
-#   2. 단축 태그가 없는 신규 항목은 새 단축 태그를 부여한다
-#      (예: QT_ACCOUNT_NUMBER → QT_ACCOUNT, TMI_SITE → TMI_SITE).
+#   1. 정규식이 이미 쓰는 태그가 있으면 그 이름으로 통일한다
+#      (예: CARD_NUMBER → QT_CARD, RRN → QT_RRN).
+#   2. 33종 개편 신규 5종은 정규식과 라벨명이 같으므로 그대로 쓴다
+#      (EMPLOYEE_ID / MEMBER_ID / PARTICIPANT_ID / USER_ID / ZIPCODE).
 #   3. 큰 범주(LOC, ORG, DAT 등)는 정규식과 동일한 이름을 재사용한다.
+#
+# 주의: 모델은 휴대전화와 일반전화를 PHONE 하나로 통합했으므로 QT_PHONE 으로
+# 받는다. 휴대전화 구분은 정규식(QT_MOBILE)이 유지하며, 두 경로가 같은 스팬을
+# 잡으면 classifier._remove_overlaps 가 정규식(confidence 1.0) 쪽을 남긴다.
 NER_LABEL_MAP: dict[str, str] = {
   # --- 정형 식별자 (HIGH_F1) ---
-  "QT_MOBILE": "QT_MOBILE",
-  "QT_PHONE": "QT_PHONE",
-  "QT_AGE": "QT_AGE",
-  "QT_IP": "QT_IP",
-  "TMI_EMAIL": "TMI_EMAIL",
-  "TMI_SITE": "TMI_SITE",
-  "QT_CARD_NUMBER": "QT_CARD",
-  "QT_ACCOUNT_NUMBER": "QT_ACCOUNT",
-  "QT_RESIDENT_NUMBER": "QT_RRN",
-  "QT_ALIEN_NUMBER": "QT_ARN",
-  "QT_PASSPORT_NUMBER": "QT_PASSPORT",
-  "QT_DRIVER_NUMBER": "QT_DRIVER",
-  "QT_PLATE_NUMBER": "QT_CAR",
+  "PHONE": "QT_PHONE",
+  "EMAIL": "TMI_EMAIL",
+  "URL": "TMI_SITE",
+  "IP_ADDRESS": "QT_IP",
+  "AGE": "QT_AGE",
+  "CARD_NUMBER": "QT_CARD",
+  "ACCOUNT_NUMBER": "QT_ACCOUNT",
+  "RRN": "QT_RRN",
+  "ALIEN_NUMBER": "QT_ARN",
+  "PASSPORTNUM": "QT_PASSPORT",
+  "DRIVER_LICENSE": "QT_DRIVER",
+  "VEHICLE_NUMBER": "QT_CAR",
+  "EMPLOYEE_ID": "EMPLOYEE_ID",
+  "MEMBER_ID": "MEMBER_ID",
+  "PARTICIPANT_ID": "PARTICIPANT_ID",
+  "USER_ID": "USER_ID",
+  "ZIPCODE": "ZIPCODE",
   # --- 비정형 PII (LOW_F1) ---
-  "PS_NAME": "PER",
-  "PS_NICKNAME": "PER",
-  "PS_ID": "PER",
-  "LC_ADDRESS": "QT_ADDR",
-  "LC_PLACE": "LOC",
-  "LCP_COUNTRY": "LOC",
-  "OG_DEPARTMENT": "ORG",
-  "OG_WORKPLACE": "ORG",
-  "OGG_CLUB": "ORG",
-  "OGG_EDUCATION": "ORG",
-  "OGG_RELIGION": "ORG",
-  "CV_MILITARY_CAMP": "ORG",
-  "DT_BIRTH": "DAT",
-  "FD_MAJOR": "TMI_OCCUPATION",
-  "CV_POSITION": "TMI_OCCUPATION",
-  "CV_SEX": "TMI_HEALTH",
-  "TM_BLOOD_TYPE": "TMI_HEALTH",
-  # --- 부가정보 (보수적으로 LOW_F1 처리) ---
-  "QT_GRADE": "QT_GRADE",
-  "QT_LENGTH": "QT_LENGTH",
-  "QT_WEIGHT": "QT_WEIGHT",
+  "NAME": "PER",
+  "NICKNAME": "PER",
+  "ADDRESS": "QT_ADDR",
+  # CITY 는 맨 단어라 정규식을 일부러 안 넣었다 — NER 이 맡는 유일한 신규 항목.
+  "CITY": "LOC",
+  "DEPARTMENT": "ORG",
+  "WORKPLACE": "ORG",
+  "SCHOOL": "ORG",
+  "MAJOR": "TMI_OCCUPATION",
+  "POSITION": "TMI_OCCUPATION",
+  "BIRTHDATE": "DAT",
+  "GENDER": "TMI_HEALTH",
+  # 혈액형은 eval 의 canonical 네임스페이스에 전용 태그가 이미 있다.
+  "BLOOD_TYPE": "TMI_BLOOD_TYPE",
+  "RELIGION": "TMI_RELIGION",
+  "NATIONALITY": "TMI_NATIONALITY",
+  "HEIGHT": "QT_LENGTH",
+  "WEIGHT": "QT_WEIGHT",
 }
 
 # 정형 패턴이라 NER만으로도 신뢰 가능한 단축 태그 집합 (B-1 경로).
+# 신규 5종은 고정 포맷(EMP-2024-13579 · MBR1234567 · PART-4821 · admin_7391 ·
+# 5자리 우편번호)이라 여기 둔다. CITY(→LOC)만 LOW_F1 으로 남긴다.
 HIGH_F1_TAGS = {
+  "EMPLOYEE_ID",
+  "MEMBER_ID",
+  "PARTICIPANT_ID",
   "QT_ACCOUNT",
   "QT_AGE",
   "QT_ARN",
@@ -86,6 +102,8 @@ HIGH_F1_TAGS = {
   "QT_RRN",
   "TMI_EMAIL",
   "TMI_SITE",
+  "USER_ID",
+  "ZIPCODE",
 }
 
 # 문맥 의존적이라 sLLM 교차검증이 필요한 단축 태그 집합 (B-2 경로).
@@ -98,17 +116,77 @@ LOW_F1_TAGS = {
   "QT_GRADE",
   "QT_LENGTH",
   "QT_WEIGHT",
+  "TMI_BLOOD_TYPE",
   "TMI_HEALTH",
+  "TMI_NATIONALITY",
   "TMI_OCCUPATION",
   "TMI_POLITICAL",
   "TMI_RELIGION",
   "TMI_SEXUAL",
 }
 
+# === 구조 게이트: NER 스팬이 태그 형식에 맞는 자릿수를 갖는지 확인 ==========
+# 2026-08-03 실측 — 라벨 단어("주민등록번호:")가 없는 나열·표 형태 응답에서
+# 모델이 스팬을 서브워드 조각까지 쪼갠다. "1. 김민수 900101-1234568 / 2. 이서연
+# …" 한 문단에서 나온 후보 13개 중 정상 스팬은 0개였다:
+#   ACCOUNT_NUMBER '1'(0.248) · DRIVER_LICENSE '.'(0.080) ·
+#   ACCOUNT_NUMBER '김민수'(0.144) · RRN '900'(0.110) · ALIEN_NUMBER '101-'(0.107) …
+#
+# ⚠️ 지금 이 게이트는 거의 발동하지 않는다 — 조각은 신뢰도가 낮아
+# confidence_threshold(0.8) 가 이미 먼저 걸러낸다. 게이트가 필요해지는 건
+# **그 하드컷을 없앨 때**다. 태그별 이중임계 계획(회색지대만 sLLM 으로 보내고
+# 저신뢰도 폐기하지 않음)을 적용하는 순간 위 조각들이 전부 sLLM 후보로 흘러든다.
+# 즉 이건 지금의 버그 수정이 아니라 **임계값을 낮추기 위한 선행 안전장치**다.
+#
+# 체크섬(mod 11)이 아니라 '자릿수'만 보는 이유: 2020-10 부터 주민등록번호·
+# 외국인등록번호 뒷자리가 임의번호로 바뀌어 검증번호 체계가 폐지됐다. 체크섬을
+# 걸면 실제 최신 번호를 거짓으로 탈락시켜 미탐이 된다(STEP 2 는 정규식 경로에만
+# 적용하고 탈락분을 rejection 채널로 보존하므로 그 경로는 그대로 둔다).
+#
+# ⚠️ **국가·업계 표준으로 자릿수가 정해진 태그만 넣는다.** 사원번호·회원 ID·
+# 참가자 ID·계정 ID 는 조직마다 체계가 달라 표준 자릿수라는 게 존재하지 않는다.
+# 예전엔 우리 합성 코퍼스의 형식(`MBR`+7, `PART-`+4, `admin_`+4)을 그대로 적어
+# 뒀는데, 그 결과 형식이 다른 외부 데이터를 **신뢰도 0.999 인데도 기각**했다:
+#   user_106(숫자3) · PARTICIPANT-K7M4(숫자1) · MEM-360859(숫자6) 전부 탈락.
+#   팀원 데이터셋 실측 — USER_ID 0/30 · PARTICIPANT_ID 0/20 · MEMBER_ID 29/53.
+# 남의 RAG 를 진단하는 게 이 도구의 목적이므로, 우리 코퍼스 형식을 구조로
+# 착각하는 규칙은 넣지 않는다. ID 류의 판별은 문맥을 보는 NER 에 맡긴다.
+#
+# 값은 (최소 자릿수, 최대 자릿수). 여기 없는 태그는 게이트를 통과시킨다.
+STRUCTURE_DIGIT_RANGE: dict[str, tuple[int, int]] = {
+  "QT_RRN": (13, 13),
+  "QT_ARN": (13, 13),
+  "QT_CARD": (15, 16),
+  "QT_PHONE": (9, 11),
+  "QT_MOBILE": (10, 11),
+  # 구형 여권 8자리 + 신형(2021~, 숫자 사이 영문 1자) 7자리를 모두 통과시킨다.
+  "QT_PASSPORT": (7, 8),
+  "QT_ACCOUNT": (8, 20),
+  "QT_DRIVER": (10, 12),
+  "QT_CAR": (6, 7),
+  "ZIPCODE": (5, 5),
+}
+
 # KPF-BERT 계열(BERT-base 구조)의 절대 입력 한계(positional embedding 크기).
 # 토크나이저의 model_max_length 가 sentinel(매우 큰 수)로 설정된 경우에도
 # 이 값을 강제로 적용해 자동 truncation 을 활성화한다.
 _KPFBERT_MAX_INPUT_TOKENS = 512
+
+# 긴 입력을 나눌 창 크기(토큰)와 창 사이 겹침.
+#
+# 512(위치 임베딩 한계)가 아니라 **120** 인 이유: 모델 config 의 `max_seq_len` 이
+# 120 이다. 즉 이 길이로만 학습돼 있고, 그보다 길어지면 절벽이 아니라 **연속적으로
+# 무너진다.** 같은 문서에서 대상 엔티티를 포함시킨 채 입력 길이만 늘려 측정한 결과
+# (2026-08-04, sensitive_174.md):
+#     68토큰 후보 5개(대상 탐지 ✅) · 149토큰 3개 · 246토큰 2개 · 398토큰 **0개**
+# 창 크기별 최종 확정 후보(0.8 이상) 비교도 같은 방향이다:
+#     창 400 → 1개(POSITION 뿐) · 창 200 → 5개 · **창 120 → 11개(7태그)**
+# 겹침은 창 경계에서 잘린 엔티티를 옆 창이 온전히 담도록 하기 위한 것이다.
+#
+# ⚠️ 이건 우리 쪽 우회책이지 근본 해결이 아니다. 학습 길이 자체를 RAG 응답 길이에
+# 맞춰 늘리는 건 모델 재학습 몫이다(팀원 요청 항목).
+_NER_WINDOW_TOKENS = 120
+_NER_WINDOW_OVERLAP_TOKENS = 30
 
 
 @dataclass
@@ -191,6 +269,91 @@ class NERDetector:
       self.error_message = str(error)
       logger.warning("Step 3 NER warm-up failed: {}", error)
 
+  def _iter_windows(self, text: str) -> list[tuple[str, int]]:
+    """
+    512 토큰 한계를 넘는 텍스트를 겹치는 창으로 나눠 (부분문자열, 원문 시작오프셋)로 돌려준다.
+
+    KPF-BERT 는 절대 위치 임베딩이 512 라 그보다 긴 입력은 처리할 수 없다. 그런데
+    그냥 넘기면 **예외도 안 나고 결과가 통째로 0건**이 된다(2026-08-04 실측:
+    590토큰 문서 → 후보 0개, load_status 는 'ready' 유지). 조용히 실패하므로
+    "PII 가 없다"와 구분이 안 된다.
+
+    실제 피해가 가장 큰 지점은 공격이 성공한 긴 응답이다 — 종단 실행
+    RAG-2026-0803-001 에서 800자 이상 응답 18건이 전부 NER 0건이었고, 그중
+    2,018자·1,988자짜리는 R2 가 문서를 통째로 뱉어낸 응답이었다. 정규식이 잡는
+    전화·이메일만 집계되고 이름·주소·소속은 통째로 누락됐다.
+
+    창을 겹치게 두는 이유: 경계에서 잘린 엔티티를 옆 창이 온전히 담아 회수한다.
+    중복은 호출부에서 (스팬, 태그) 기준으로 합친다.
+
+    Args:
+      text: 원문 텍스트
+
+    Returns:
+      list[tuple[str, int]]: (창 텍스트, 원문에서의 시작 문자 위치) 목록.
+        한계 이내면 [(text, 0)] 하나만 돌려준다.
+    """
+    tokenizer = getattr(self.pipeline, "tokenizer", None)
+    if tokenizer is None:
+      return [(text, 0)]
+
+    encoded = tokenizer(
+      text,
+      add_special_tokens=False,
+      return_offsets_mapping=True,
+      truncation=False,
+    )
+    offsets = [span for span in encoded["offset_mapping"] if span[1] > span[0]]
+    if len(offsets) <= _NER_WINDOW_TOKENS:
+      return [(text, 0)]
+
+    windows: list[tuple[str, int]] = []
+    step = _NER_WINDOW_TOKENS - _NER_WINDOW_OVERLAP_TOKENS
+    for cursor in range(0, len(offsets), step):
+      chunk = offsets[cursor : cursor + _NER_WINDOW_TOKENS]
+      if not chunk:
+        break
+      start, end = chunk[0][0], chunk[-1][1]
+      windows.append((text[start:end], start))
+      if cursor + _NER_WINDOW_TOKENS >= len(offsets):
+        break
+    logger.debug(
+      "Step 3 긴 입력 분할: {}토큰 → 창 {}개", len(offsets), len(windows)
+    )
+    return windows
+
+  @staticmethod
+  def _resolve_overlaps(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    겹치는 스팬 중 하나만 남긴다 — 신뢰도가 높은 쪽, 같으면 긴 쪽을 채택한다.
+
+    창을 겹치게 나눈 탓에 같은 값이 창마다 다르게 잘려 나온다. 실측 예
+    (sensitive_174.md, IP `198.51.100.63`):
+        QT_IP '198'(0.813) · QT_IP '198.51.100.63'(0.876) · USER_ID '.51.100.63'(0.859)
+    조각을 그대로 두면 유출 건수가 부풀고, 특히 `USER_ID` 처럼 B-1(즉시 확정)
+    태그를 달고 나온 조각은 sLLM 검증도 없이 그대로 확정돼 버린다.
+
+    자릿수 규칙(STRUCTURE_DIGIT_RANGE) 대신 겹침으로 거르는 이유: 자릿수는
+    태그마다 형식을 알아야 하지만 겹침은 **형식을 몰라도 판정된다.** 조직마다
+    체계가 다른 ID 류에는 이쪽만 쓸 수 있다.
+
+    Args:
+      entities: 창별 결과를 합친 원시 엔티티 목록(스팬은 원문 좌표)
+
+    Returns:
+      list[dict]: 서로 겹치지 않는 엔티티를 원문 등장 순서로 정렬해 반환
+    """
+    ordered = sorted(
+      entities,
+      key=lambda item: (-float(item.get("score", 0.0)), -(item["end"] - item["start"])),
+    )
+    kept: list[dict[str, Any]] = []
+    for item in ordered:
+      if any(item["start"] < other["end"] and other["start"] < item["end"] for other in kept):
+        continue
+      kept.append(item)
+    return sorted(kept, key=lambda item: (item["start"], item["end"]))
+
   def detect(self, text: str) -> list[NERMatch]:
     """Run token classification on the provided text."""
     if not self.enabled:
@@ -202,13 +365,28 @@ class NERDetector:
     if self.pipeline is None:
       return []
 
-    try:
-      raw_results = self.pipeline(text)
-    except Exception as error:
-      self.load_status = "failed"
-      self.error_message = str(error)
-      logger.warning("Step 3 inference failed: {}", error)
-      return []
+    # 512 토큰을 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
+    # 창이 겹치므로 같은 엔티티가 두 번 나올 수 있어 (스팬, 태그)로 합친다.
+    deduped: dict[tuple[int, int, str], dict[str, Any]] = {}
+    for window_text, window_offset in self._iter_windows(text):
+      try:
+        window_results = self.pipeline(window_text)
+      except Exception as error:
+        self.load_status = "failed"
+        self.error_message = str(error)
+        logger.warning("Step 3 inference failed: {}", error)
+        return []
+
+      for entity in window_results:
+        item = dict(entity)
+        item["start"] = int(item.get("start", 0)) + window_offset
+        item["end"] = int(item.get("end", 0)) + window_offset
+        key = (item["start"], item["end"], str(item.get("entity_group", "O")))
+        previous = deduped.get(key)
+        if previous is None or float(item.get("score", 0.0)) > float(previous.get("score", 0.0)):
+          deduped[key] = item
+
+    raw_results = self._resolve_overlaps(list(deduped.values()))
 
     matches: list[NERMatch] = []
     for entity in raw_results:
@@ -217,21 +395,73 @@ class NERDetector:
         continue
 
       raw_tag = str(entity.get("entity_group", "O"))
-      # KDPII 라벨을 코드 내부 단축 태그로 정규화한다.
+      # 모델 라벨을 코드 내부 단축 태그로 정규화한다.
       # 매핑 테이블에 없는 라벨은 원본 그대로 보존해 후속 디버깅을 돕는다.
       tag = NER_LABEL_MAP.get(raw_tag, raw_tag)
+      start = int(entity.get("start", 0))
+      end = int(entity.get("end", 0))
       matches.append(
         NERMatch(
           tag=tag,
-          text=str(entity.get("word", "")),
-          start=int(entity.get("start", 0)),
-          end=int(entity.get("end", 0)),
+          # entity["word"] 는 서브워드를 공백으로 이어붙인 값이라 원문과 다르다
+          # (실측: "010-1234-5678" → "010 - 1234 - 5678",
+          #        "a.b@c.com" → "a. b @ c. com"). 그대로 쓰면 이메일 마스킹이
+          # 깨지고, detector._is_recovered_by_step0 이 원문과 비교하므로 모든
+          # NER 결과가 "변형 PII 복원됨"으로 거짓 표시된다. 스팬은 정확하니
+          # 원문을 잘라 쓴다.
+          text=text[start:end],
+          start=start,
+          end=end,
           confidence=confidence,
           is_high_f1=tag in HIGH_F1_TAGS,
         )
       )
 
     return matches
+
+  def partition_structural(
+    self,
+    matches: list[NERMatch],
+  ) -> tuple[list[NERMatch], list[RejectedPII]]:
+    """정형 태그 후보를 자릿수 기준으로 (통과, 탈락)으로 나눈다.
+
+    모델이 나열·표 형태 응답에서 스팬을 조각내면 `'1'`·`'.'`·`'김민수'` 같은
+    파편이 고유식별정보 태그를 달고 나온다(2026-08-03 실측). 그대로 두면 유출
+    건수가 부풀려지므로 태그별 자릿수 범위(STRUCTURE_DIGIT_RANGE)로 거른다.
+
+    탈락분은 버리지 않고 RejectedPII 로 돌려준다 — 조용히 사라지면 "탐지 실패"와
+    "의도적 제외"를 리포트가 구분하지 못한다(STEP 2 rejection 채널과 같은 철학).
+
+    Args:
+      matches: NER 이 탐지한 후보 목록
+
+    Returns:
+      tuple[list[NERMatch], list[RejectedPII]]: (구조 검증 통과분, 탈락분)
+    """
+    kept: list[NERMatch] = []
+    rejected: list[RejectedPII] = []
+
+    for match in matches:
+      # 비정형 태그(PER·ORG·LOC 등)는 표에 없으므로 자릿수를 보지 않고 통과한다.
+      low, high = STRUCTURE_DIGIT_RANGE.get(match.tag, (0, 10**6))
+      digit_count = sum(character.isdigit() for character in match.text)
+      if low <= digit_count <= high:
+        kept.append(match)
+        continue
+      rejected.append(
+        RejectedPII(
+          tag=match.tag,
+          text=match.text,
+          start=match.start,
+          end=match.end,
+          reason="ner_structure_mismatch",
+          validator="digit_count",
+          source="ner",
+        )
+      )
+      logger.debug("NER 구조 불일치로 탈락(보존): [{}] {!r}", match.tag, match.text)
+
+    return kept, rejected
 
   def split_by_route(
     self,
@@ -252,9 +482,11 @@ class NERDetector:
     match_count: int = 0,
     route_b1_count: int = 0,
     route_b2_count: int = 0,
+    structure_rejected_count: int = 0,
   ) -> dict[str, Any]:
     """Return a serializable Step 3 runtime status snapshot."""
     return {
+      "structure_rejected_count": structure_rejected_count,
       "enabled": self.enabled,
       "model_path": self.model_path,
       "resolved_model_identifier": self.resolved_model_identifier,
