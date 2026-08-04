@@ -5,6 +5,12 @@
 
 from __future__ import annotations
 
+from rag.adapters.base import CAPABILITY_LABELS, Capability
+from rag.attack.query_generator import (
+  ATTACKER_PROFILES,
+  AttackQueryGenerator,
+  describe_attacker,
+)
 from rag.report.generator import ReportGenerator
 
 
@@ -92,6 +98,51 @@ def test_no_comparison_when_only_one_attacker(tmp_path):
   }
   cmp = gen._build_attacker_comparison("rid", scenario_results)
   assert cmp == {}
+
+
+def test_attacker_profiles_cover_every_valid_attacker():
+  """ATTACKER_PROFILES 와 공격자 화이트리스트/매트릭스가 갈라지지 않아야 한다.
+
+  갈라지면 리포트의 '가정한 공격자 권한' 이 조용히 빈칸으로 렌더되어, 사용자는
+  그 시나리오가 아무 권한도 가정하지 않은 것처럼 읽게 된다.
+  """
+  assert set(ATTACKER_PROFILES) == set(AttackQueryGenerator.VALID_ATTACKERS)
+  for attackers in AttackQueryGenerator.SCENARIO_ATTACKER_MATRIX.values():
+    assert attackers <= set(ATTACKER_PROFILES)
+  # grants 는 어댑터 능력 어휘여야 한다 — 자체 문자열을 쓰면 두 용어가 다시 갈라진다.
+  for profile in ATTACKER_PROFILES.values():
+    assert profile["grants"] <= set(Capability)
+    assert Capability.QUERY in profile["grants"]
+
+
+def test_describe_attacker_translates_to_capability_labels():
+  """공격자 코드가 한국어 라벨 + 능력 라벨로 번역된다(모르는 코드는 None)."""
+  a2 = describe_attacker("a2")
+  assert a2 == {
+    "code": "A2",
+    "label": "내용 인지 관찰자",
+    # 공통 능력인 QUERY 가 항상 먼저 온다 ("질의 + α" 형태로 차이가 드러나게).
+    "grants": [CAPABILITY_LABELS[Capability.QUERY], CAPABILITY_LABELS[Capability.DOC_LABELS]],
+    "desc": ATTACKER_PROFILES["A2"]["desc"],
+  }
+  assert describe_attacker("A9") is None
+
+
+def test_execution_reliability_carries_attacker_profiles(tmp_path):
+  """시나리오 요약에 공격자 프로필이 실려 대시보드가 렌더할 수 있어야 한다."""
+  gen = _gen(tmp_path)
+  scenario_results = {
+    "R2": {
+      "results": [
+        _make_result(scenario="R2", attacker="A2", query_id="R2:q1", success=True),
+        _make_result(scenario="R2", attacker="A1", query_id="R2:q1", success=False),
+      ]
+    }
+  }
+  profiles = gen._build_execution_reliability_summary(scenario_results)["scenarios"]["R2"][
+    "attacker_profiles"
+  ]
+  assert [p["code"] for p in profiles] == ["A1", "A2"]
 
 
 def test_normalize_query_id_r4s_prefix(tmp_path):
