@@ -24,6 +24,10 @@ SAMPLE_SUCCESS_RATIO = 0.8
 MAX_PROMPT_DOCUMENTS = 5
 DOC_SNIPPET_CHARS = 260
 
+# 공격자 코드(A1/A2/A3) 를 "가정한 권한" 문구로 번역하는 single source of truth.
+# 리포트가 자체 문구를 들고 있으면 공격 엔진과 갈라지므로 반드시 여기서 가져온다.
+from rag.attack.query_generator import describe_attacker
+
 # R7 평가기에서 정책 단서 카테고리 패턴을 그대로 재사용한다.
 # R7 응답에서 카테고리별로 어떤 문장이 노출되었는지 추출하기 위함이다.
 from rag.evaluator.r7_evaluator import RULE_COVERAGE_PATTERNS
@@ -754,6 +758,9 @@ class ReportGenerator:
                 # BYO-RAG 어댑터 능력 계획(run/degrade/skip + 사유). skip/degrade 셀은
                 # 대시보드에서 배지·사유로 노출해 "왜 안 돌았나/왜 축소됐나" 를 밝힌다.
                 "capability_plan": data.get("capability_plan"),
+                # 이 시나리오에서 공격자에게 준다고 가정한 권한. capability_plan(대상이
+                # 열어준 것) 과 같은 능력 어휘로 서술해 대시보드에서 위아래로 대조된다.
+                "attacker_profiles": self._attacker_profiles(data.get("results", [])),
                 "planned_query_count": planned_query_count,
                 "completed_query_count": completed_query_count,
                 "open_failure_count": open_failure_count,
@@ -1495,6 +1502,30 @@ class ReportGenerator:
             or meta.get("suite_context", {}).get("cell_attacker", "")
         )
         return str(attacker).upper() if attacker else ""
+
+    def _attacker_profiles(self, results: Any) -> list[dict[str, Any]]:
+        """시나리오 결과에 등장한 공격자들의 가정 권한 프로필을 모읍니다.
+
+        리포트에 "공격자: A2" 라는 코드만 찍히면 사용자는 그 시나리오가 어떤 권한을
+        가정하고 돌았는지 알 방법이 없다. 그래서 대상 RAG 의 능력계층과 같은 어휘로
+        번역한 프로필(라벨 + 가정 권한)을 요약에 실어 보낸다.
+
+        R2 처럼 한 시나리오를 A1/A2 두 공격자로 돌린 경우 둘 다 담긴다.
+
+        Args:
+            results: 시나리오의 쿼리 결과 리스트(dict 가 아닌 항목은 무시).
+
+        Returns:
+            list[dict]: describe_attacker() 결과 리스트. 코드 오름차순으로 정렬해
+                        같은 실험이면 항상 같은 순서가 되게 한다.
+        """
+        codes = {
+            self._get_attacker(item)
+            for item in (results or [])
+            if isinstance(item, dict)
+        }
+        profiles = [describe_attacker(code) for code in sorted(codes) if code]
+        return [p for p in profiles if p]
 
     def _normalize_query_id(self, query_id: str, scenario: str) -> str:
         """A1↔A2 페어링을 위해 query_id 를 정규화합니다.

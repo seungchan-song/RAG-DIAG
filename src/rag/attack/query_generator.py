@@ -34,11 +34,73 @@ from typing import Any
 
 from loguru import logger
 
+from rag.adapters.base import CAPABILITY_LABELS, Capability
 from rag.utils.text import (
   extract_keywords,
   extract_specific_keyword,
   slugify_token,
 )
+
+# === 공격자 유형 = "어댑터 능력의 부분집합에 붙인 이름" ===
+# 공격자 유형(A1/A2/A3)과 어댑터 능력계층(adapters/base.py:Capability)은 별개의 두 축이
+# 아니다. 하나의 축을 앞뒤에서 본 것이다.
+#   - 어댑터 능력 : 대상 RAG 가 진단 도구에 **실제로 열어준** 권한 (공급)
+#   - 공격자 유형 : 그중 이 시나리오에서 공격자가 **가졌다고 가정한** 권한 (소비)
+# 따라서 공격자의 grants 는 언제나 어댑터 capabilities 의 부분집합이어야 한다.
+#
+# grants 가 사후에 갖다 붙인 설명이 아닌 근거:
+#   - A2 의 앵커 키워드는 타깃 문서 라벨(DOC_LABELS) 이 있어야 만들어진다.
+#   - A3 의 poison 주입은 r9_injection.py:inject_poison 이 실제로 INDEX_WRITE 가드를 탄다.
+# 즉 여기 적힌 grants 는 새 규칙이 아니라 코드가 이미 요구하고 있던 능력의 기록이다.
+#
+# 사용자에게 보이는 곳(리포트·CLI)에서는 label 을 쓰고 A1/A2/A3 코드는 괄호 보조 표기로만
+# 남긴다. 영문 위협 모델 용어(Unaware/Aware Observer, Aware Insider)는 docstring 전용이다.
+ATTACKER_PROFILES: dict[str, dict[str, Any]] = {
+  "A1": {
+    "label": "외부 관찰자",
+    "grants": {Capability.QUERY},
+    "desc": "질의만 가능. 인덱스에 무엇이 들었는지 모른다 (Unaware Observer).",
+  },
+  "A2": {
+    "label": "내용 인지 관찰자",
+    "grants": {Capability.QUERY, Capability.DOC_LABELS},
+    "desc": "질의 + 표적 문서의 식별자를 사전에 안다 (Aware Observer).",
+  },
+  "A3": {
+    "label": "문서 주입 내부자",
+    "grants": {Capability.QUERY, Capability.INDEX_WRITE},
+    "desc": "질의 + 코퍼스에 문서를 삽입할 수 있다 (Aware Insider).",
+  },
+}
+
+
+def describe_attacker(code: str) -> dict[str, Any] | None:
+  """
+  공격자 코드를 리포트·CLI 노출용 dict 로 직렬화합니다.
+
+  능력 라벨은 adapters/base.py 의 CAPABILITY_LABELS 를 그대로 재사용하므로,
+  어댑터 쪽 능력 이름을 바꾸면 공격자 설명 문구도 자동으로 따라온다
+  (두 용어가 갈라지지 않게 하는 것이 이 함수의 존재 이유다).
+
+  Args:
+    code: 공격자 코드 ("A1" / "A2" / "A3"). 대소문자 무관.
+
+  Returns:
+    dict | None: {code, label, grants(한국어 라벨 리스트), desc}.
+                 알 수 없는 코드면 None (리포트에서 자연 누락된다).
+  """
+  profile = ATTACKER_PROFILES.get(str(code).upper())
+  if not profile:
+    return None
+  # 모든 공격자가 공유하는 QUERY 를 맨 앞에 두고 나머지를 정렬한다. 순서를 고정해야
+  # 같은 실험이 항상 같은 리포트 JSON 을 내고, "질의 + α" 형태로 차이가 눈에 띈다.
+  grants = sorted(profile["grants"], key=lambda cap: (cap is not Capability.QUERY, cap.value))
+  return {
+    "code": str(code).upper(),
+    "label": profile["label"],
+    "grants": [CAPABILITY_LABELS.get(cap, cap.value) for cap in grants],
+    "desc": profile["desc"],
+  }
 
 
 class AttackQueryGenerator:
@@ -362,7 +424,10 @@ class AttackQueryGenerator:
     "R9": "A3",
   }
 
-  # 유효 attacker 화이트리스트 (A4 제거 후)
+  # 유효 attacker 화이트리스트 (A4 제거 후).
+  # 각 코드가 "어떤 능력을 가정한 공격자인가" 는 모듈 상단 ATTACKER_PROFILES 가 정의하며,
+  # 리포트에 노출되는 라벨·권한 문구도 전부 거기서 나온다(두 곳이 갈라지면 안 됨 →
+  # tests/test_attacker_comparison.py 가 키 일치를 고정).
   VALID_ATTACKERS: frozenset[str] = frozenset({"A1", "A2", "A3"})
 
   def __init__(

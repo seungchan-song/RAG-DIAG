@@ -344,7 +344,7 @@ class TestReportGenerator:
         "status": "skipped",
         "capability_plan": {
           "decision": "skip",
-          "reason": "필수 능력 부족으로 실행 불가: 반사실 인덱스 재구성",
+          "reason": "필수 능력 부족으로 실행 불가: 특정 문서 빼고 재구성",
           "missing_required": ["index_rebuild"],
           "missing_recommended": [],
         },
@@ -355,7 +355,7 @@ class TestReportGenerator:
         "status": "completed",
         "capability_plan": {
           "decision": "degrade",
-          "reason": "권장 능력 부족으로 축소 진단: 검색 원문 노출",
+          "reason": "권장 능력 부족으로 축소 진단: 근거 문서 열람",
           "missing_required": [],
           "missing_recommended": ["retrieval_trace"],
         },

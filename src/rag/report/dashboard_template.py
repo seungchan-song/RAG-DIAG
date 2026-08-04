@@ -157,6 +157,11 @@ section{scroll-margin-top:64px; margin-top:52px}
 .scope-row{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
 .scope-row .sc-n{min-width:150px; color:var(--text); font-weight:600}
 .scope-row .sc-r{flex:1; min-width:200px}
+/* 같은 블록 안에서 "대상이 열어준 권한" 아래에 "공격자에게 가정한 권한"을 잇는 소제목.
+   위 목록과 같은 어휘를 쓰므로 새 섹션이 아니라 같은 판의 두 번째 문단으로 보이게 한다. */
+.scope-sub{margin-top:12px; font-size:11px; letter-spacing:var(--track-label);
+  text-transform:uppercase; font-weight:600}
+.scope-row .sc-g{color:var(--text-muted)}
 
 /* ── 위험 등급별 유출 — 등급마다 한 판(대조군 vs 각 공격을 같은 축에서) ── */
 .rd{margin-top:40px}
@@ -854,7 +859,7 @@ function renderRiskDelta(){
 }
 
 // ── 진단 범위(대상 RAG 능력 계층) ──
-// 같은 공격이라도 대상이 검색 원문·시스템 프롬프트·인덱스 재구성을 열어주는지에 따라
+// 같은 공격이라도 대상이 근거 문서·시스템 프롬프트·문서 조작을 열어주는지에 따라
 // 완전판/축소/건너뜀으로 갈린다. 판정 바로 아래에서 "이 판정이 무엇을 근거로 한 것인지"
 // 를 밝히지 않으면, 축소 진단 결과가 완전판처럼 읽힌다.
 const SCOPE_META={
@@ -876,7 +881,7 @@ function renderScope(){
   if(!planned.length){
     // 능력 계획이 없다 = 어댑터 게이팅 없이 전 능력으로 돌았다는 뜻.
     body='<div class="scope-line"><span class="badge low">전 시나리오 완전판</span>'
-      +'<span>대상이 검색 원문·시스템 프롬프트·인덱스 재구성을 모두 열어 주어, 모든 공격을 축소 없이 계측했습니다.</span></div>';
+      +'<span>대상이 근거 문서·시스템 프롬프트·문서 조작을 모두 열어 주어, 모든 공격을 축소 없이 계측했습니다.</span></div>';
   }else{
     body='<div class="scope-rows">'+keys.map(k=>{
       const p=(scens[k]||{}).capability_plan; if(!p) return "";
@@ -887,7 +892,27 @@ function renderScope(){
     }).join("")+'</div>';
   }
   el("scopeBox").innerHTML='<div class="scope"><div class="scope-head">진단 대상 · 능력 계층</div>'
-    +'<div class="scope-target">'+target+'</div>'+body+'</div>';
+    +'<div class="scope-target">'+target+'</div>'+body+renderAttackerGrants(scens)+'</div>';
+}
+
+// ── 가정한 공격자 권한 ──
+// 리포트에 "공격자: A2" 코드만 찍히면 사용자는 그 시나리오가 어떤 권한을 가정하고 돌았는지
+// 알 수 없다. 공격자 유형은 별개 축이 아니라 위 능력 계층의 부분집합("대상이 열어준 것 중
+// 공격자에게 준다고 가정한 것")이므로, 같은 블록에서 같은 어휘로 이어 붙인다.
+function renderAttackerGrants(scens){
+  const rows=Object.keys(scens).map(k=>{
+    const ps=(scens[k]||{}).attacker_profiles||[];
+    if(!ps.length) return "";
+    // 한 시나리오를 두 공격자로 돌린 경우(R2 의 A1↔A2)는 줄 안에서 나열한다.
+    const txt=ps.map(p=>esc(p.label)+" ("+esc(p.code)+") — "+esc((p.grants||[]).join(" · "))).join(" / ");
+    // desc(위협 모델 정의문)는 줄을 길게 만들지 않도록 hover 설명으로만 붙인다.
+    const tip=ps.map(p=>p.label+": "+(p.desc||"")).join("\n");
+    return '<div class="scope-row" title="'+esc(tip)+'"><span class="sc-n">'+esc(SCEN_NAME[k]||k)+'</span>'
+      +'<span class="sc-r sc-g">'+txt+'</span></div>';
+  }).filter(Boolean);
+  if(!rows.length) return "";
+  return '<div class="scope-sub">가정한 공격자 권한</div>'
+    +'<div class="scope-rows">'+rows.join("")+'</div>';
 }
 
 // (대조군 기준선 한 줄은 삭제했다 — 원장과 등급별 유출 사이에 끼어 흐름을 끊었고,
