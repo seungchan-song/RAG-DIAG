@@ -608,8 +608,9 @@ def _is_r9_runtime_injection(config: dict[str, Any]) -> bool:
     Returns:
       bool: 위 조합이면 True.
     """
-    inject_poison = bool((config.get("adapter") or {}).get("inject_poison", False))
-    return inject_poison and _resolve_r9_trigger_role(config) != "attack"
+    from rag.attack.r9_injection import is_runtime_injection
+
+    return is_runtime_injection(config)
 
 
 def _resolve_r9_trigger_role(config: dict[str, Any]) -> str:
@@ -627,11 +628,9 @@ def _resolve_r9_trigger_role(config: dict[str, Any]) -> str:
       str: cap 을 적용할 doc_role. attack_docs 모드면 "attack",
         corpus 모드면 `attack.r9.trigger_corpus_role`(기본 "normal").
     """
-    r9_config = (config.get("attack") or {}).get("r9") or {}
-    source = str(r9_config.get("trigger_source", "attack_docs")).lower()
-    if source == "corpus":
-      return str(r9_config.get("trigger_corpus_role", "normal")).lower()
-    return "attack"
+    from rag.attack.r9_injection import resolve_trigger_role
+
+    return resolve_trigger_role(config)
 
 
 def _apply_target_docs_cap(

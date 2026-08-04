@@ -776,6 +776,93 @@ def test_r9_evaluator_splits_failure_into_retrieval_and_generator():
   assert summary["ignored_by_generator_count"] == 1
 
 
+def test_r9_summary_counts_runtime_injection_as_attack_not_control():
+  """런타임 주입 결과는 env 가 clean 이어도 공격으로 집계돼야 한다.
+
+  R9 요약은 원래 environment_type 으로 공격(poisoned)과 대조군(clean)을 갈랐다.
+  런타임 주입 경로는 poisoned 코퍼스를 안 쓰므로 env 가 clean 인데, 그게 곧 공격이다.
+  env 로만 가르면 공격 결과가 전부 대조군으로 빠져 성공률이 항상 0 으로 찍힌다.
+  """
+  from rag.attack.base import AttackResult
+  from rag.evaluator.summary import summarize_evaluated_results
+
+  marker = "[R9_ATTACK_SUCCESS_777]"
+
+  def _r(success: bool, poison_retrieved: bool | None) -> AttackResult:
+    return AttackResult(
+      scenario="R9",
+      query="q",
+      response=f"답변 {marker}" if success else "일반 답변",
+      environment_type="clean",          # 런타임 주입이라 clean 이다
+      success=success,
+      metadata={
+        "trigger": "연차정산",
+        "runtime_injection": True,
+        "poison_retrieved": poison_retrieved,
+      },
+    )
+
+  results = [_r(True, True), _r(False, True), _r(False, False), _r(False, None)]
+  summary = summarize_evaluated_results("R9", {}, results)
+
+  assert summary["poisoned_total"] == 4, "clean env 라도 공격 시행으로 잡혀야 한다"
+  assert summary["success_count"] == 1
+  assert summary["success_rate"] == 0.25
+  # 실패 원인 분해도 suite 경로(summary.py)에서 함께 나와야 리포트가 읽을 수 있다.
+  assert summary["blocked_at_retrieval_count"] == 1
+  assert summary["ignored_by_generator_count"] == 1
+  assert summary["retrieval_unknown_count"] == 1
+
+
+def test_r9_summary_still_treats_clean_as_control_without_runtime_injection():
+  """builtin 경로(런타임 주입 아님)에서는 clean 이 여전히 대조군이어야 한다."""
+  from rag.attack.base import AttackResult
+  from rag.evaluator.summary import summarize_evaluated_results
+
+  def _r(env: str, success: bool) -> AttackResult:
+    return AttackResult(
+      scenario="R9", query="q", response="r",
+      environment_type=env, success=success,
+      metadata={"trigger": "공격키워드"},   # runtime_injection 없음
+    )
+
+  summary = summarize_evaluated_results(
+    "R9", {}, [_r("poisoned", True), _r("clean", False)]
+  )
+  assert summary["poisoned_total"] == 1
+  assert summary["clean_total"] == 1
+  assert summary["success_rate"] == 1.0
+
+
+def test_r9_failure_breakdown_reaches_the_report_narrative():
+  """계산한 실패 원인 분해가 리포트 문장까지 실제로 렌더돼야 한다.
+
+  값만 만들고 리포트가 안 읽으면 아무 데도 안 보인다(같은 실수가 가드레일 지표에서
+  이미 한 번 있었다).
+  """
+  from rag.report.narrative import build_report_narrative
+
+  narrative = build_report_narrative({
+    "risk_level": "LOW",
+    "scenario_results": {
+      "R9": {
+      "total": 4, "poisoned_total": 4, "success_count": 1, "success_rate": 0.25,
+      "retrieval_judged_count": 3,
+      "blocked_at_retrieval_count": 1,
+      "ignored_by_generator_count": 1,
+        "retrieval_unknown_count": 1,
+      }
+    },
+  })
+  r9_finding = next(f for f in narrative["findings"] if f["scenario"] == "R9")
+  readouts = r9_finding["readouts"]
+  assert "검색 단계에서 1건이 막혔습니다" in readouts["blocked_at_retrieval_count"]
+  assert "1건은 모델이 주입 명령을 따르지 않았습니다" in (
+    readouts["ignored_by_generator_count"]
+  )
+  assert "판정할 수 없었습니다" in readouts["retrieval_unknown_count"]
+
+
 def test_engine_dict_preserves_target_metadata():
   """외부 어댑터가 보고한 metadata 가 공격 엔진 트레이스까지 살아남아야 한다.
 

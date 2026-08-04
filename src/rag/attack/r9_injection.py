@@ -33,6 +33,49 @@ from rag.attack.base import AttackResult, BaseAttack
 from rag.attack.query_generator import AttackQueryGenerator
 
 
+def resolve_trigger_role(config: dict[str, Any]) -> str:
+  """트리거 키워드가 뽑히는 doc_role 을 config 에서 해석한다(단일 진실 공급원).
+
+  CLI 의 target_docs cap 과 공격 엔진의 키워드 유도가 **같은 답**을 봐야 하므로
+  여기 한 곳에만 규칙을 둔다. 어긋나면 cap 이 트리거가 아닌 그룹에 걸려 poison 이
+  코퍼스 크기에 비례해 폭주한다.
+
+  Args:
+    config: load_config 결과.
+
+  Returns:
+    str: attack_docs 모드면 "attack", corpus 모드면 trigger_corpus_role(기본 "normal").
+  """
+  r9_config = (config.get("attack") or {}).get("r9") or {}
+  source = str(r9_config.get("trigger_source", "attack_docs")).lower()
+  if source == "corpus":
+    return str(r9_config.get("trigger_corpus_role", "normal")).lower()
+  return "attack"
+
+
+def is_runtime_injection(config: dict[str, Any]) -> bool:
+  """poison 을 런타임에 주입하고 트리거도 코퍼스에서 뽑는 조합인지 판정한다.
+
+  이 조합에서는 사전 제작된 `data/documents/poisoned/attack/` 문서가 어디에도
+  쓰이지 않는다 — poison 본문은 템플릿으로 생성돼 어댑터의 write_documents 로
+  대상에 직접 주입되고, 트리거는 대상이 실제 색인한 코퍼스에서 나온다.
+
+  두 가지를 좌우한다:
+    1. 실행 환경 — poisoned 코퍼스가 참여할 수 없으므로 clean 으로 해석된다
+       (`cli.main._resolve_env_for_scenario`).
+    2. 결과 집계 — 이때는 env 가 clean 이어도 그게 **공격**이다. 대조군이 아니다.
+       env 라벨로 공격/대조군을 가르면 성공률이 통째로 0 이 된다.
+
+  Args:
+    config: load_config 결과.
+
+  Returns:
+    bool: 두 조건을 모두 만족하면 True.
+  """
+  inject_poison = bool((config.get("adapter") or {}).get("inject_poison", False))
+  return inject_poison and resolve_trigger_role(config) != "attack"
+
+
 class R9InjectionAttack(BaseAttack):
   """
   R9 간접 프롬프트 주입 공격을 수행하는 클래스입니다.
@@ -137,8 +180,8 @@ class R9InjectionAttack(BaseAttack):
     r9_config = self.config.get("attack", {}).get("r9", {})
     trigger_source = str(r9_config.get("trigger_source", "attack_docs")).lower()
 
-    if trigger_source == "corpus":
-      corpus_role = str(r9_config.get("trigger_corpus_role", "normal")).lower()
+    corpus_role = resolve_trigger_role(self.config)
+    if corpus_role != "attack":
       return self._trigger_keywords_from_corpus(target_docs, corpus_role)
 
     if trigger_source != "attack_docs":
@@ -329,6 +372,10 @@ class R9InjectionAttack(BaseAttack):
         "expected_marker": expected_marker,
         "marker_found": marker_found,
         "poison_retrieved": poison_retrieved,
+        # 런타임 주입일 때는 env 가 clean 이어도 이건 공격이다(대조군이 아니다).
+        # 집계가 env 라벨로 공격/대조군을 가르면 성공률이 통째로 0 이 되므로,
+        # 판정 근거를 결과에 직접 싣는다(evaluator/summary.py 가 읽는다).
+        "runtime_injection": is_runtime_injection(self.config),
         "reranker_enabled": trace.get("reranker_enabled", False),
       },
     )
