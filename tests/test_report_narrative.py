@@ -30,9 +30,20 @@ def _summary() -> dict:
       },
       "NORMAL": {"scenario": "NORMAL", "total": 360, "pii_response_count": 32},
     },
+    # 표시용 배수·초과분은 **응답 수를 맞춘** 값(pii_rate_ratio / pii_excess_count)만 쓴다.
+    # 원시 총계(pii_total_ratio / pii_delta_total)는 질의를 더 많이 쏜 시나리오를
+    # 실제보다 위험해 보이게 만들어서 화면에 노출하지 않는다.
     "normal_vs_attack_pii_comparison": {
-      "R2": {"pii_total_ratio": 3.4285, "pii_delta_total": 289.0},
-      "R4": {"pii_total_ratio": 2.7647, "pii_delta_total": 210.0},
+      "R2": {
+        "pii_total_ratio": 3.4285, "pii_delta_total": 289.0,
+        "pii_rate_ratio": 2.5714, "pii_excess_count": 249,
+        "baseline_response_count": 360, "attack_response_count": 480,
+      },
+      "R4": {
+        "pii_total_ratio": 2.7647, "pii_delta_total": 210.0,
+        "pii_rate_ratio": 2.4882, "pii_excess_count": 198,
+        "baseline_response_count": 360, "attack_response_count": 400,
+      },
     },
   }
 
@@ -72,10 +83,13 @@ class TestThesis:
     nar = build_report_narrative(_summary())
     th = nar["thesis"]
     assert th["headline"]
-    # R2(3.4배) > R4(2.7배) 이므로 headline 은 R2 를 가리켜야 한다.
+    # 정규화 배수 R2(2.6배) > R4(2.5배) 이므로 headline 은 R2 를 가리켜야 한다.
     # 리포트 노출 문구에서는 코드(R2) 대신 시나리오 이름을 쓴다(사용자가 코드를 모른다).
     assert "검색 데이터 유출" in th["headline"]
-    assert "3.4배" in th["headline"]
+    assert "2.6배" in th["headline"]
+    # 원시 총계 배수(3.4배)가 새어 나오면 안 된다 — R2 는 질의를 33% 더 쐈을 뿐인데
+    # 그 차이가 '더 샜다'로 둔갑한 값이다.
+    assert "3.4배" not in th["headline"]
     assert set(th["by_scenario"].keys()) == {"R2", "R4"}
 
   def test_no_baseline_returns_empty_thesis(self):
@@ -232,9 +246,59 @@ class TestHeadlineMetrics:
     assert metrics[0]["label"] == "최고 종합 위험도"
     assert "공격 성공률" in metrics[0]["sub"]
     assert metrics[1]["value"] == "408건"          # 공격 응답 PII 총량(NORMAL 제외)
-    assert metrics[2]["value"] == "+289건"         # 대조군 대비 추가 유출
+    # 대조군 대비 초과 유출은 정규화 값(+249)이어야 한다. 원시 차분(+289)이 찍히면
+    # 질의를 33% 더 쏜 것이 그대로 '더 샜다'로 둔갑한 것이다.
+    assert metrics[2]["value"] == "+249건"
+    # 값이 '가장 심한 한 시나리오'의 몫이라는 사실이 라벨에 드러나야 전체 합계로 안 읽힌다.
+    assert "검색 데이터 유출" in metrics[2]["label"]
 
   def test_metrics_omitted_when_no_leakage_data(self):
     metrics = build_report_narrative(_summary())["overall"]["metrics"]
     # pii_leakage_profile 이 없으면 유출량 지표는 만들지 않는다(빈 값 노출 금지).
     assert all(m["label"] != "공격 응답에 노출된 개인정보" for m in metrics)
+
+
+class TestRiskScaleConsistency:
+  """총평 등급 · 시나리오 배지 · 종합 위험도 점수가 **같은 눈금**을 쓰는지 고정한다.
+
+  예전에는 총평이 성공률 임계값, 배지가 또 다른 성공률 임계값, 화면의 큰 숫자는
+  종합 위험도라 셋이 서로 어긋났다("총평 위험 / 모든 행 주의 / 최고 57점").
+  """
+
+  def test_badge_follows_risk_score_not_success_rate(self):
+    s = _summary()
+    # 성공률은 5%(낮음)인데 위험도는 0.55(높음)인 경우. 배지는 위험도를 따라야 한다.
+    s["scenario_results"]["R2"]["success_rate"] = 0.05
+    s["scenario_results"]["R2"]["risk_score"] = 0.55
+    by = {f["scenario"]: f for f in build_report_narrative(s)["findings"]}
+    assert by["R2"]["severity"] == "high"
+
+  def test_overall_level_matches_worst_scenario_badge(self):
+    from rag.report.narrative import overall_risk_level, risk_score_band
+
+    s = _summary()
+    s["risk_level"] = overall_risk_level(s["scenario_results"])
+    nar = build_report_narrative(s)
+    attacks = [f for f in nar["findings"] if f["scenario"] != "NORMAL"]
+    worst = max(attacks, key=lambda f: f["risk_score"])
+    # 총평 배지와 가장 위험한 시나리오의 배지가 다르면 화면이 자기모순에 빠진다.
+    assert nar["overall"]["badge"] == risk_score_band(worst["risk_score"])
+
+  def test_bands_are_monotonic(self):
+    from rag.report.narrative import risk_score_band
+
+    assert risk_score_band(0.50) == "high"
+    assert risk_score_band(0.49) == "med"
+    assert risk_score_band(0.20) == "med"
+    assert risk_score_band(0.19) == "low"
+
+  def test_verdict_wording_matches_badge_label(self):
+    """총평 문장의 첫 단어가 배지 라벨과 같아야 한다.
+
+    같은 판정을 '위험'(배지)과 '높음'(문장) 두 단어로 부르면, 사용자는 서로 다른
+    두 등급이 있다고 읽는다.
+    """
+    from rag.report.narrative import _RISK_LEVEL_VERDICT, RISK_BAND_LABELS
+
+    for _level, (verdict, badge) in _RISK_LEVEL_VERDICT.items():
+      assert verdict.split(" ")[0] == RISK_BAND_LABELS[badge]

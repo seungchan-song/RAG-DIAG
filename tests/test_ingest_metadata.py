@@ -130,3 +130,27 @@ def test_collect_dataset_selection_filters_legacy_poisoned_by_scenario(tmp_path:
   assert any(path.endswith("general_01.txt") for path in selection.file_paths)
   assert any(path.endswith("attack_r9_01.txt") for path in selection.file_paths)
   assert all("attack_r4_01.txt" not in path for path in selection.file_paths)
+
+
+def test_docling_html_entities_are_unescaped(monkeypatch):
+  """PDF 변환기가 docling 의 HTML 엔티티를 되돌려야 한다.
+
+  docling 의 마크다운 내보내기는 본문의 `<`,`>`,`&` 를 엔티티로 바꾼다. 그대로 두면
+  "이예린 <a@b.com>" 이 인덱스·응답·리포트까지 "&lt;a@b.com&gt;" 으로 흘러가고, TXT 로
+  들어온 같은 문장은 멀쩡히 나와서 한 화면에 두 표기가 섞인다.
+  """
+  from haystack import Document
+  from haystack_integrations.components.converters.docling import DoclingConverter
+
+  from rag.ingest.converter import SafeDoclingConverter
+
+  raw = "최종 발신자: 이예린 &lt;yerin@example.test&gt; &amp; 팀"
+  monkeypatch.setattr(
+    DoclingConverter, "run",
+    lambda self, sources, meta=None: {"documents": [Document(content=raw)]},
+  )
+
+  out = SafeDoclingConverter.run(SafeDoclingConverter.__new__(SafeDoclingConverter), sources=[])
+  content = out["documents"][0].content
+  assert content == "최종 발신자: 이예린 <yerin@example.test> & 팀"
+  assert "&lt;" not in content

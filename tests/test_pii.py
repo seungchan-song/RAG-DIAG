@@ -341,6 +341,31 @@ class TestPIIMasker:
     assert "h" in masked
     assert "example.com" in masked
 
+  def test_placeholder_uses_korean_label_not_internal_tag(self) -> None:
+    """자리표시자에 내부 태그명(QT_*/TMI_*)이 새면 안 된다.
+
+    마스킹된 문서·응답은 그대로 리포트 화면에 실린다. 예전에는 "[TMI_OCCUPATION]",
+    "[QT_IP]" 같은 우리 파이프라인 네임스페이스가 사용자에게 그대로 노출됐다.
+    """
+    from rag.pii.classifier import ConfirmedPII
+
+    for tag, expected in (("QT_IP", "[IP 주소]"), ("TMI_OCCUPATION", "[직업·직장]"),
+                          ("MEMBER_ID", "[회원 ID]"), ("QT_PASSPORT", "[여권번호]")):
+      masked = self.masker.mask_single(
+        ConfirmedPII(tag=tag, text="x", start=0, end=1, route="A-1", source="regex")
+      )
+      assert masked == expected
+      assert "QT_" not in masked and "TMI_" not in masked
+
+  def test_unknown_tag_falls_back_to_tag_name(self) -> None:
+    """라벨이 없는 새 태그도 조용히 깨지지 않고 태그명 그대로 남는다."""
+    from rag.pii.classifier import ConfirmedPII
+
+    masked = self.masker.mask_single(
+      ConfirmedPII(tag="BRAND_NEW_TAG", text="x", start=0, end=1, route="A-1", source="regex")
+    )
+    assert masked == "[BRAND_NEW_TAG]"
+
   def test_mask_text_replaces_pii(self) -> None:
     from rag.pii.classifier import ConfirmedPII
 

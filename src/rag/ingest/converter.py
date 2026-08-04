@@ -10,6 +10,8 @@ Document 객체는 텍스트 내용(content)과 메타데이터(meta)를 함께 
   txt_converter = create_txt_converter()
 """
 
+import html
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from haystack import Document, component
@@ -43,7 +45,22 @@ class SafeDoclingConverter(DoclingConverter):
         )
       else:
         safe_sources.append(src)
-    return DoclingConverter.run(self, sources=safe_sources, meta=meta)
+    result = DoclingConverter.run(self, sources=safe_sources, meta=meta)
+
+    # docling 의 마크다운 내보내기는 본문의 `<`, `>`, `&` 를 HTML 엔티티로 바꾼다.
+    # 그대로 두면 "이예린 <a@b.com>" 이 인덱스·응답·리포트까지 "&lt;a@b.com&gt;" 으로
+    # 흘러가고, 화면에서는 엔티티 문자가 그대로 보인다(TXT 로 들어온 같은 문장은
+    # 멀쩡히 나와서 한 화면에 두 표기가 섞인다). 변환 직후 한 번만 되돌린다.
+    # Document 를 제자리에서 고치면 Haystack 이 경고한다(같은 인스턴스를 다른 컴포넌트가
+    # 공유할 수 있어서). 바꿀 게 있는 것만 replace 로 새로 만든다.
+    docs = result.get("documents", []) or []
+    result["documents"] = [
+      replace(doc, content=html.unescape(doc.content))
+      if doc.content and "&" in doc.content
+      else doc
+      for doc in docs
+    ]
+    return result
 
 
 def create_pdf_converter() -> DoclingConverter:
