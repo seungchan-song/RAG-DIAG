@@ -334,6 +334,14 @@ experiment:
     # 시나리오별 고정 환경:
     #   - NORMAL/R2/R4/R7 → clean DB
     #   - R9              → poisoned DB (공격 문서 주입이 본질)
+    #
+    # 예외 — R9 를 런타임 주입으로 돌 때는 아래 R9 값과 무관하게 clean 이 된다:
+    #   adapter.inject_poison: true  +  attack.r9.trigger_source: "corpus"
+    # 이 조합에서는 poison 이 대상에 직접 주입되고 트리거도 대상 코퍼스에서 나오므로
+    # data/documents/poisoned/ 가 어디에도 쓰이지 않는다. clean 환경은 scenario 를
+    # 보지 않고 "base" 스코프를 쓰므로(ingest/metadata.py:resolve_scenario_scope),
+    # R9 가 NORMAL/R2/R4/R7 이 이미 쓰는 data/indexes/clean 을 그대로 재사용한다.
+    # → 외부 RAG 진단에서는 `rag ingest --env poisoned -s R9` 자체가 불필요하다.
     scenario_environments:
       NORMAL: ["clean"]
       R2: ["clean"]

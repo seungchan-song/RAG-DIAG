@@ -588,6 +588,30 @@ def _resolve_max_target_docs(
     return value if value > 0 else None
 
 
+def _is_r9_runtime_injection(config: dict[str, Any]) -> bool:
+    """R9 poison 을 런타임에 주입하고 트리거도 코퍼스에서 뽑는 조합인지 판정한다.
+
+    이 조합에서는 사전 제작된 `data/documents/poisoned/attack/` 문서가 어디에도
+    쓰이지 않는다 — poison 본문은 `R9_POISON_DOC_TEMPLATES` 로 생성돼 어댑터의
+    write_documents 로 대상에 직접 주입되고, 트리거 키워드는 대상이 실제 색인한
+    코퍼스에서 나온다. 따라서 poisoned 인덱스를 만들 이유가 없다.
+
+    두 조건을 **모두** 만족해야 한다:
+      - adapter.inject_poison: 런타임 주입 경로를 쓴다(외부 Tier-2 어댑터).
+      - attack.r9.trigger_source == "corpus": 트리거를 attack 문서가 아니라
+        코퍼스에서 뽑는다.
+    한쪽만 켜면 여전히 attack 문서가 필요하므로 poisoned 를 유지해야 한다.
+
+    Args:
+      config: load_config 결과.
+
+    Returns:
+      bool: 위 조합이면 True.
+    """
+    inject_poison = bool((config.get("adapter") or {}).get("inject_poison", False))
+    return inject_poison and _resolve_r9_trigger_role(config) != "attack"
+
+
 def _resolve_r9_trigger_role(config: dict[str, Any]) -> str:
     """R9 트리거 키워드가 실제로 뽑히는 doc_role 을 config 에서 해석한다.
 
@@ -725,10 +749,18 @@ class SuiteCell:
     attacker: str
     profile_name: str
     probe_mode: str = "generic"
+    # 시나리오 상수로 도출되지 않는 환경을 쓰는 경우에만 채운다. 지금은 R9 를
+    # 런타임 주입 + 코퍼스 트리거로 돌 때 clean 이 되는 한 가지 경우뿐이며,
+    # 셀을 만드는 쪽(`_build_suite_cells`)이 `_resolve_env_for_scenario` 로
+    # 계산해 넣는다. 단일 실행 경로와 같은 해석기를 쓰게 해 두 경로가 서로
+    # 다른 환경을 고르는 일을 막는다. cell_id 에는 포함되지 않는다.
+    environment_override: str | None = None
 
     @property
     def environment_type(self) -> str:
-        return SCENARIO_FIXED_ENV.get(self.scenario.upper(), "poisoned")
+        return self.environment_override or SCENARIO_FIXED_ENV.get(
+            self.scenario.upper(), "poisoned"
+        )
 
     @property
     def cell_id(self) -> str:
@@ -2422,7 +2454,13 @@ def _execute_single_run(
             # R9는 attack 문서의 keyword가 트리거 쿼리 생성에 필요하다.
             # clean 환경은 공격 문서가 없으므로 poisoned 인덱스에서 attack 문서를 별도 로드해
             # 동일한 트리거 쿼리를 생성한다. (clean/poisoned 환경 비교를 위한 query_id 일치)
-            if env == "clean":
+            #
+            # 단, 런타임 주입 + 코퍼스 트리거 조합에서는 attack 문서가 트리거 소스가
+            # 아니므로(`_trigger_keywords_from_corpus` 가 doc_role 로 걸러낸다) 이
+            # 로드를 건너뛴다. 이게 poisoned 인덱스를 아예 안 만들어도 되는 이유다.
+            if env == "clean" and _is_r9_runtime_injection(config):
+                target_docs = candidate_docs
+            elif env == "clean":
                 try:
                     poisoned_index_manager = PersistentIndexManager(
                         config,
@@ -3183,6 +3221,9 @@ def _build_suite_cells(
                             attacker=str(attacker_name).upper(),
                             profile_name=str(profile_name),
                             probe_mode=probe_mode_value,
+                            environment_override=_resolve_env_for_scenario(
+                                scenario_upper, config
+                            ),
                         )
                     )
     return cells
@@ -3617,11 +3658,16 @@ def _deserialize_suite_cell(payload: dict[str, Any]) -> SuiteCell:
     cell_id_value = str(payload.get("cell_id", ""))
     if scenario_upper == "R4" and cell_id_value.endswith("__sensitive"):
         probe_mode = "sensitive"
+    # 저장된 환경을 그대로 되살린다. resume 중 config 가 바뀌었더라도 원래 셀이
+    # 돌던 환경을 유지해야 checkpoint 검증(_verify_checkpoint 의 environment_type
+    # 비교)과 어긋나지 않는다.
+    saved_env = str(payload.get("environment_type") or payload.get("cell_environment") or "")
     return SuiteCell(
         scenario=scenario_upper,
         attacker=attacker,
         profile_name=str(payload.get("profile_name", "")),
         probe_mode=probe_mode,
+        environment_override=saved_env or None,
     )
 
 
@@ -3923,6 +3969,13 @@ def _resolve_env_for_scenario(scenario: str, config: dict[str, Any]) -> str:
     experiment.matrix.scenario_environments 가 있으면 overlay 로 사용 가능하지만
     옵션 B 매트릭스 이후로는 SCENARIO_FIXED_ENV 우선이다.
 
+    예외가 하나 있다: R9 를 런타임 주입 + 코퍼스 트리거로 돌 때
+    (`_is_r9_runtime_injection`) 는 poisoned 코퍼스가 어디에도 쓰이지 않으므로
+    clean 으로 해석한다. `resolve_scenario_scope` 가 clean 환경에서는 scenario 를
+    보지 않고 "base" 를 돌려주므로, 이때 R9 는 NORMAL/R2/R4/R7 이 이미 쓰는
+    `data/indexes/clean` 을 그대로 재사용한다(별도 인덱스 빌드 불필요).
+    builtin 경로는 attack 문서가 곧 색인된 poison 이라 반드시 poisoned 로 남는다.
+
     Args:
       scenario: 시나리오 이름 ("NORMAL", "R2", "R4", "R7", "R9")
       config: YAML 설정 딕셔너리 (참고용, scenario_environments override 허용)
@@ -3935,6 +3988,21 @@ def _resolve_env_for_scenario(scenario: str, config: dict[str, Any]) -> str:
         config.get("experiment", {}).get("matrix", {}).get("scenario_environments", {})
     )
     config_envs = scenario_env_map.get(scenario_upper)
+
+    if scenario_upper == "R9" and _is_r9_runtime_injection(config):
+        # scenario_environments 보다 우선한다. 이건 취향이 아니라 구조적 사실이라서다 —
+        # 런타임 주입 + 코퍼스 트리거에서는 poisoned 코퍼스가 참여할 방법이 없다
+        # (attack 문서는 트리거 소스에서 제외되고, poison 은 대상에 직접 주입된다).
+        # 'poisoned' 를 존중하면 쓰지도 않을 인덱스를 20~40분 빌드하게 된다.
+        if config_envs and str(config_envs[0]).lower() != "clean":
+            logger.info(
+                "R9 환경을 '{}' 대신 'clean' 으로 해석합니다 — adapter.inject_poison 과 "
+                "attack.r9.trigger_source='corpus' 조합에서는 poisoned 코퍼스가 쓰이지 "
+                "않아 clean 인덱스만으로 충분합니다.",
+                config_envs[0],
+            )
+        return "clean"
+
     if config_envs:
         return config_envs[0]
     return SCENARIO_FIXED_ENV.get(scenario_upper, "clean")
@@ -3966,10 +4034,15 @@ def _check_scenario_env_constraint(
       scenario: 시나리오 ("NORMAL", "R2", "R4", "R7", "R9")
       config: YAML에서 로드한 설정 딕셔너리
     """
+    scenario_upper = str(scenario).upper()
+    if scenario_upper == "R9" and _is_r9_runtime_injection(config):
+        # `_resolve_env_for_scenario` 가 이 조합에서 clean 을 돌려주므로, 맵의
+        # R9: ["poisoned"] 제약을 그대로 적용하면 자기가 고른 환경을 자기가 거부한다.
+        return
     scenario_env_map = (
         config.get("experiment", {}).get("matrix", {}).get("scenario_environments", {})
     )
-    allowed_envs = scenario_env_map.get(str(scenario).upper())
+    allowed_envs = scenario_env_map.get(scenario_upper)
     if allowed_envs and str(env).lower() not in [e.lower() for e in allowed_envs]:
         raise ValueError(
             f"시나리오 {scenario.upper()}는 {allowed_envs} 환경에서만 실행할 수 있습니다. "

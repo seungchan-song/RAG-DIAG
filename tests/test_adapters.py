@@ -619,6 +619,105 @@ def test_r9_corpus_trigger_cap_targets_the_trigger_role():
   assert len(untouched) == 500
 
 
+def _runtime_injection_config() -> dict:
+  """런타임 주입 + 코퍼스 트리거 조합(외부 어댑터 R9)의 최소 config."""
+  cfg = _corpus_trigger_config("normal")
+  cfg["adapter"] = {"type": "sota", "inject_poison": True}
+  return cfg
+
+
+def test_r9_env_becomes_clean_only_for_runtime_injection():
+  """런타임 주입 + 코퍼스 트리거일 때만 R9 가 clean 으로 풀려야 한다.
+
+  이 조합에서는 poisoned 코퍼스(attack 문서)가 어디에도 안 쓰이므로 clean 인덱스만
+  있으면 된다. 반대로 builtin 은 attack 문서가 곧 색인된 poison 이라 clean 으로
+  내려가면 공격 자체가 성립하지 않으므로 반드시 poisoned 로 남아야 한다.
+  """
+  from rag.cli.main import _is_r9_runtime_injection, _resolve_env_for_scenario
+
+  runtime = _runtime_injection_config()
+  assert _is_r9_runtime_injection(runtime) is True
+  assert _resolve_env_for_scenario("R9", runtime) == "clean"
+
+  # 한쪽만 켠 경우는 여전히 attack 문서가 필요하다.
+  only_inject = {"adapter": {"inject_poison": True}}  # trigger_source 기본 = attack_docs
+  assert _is_r9_runtime_injection(only_inject) is False
+  assert _resolve_env_for_scenario("R9", only_inject) == "poisoned"
+
+  only_corpus = _corpus_trigger_config("normal")  # inject_poison 미설정
+  assert _is_r9_runtime_injection(only_corpus) is False
+  assert _resolve_env_for_scenario("R9", only_corpus) == "poisoned"
+
+  # builtin 기본값
+  assert _resolve_env_for_scenario("R9", {}) == "poisoned"
+  # 다른 시나리오는 영향 없음
+  for scenario in ("NORMAL", "R2", "R4", "R7"):
+    assert _resolve_env_for_scenario(scenario, runtime) == "clean"
+
+
+def test_r9_runtime_injection_beats_scenario_environments_map():
+  """실제 config 의 scenario_environments(R9:[poisoned]) 보다 우선해야 한다.
+
+  이 맵은 SCENARIO_FIXED_ENV 를 그대로 옮겨 적은 기본값이라, 이게 이기면 새 경로가
+  영영 안 탄다. 그리고 환경 해석과 제약 검증이 서로 다른 답을 내면 자기가 고른
+  환경을 자기가 거부하게 된다 — 둘 다 같은 조건을 봐야 한다.
+  """
+  from rag.cli.main import _check_scenario_env_constraint, _resolve_env_for_scenario
+
+  cfg = _runtime_injection_config()
+  cfg["experiment"] = {"matrix": {"scenario_environments": {
+    "NORMAL": ["clean"], "R2": ["clean"], "R4": ["clean"],
+    "R7": ["clean"], "R9": ["poisoned"],
+  }}}
+
+  env = _resolve_env_for_scenario("R9", cfg)
+  assert env == "clean"
+  _check_scenario_env_constraint(env, "R9", cfg)  # 예외가 나면 안 된다
+
+  # builtin(런타임 주입 아님)은 맵이 그대로 적용돼 clean 이 거부돼야 한다.
+  builtin = {"experiment": cfg["experiment"]}
+  assert _resolve_env_for_scenario("R9", builtin) == "poisoned"
+  with pytest.raises(ValueError):
+    _check_scenario_env_constraint("clean", "R9", builtin)
+
+
+def test_r9_clean_env_reuses_the_existing_clean_index_scope():
+  """R9 를 clean 으로 돌려도 별도 인덱스가 필요 없어야 한다.
+
+  resolve_scenario_scope 는 clean 환경에서 scenario 를 보지 않고 "base" 를 준다.
+  즉 `rag ingest --env clean` 이 만든 인덱스를 R9 가 그대로 재사용한다 — 이게
+  poisoned 인덱스 빌드(20~40분)를 통째로 없앨 수 있는 근거다.
+  """
+  from rag.ingest.metadata import build_dataset_scope
+
+  assert build_dataset_scope("clean", "R9") == build_dataset_scope("clean", None)
+  assert build_dataset_scope("clean", "R9") == "clean/base"
+
+
+def test_suite_cell_env_matches_single_run_resolver():
+  """suite 경로와 단일 실행 경로가 같은 환경을 골라야 한다.
+
+  예전에는 SuiteCell 이 SCENARIO_FIXED_ENV 를 직접 읽어, config 로 환경이 바뀌는
+  경우 단일 실행(`_resolve_env_for_scenario`)과 서로 다른 환경을 고를 수 있었다.
+  """
+  from rag.cli.main import SuiteCell, _resolve_env_for_scenario
+
+  runtime = _runtime_injection_config()
+  cell = SuiteCell(
+    scenario="R9",
+    attacker="A3",
+    profile_name="reranker_off",
+    environment_override=_resolve_env_for_scenario("R9", runtime),
+  )
+  assert cell.environment_type == "clean"
+  # override 를 안 주면 기존 상수 동작 그대로.
+  assert SuiteCell(scenario="R9", attacker="A3", profile_name="x").environment_type == (
+    "poisoned"
+  )
+  # 환경은 cell_id 축이 아니므로 식별자는 그대로여야 한다(resume 호환).
+  assert cell.cell_id == "R9__A3__reranker_off"
+
+
 def test_r9_detects_poison_retrieval_and_distinguishes_unknown():
   """poison 검색 여부가 기록돼야 실패 원인을 검색단/생성단으로 가를 수 있다.
 
