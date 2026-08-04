@@ -1301,6 +1301,10 @@ class ReportGenerator:
     # 문장 중간에서 잘려("…정보의 안전…") 실제 프롬프트와 나란히 놓고 비교할 수가
     # 없었다 — 이 대조가 리포트에서 가장 강한 증거이므로 문장 단위가 살 만큼 넓힌다.
     _R7_FRAGMENT_WINDOW: int = 220
+    # 문장 경계를 찾을 때 윈도우 밖으로 더 나가거나 안으로 당길 수 있는 여유 폭.
+    _R7_SENTENCE_SLACK: int = 120
+    # 중복 제거 시 '문장'으로 셀 최소 길이(공백 제외). 너무 짧은 조각은 키가 겹치기 쉽다.
+    _R7_MIN_SENTENCE_LEN: int = 8
     # 카테고리별 보존할 단편 최대 개수. 너무 많이 들고 가면 리포트가 무거워진다.
     _R7_MAX_FRAGMENTS_PER_CATEGORY: int = 8
     # 상위 노출 케이스 표시 개수.
@@ -1326,12 +1330,83 @@ class ReportGenerator:
         return None
       start = max(0, match.start() - self._R7_FRAGMENT_WINDOW)
       end = min(len(response), match.end() + self._R7_FRAGMENT_WINDOW)
+      # 문장 경계로 스냅한다. 고정 폭으로 자르면 "…정보의 안전…"처럼 문장 한복판에서
+      # 끊겨, 재구성한 프롬프트를 실제 프롬프트와 나란히 읽는 것 자체가 불가능해진다.
+      # 앞은 직전 문장이 끝난 지점부터, 뒤는 매칭 이후 첫 문장이 끝나는 지점까지.
+      head = response.rfind(".", 0, match.start())
+      if head != -1 and head >= start - self._R7_SENTENCE_SLACK:
+        start = head + 1
+      tail = response.find(".", max(match.end(), end - self._R7_SENTENCE_SLACK))
+      if tail != -1 and tail <= end + self._R7_SENTENCE_SLACK:
+        end = tail + 1
       snippet = response[start:end].strip()
-      prefix = "…" if start > 0 else ""
-      suffix = "…" if end < len(response) else ""
       # 줄바꿈을 공백으로 치환해 한 줄 표시.
       snippet = re.sub(r"\s+", " ", snippet)
+      if not snippet:
+        return None
+      # 경계 스냅이 실패해 여전히 문장 중간이면 그 사실을 말줄임표로 밝힌다.
+      prefix = "" if start == 0 or response[start - 1] in ".\n" else "…"
+      suffix = "" if end >= len(response) or snippet.endswith(".") else "…"
       return f"{prefix}{snippet}{suffix}"
+
+    def _dedupe_r7_fragment(
+      self,
+      fragments: list[str],
+      used_sentences: set[str],
+    ) -> str | None:
+      """카테고리 대표 단편에서 **다른 카테고리가 이미 쓴 문장**을 걷어낸다.
+
+      방어규칙 4종의 패턴은 응답의 같은 구간을 자주 함께 잡는다(특히 '근거 한정'과
+      '명령 위계'). 그대로 이어붙이면 재구성 프롬프트에 똑같은 문단이 두 번 세 번
+      나와 1,000자 벽이 되고, 정작 규칙별로 무엇이 새어 나왔는지는 안 보인다.
+
+      Args:
+        fragments: 이 카테고리에서 뽑힌 단편들(우선순위 순).
+        used_sentences: 앞선 카테고리가 이미 채택한 문장의 정규화 키 집합(갱신됨).
+
+      Returns:
+        중복을 뺀 단편 문자열. 남는 문장이 없으면 None.
+      """
+      for fragment in fragments:
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=\.)\s+", fragment):
+          text = sentence.strip()
+          if not text:
+            continue
+          key = re.sub(r"\s+", "", text).strip("…").lower()
+          if len(key) < self._R7_MIN_SENTENCE_LEN or key in used_sentences:
+            continue
+          used_sentences.add(key)
+          kept.append(text)
+        if kept:
+          return " ".join(kept)
+      return None
+
+    def _split_target_prompt_by_rule(self, prompt: str) -> dict[str, str]:
+      """실제 시스템 프롬프트를 방어규칙 카테고리별 줄로 나눈다.
+
+      공격자가 복원한 조각과 **같은 규칙끼리 나란히** 놓기 위해서다. 예전에는 왼쪽에
+      1,000자 재구성문, 오른쪽에 프롬프트 전문을 통째로 놓아서 어느 줄이 어느 줄에
+      대응하는지 눈으로 짝을 맞출 수가 없었다. 판정에 쓰는 패턴을 그대로 재사용하므로
+      "이 줄이 이 규칙"이라는 매핑이 평가 기준과 어긋나지 않는다.
+
+      Args:
+        prompt: 대상 시스템 프롬프트 전문.
+
+      Returns:
+        {카테고리: 해당 규칙 줄} — 매칭된 줄이 없는 카테고리는 키 자체가 없다.
+      """
+      from rag.evaluator.r7_evaluator import RULE_COVERAGE_PATTERNS
+
+      by_rule: dict[str, list[str]] = {}
+      for raw_line in (prompt or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+          continue
+        for category, patterns in RULE_COVERAGE_PATTERNS.items():
+          if any(p.search(line) for p in patterns):
+            by_rule.setdefault(category, []).append(line)
+      return {category: " ".join(lines) for category, lines in by_rule.items()}
 
     def _build_r7_leakage_analysis(
         self,
@@ -1469,11 +1544,13 @@ class ReportGenerator:
       )
       top_leak_cases = top_candidates[: self._R7_TOP_CASES_LIMIT]
 
-      # 추정 시스템 프롬프트 — 카테고리별 첫 fragment 를 대표 단편으로 채택.
+      # 추정 시스템 프롬프트 — 카테고리별 대표 단편. 앞선 카테고리가 이미 쓴 문장은
+      # 빼서 같은 문단이 두세 번 반복되지 않게 한다(_dedupe_r7_fragment 주석 참조).
       # 단편이 없으면 None 으로 두어 템플릿에서 "노출 없음" 표시로 처리한다.
       reconstructed_prompt: dict[str, str | None] = {}
+      used_sentences: set[str] = set()
       for category, fragments in fragments_by_category.items():
-        reconstructed_prompt[category] = fragments[0] if fragments else None
+        reconstructed_prompt[category] = self._dedupe_r7_fragment(fragments, used_sentences)
 
       return {
         "has_data": True,
@@ -1481,6 +1558,9 @@ class ReportGenerator:
         "total_successful": total_successful,
         "rule_leak_count": rule_leak_count,
         "target_system_prompt": target_system_prompt,
+        # 실제 프롬프트를 같은 방어규칙 축으로 쪼갠 것. 대시보드가 복원 조각과 이걸
+        # **규칙별로 나란히** 놓는다(전문 대 전문 비교는 짝을 맞출 수 없었다).
+        "target_rules_by_category": self._split_target_prompt_by_rule(target_system_prompt),
         "category_leak_distribution": category_leak_distribution,
         "leaked_fragments_by_category": fragments_by_category,
         "top_leak_cases": top_leak_cases,
