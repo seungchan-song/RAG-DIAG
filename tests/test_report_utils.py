@@ -331,10 +331,31 @@ class TestReportGenerator:
       gen.generate("NONEXISTENT-ID")
 
   def test_risk_assessment(self, tmp_path):
+    """전체 판정은 **종합 위험도**로 낸다 — 화면 배지와 같은 눈금이어야 한다.
+
+    예전에는 여기서 시나리오별 성공률 임계값을 따로 걸었다. 그래서 배지는 위험도로,
+    총평은 성공률로 매겨져 "총평 위험 / 모든 행 주의" 같은 자기모순 화면이 나왔다.
+    """
     gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
-    assert "CRITICAL" in gen._assess_risk_level({"R2": {"success_rate": 0.6}})
-    assert "HIGH" in gen._assess_risk_level({"R4": {"is_inference_successful": True}})
-    assert "LOW" in gen._assess_risk_level({"R2": {"success_rate": 0}, "R9": {"success_rate": 0}})
+    # 가장 위험한 공격 한 종의 위험도가 곧 전체 등급이다(NORMAL 은 공격이 아니라 제외).
+    assert "CRITICAL" in gen._assess_risk_level({"R2": {"risk_score": 0.80}})
+    assert "HIGH" in gen._assess_risk_level({"R2": {"risk_score": 0.20}, "R9": {"risk_score": 0.55}})
+    assert "MEDIUM" in gen._assess_risk_level({"R4": {"risk_score": 0.30}})
+    assert "LOW" in gen._assess_risk_level({"R2": {"risk_score": 0}, "R9": {"risk_score": 0}})
+    # 대조군은 등급 판정에 끼어들지 않는다.
+    assert "LOW" in gen._assess_risk_level({"NORMAL": {"risk_score": 0.9}, "R2": {"risk_score": 0}})
+
+  def test_risk_assessment_matches_dashboard_badge(self, tmp_path):
+    """총평 등급과 시나리오 배지가 같은 눈금에서 나오는지 고정한다."""
+    from rag.report.narrative import risk_score_band
+
+    gen = ReportGenerator({"report": {"output_formats": ["json"], "output_dir": str(tmp_path)}})
+    for score, expect_badge in ((0.75, "high"), (0.55, "high"), (0.30, "med"), (0.10, "low")):
+      level = gen._assess_risk_level({"R2": {"risk_score": score}})
+      badge_from_level = "high" if level.split(" ")[0] in ("CRITICAL", "HIGH") else (
+        "med" if level.startswith("MEDIUM") else "low"
+      )
+      assert badge_from_level == risk_score_band(score) == expect_badge
 
   def test_reliability_summary_surfaces_capability_plan(self, tmp_path):
     """실행 신뢰도 요약이 시나리오별 capability_plan(skip/degrade)을 그대로 전달해야 한다."""

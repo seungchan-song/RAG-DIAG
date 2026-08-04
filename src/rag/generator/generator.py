@@ -100,49 +100,104 @@ def create_generator(config: dict[str, Any]) -> Any:
     Generator 컴포넌트
   """
   generator_config = config.get("generator", {}) or {}
-  provider = str(generator_config.get("provider", "auto")).lower()
   system_prompt: str | None = generator_config.get("system_prompt") or None
+  resolved, reason = _resolve_provider(config)
 
   if system_prompt:
     logger.debug(
       "시스템 프롬프트 적용됨 (길이={}자, provider={})",
       len(system_prompt),
-      provider,
+      resolved,
     )
+  if reason:
+    logger.warning(reason)
 
-  # 로컬 오픈웨이트 모델(대회 규정 A-1). 로컬 서버 호출이므로 API 키가 필요 없고,
-  # 서버가 꺼져 있어도 생성은 성공한 뒤 run() 에서 오류 메타로 안전 처리된다.
-  if provider in {"local", "ollama", "vllm", "local_openai", "openai_compat"}:
+  if resolved == "local":
+    # 로컬 오픈웨이트 모델(대회 규정 A-1). 로컬 서버 호출이므로 API 키가 필요 없고,
+    # 서버가 꺼져 있어도 생성은 성공한 뒤 run() 에서 오류 메타로 안전 처리된다.
     return create_local_generator(config, system_prompt=system_prompt)
+  if resolved == "clova":
+    return create_clova_generator(config, system_prompt=system_prompt)
+  if resolved == "openai":
+    return create_openai_generator(config, system_prompt=system_prompt)
+  return MockGenerator(system_prompt=system_prompt)
 
+
+# provider 설정값 → 정규화된 로컬 생성기 이름. 어느 별칭을 써도 같은 경로를 탄다.
+_LOCAL_PROVIDER_ALIASES = {"local", "ollama", "vllm", "local_openai", "openai_compat"}
+
+
+def _resolve_provider(config: dict[str, Any]) -> tuple[str, str]:
+  """설정과 환경변수를 보고 **실제로 쓰일** provider 를 하나로 확정한다.
+
+  `create_generator` 와 `describe_generator` 가 이 함수 하나를 공유한다. 예전에는 결정
+  로직이 `create_generator` 안에만 있어서, 리포트는 설정값("auto")밖에 적을 수 없었다.
+  그래서 "이 진단이 어떤 모델을 상대로 한 것인가"에 리포트가 답을 못 했다.
+
+  Args:
+    config: 전체 설정 dict.
+
+  Returns:
+    (provider, warning) 튜플. provider 는 local/clova/openai/mock 중 하나이고,
+    warning 은 폴백이 일어났을 때의 사유 문자열(없으면 빈 문자열).
+  """
+  provider = str((config.get("generator") or {}).get("provider", "auto")).lower()
+
+  if provider in _LOCAL_PROVIDER_ALIASES:
+    return "local", ""
   if provider == "clova":
     if os.getenv("NAVER_CLOVA_API_KEY"):
-      return create_clova_generator(config, system_prompt=system_prompt)
-    logger.warning(
+      return "clova", ""
+    return "mock", (
       "NAVER_CLOVA_API_KEY 가 설정되지 않았습니다. provider=clova 가 요청됐지만 "
       "MockGenerator 로 폴백합니다."
     )
-    return MockGenerator(system_prompt=system_prompt)
-
   if provider == "openai":
     if os.getenv("OPENAI_API_KEY"):
-      return create_openai_generator(config, system_prompt=system_prompt)
-    logger.warning(
+      return "openai", ""
+    return "mock", (
       "OPENAI_API_KEY 가 설정되지 않았습니다. provider=openai 가 요청됐지만 "
       "MockGenerator 로 폴백합니다."
     )
-    return MockGenerator(system_prompt=system_prompt)
 
   # provider == "auto" (또는 미지정): 환경변수 우선순위에 따라 결정
   if os.getenv("OPENAI_API_KEY"):
-    return create_openai_generator(config, system_prompt=system_prompt)
+    return "openai", ""
   if os.getenv("NAVER_CLOVA_API_KEY"):
-    return create_clova_generator(config, system_prompt=system_prompt)
-  logger.warning(
+    return "clova", ""
+  return "mock", (
     "OPENAI_API_KEY / NAVER_CLOVA_API_KEY 모두 설정되지 않았습니다. "
     "MockGenerator를 사용합니다 (검색 문서 원문을 응답으로 반환)."
   )
-  return MockGenerator(system_prompt=system_prompt)
+
+
+# provider → 그 provider 의 모델 이름이 들어 있는 config["generator"] 하위 키.
+_PROVIDER_MODEL_KEY = {"local": "local", "clova": "clova", "openai": "openai"}
+
+
+def describe_generator(config: dict[str, Any]) -> dict[str, str]:
+  """이번 실행이 실제로 상대한 생성기를 (provider, model) 로 기록용 dict 화한다.
+
+  진단 리포트는 "어떤 LLM 을 진단했나"에 답할 수 있어야 재현·검증이 가능하다.
+  `provider: auto` 설정만 적어 두면 그 답이 사라지므로, 실행 시점의 해석 결과를
+  스냅샷 provenance 에 남긴다(`utils/experiment.py:build_snapshot_provenance`).
+
+  Args:
+    config: 전체 설정 dict.
+
+  Returns:
+    {"provider": 실제 provider, "model": 모델 이름, "configured": 설정 원문값}.
+    Mock 폴백이면 model 은 "mock" 이다.
+  """
+  gen = config.get("generator") or {}
+  resolved, _ = _resolve_provider(config)
+  key = _PROVIDER_MODEL_KEY.get(resolved)
+  model = str(((gen.get(key) or {}) if key else {}).get("model") or "") or resolved
+  return {
+    "provider": resolved,
+    "model": model,
+    "configured": str(gen.get("provider", "auto")).lower(),
+  }
 
 
 def create_openai_generator(
