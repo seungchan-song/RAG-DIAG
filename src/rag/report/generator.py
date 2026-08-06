@@ -2861,6 +2861,11 @@ class ReportGenerator:
         """
         from rag.report.dashboard_template import render_dashboard
 
+        # HTML 에 실을 설정 블록에서 비밀값(api_key 등)을 가리는 공용 헬퍼.
+        # 정책(SECRET_FIELD_TOKENS)은 experiment.py 한 곳에만 둔다. 파일 상단이
+        # 아니라 여기서 임포트하는 것은 위 render_dashboard 와 같은 이유다.
+        from rag.utils.experiment import redact_secrets
+
         # HTML embed용 경량 복사본: 렌더에 안 쓰는 무거운 필드 제거 + 시나리오당 표본 cap.
         # 대시보드의 응답 탐색기(검색·필터)가 이 표본 위에서 동작하므로, 기법별 성공/실패
         # 예시를 실제로 훑을 수 있을 만큼(=100건) 싣는다. 전체 원본은 <시나리오>_result.json.
@@ -2928,17 +2933,25 @@ class ReportGenerator:
             # 템플릿이 snapshot 에서 읽는 건 config.generator(모델명 칩)와
             # config.adapter(진단 대상·능력 계층) 둘뿐이다. 전체 snapshot 은 런에 따라
             # 수백 KB 라 통째로 임베드할 이유가 없다.
+            #
+            # ⚠️ redact_secrets 를 반드시 통과시킨다. HTML 리포트는 심사위원·고객에게
+            # 건네라고 만든 유일한 산출물인데, adapter 블록에는 외부 RAG 의 Bearer
+            # 토큰(`adapter.api_key`)이 들어 있다. 예전에는 이게 평문으로 실려 나갔다.
+            # snapshot.yaml 원본은 replay 가 config 를 그대로 복원해야 하므로 손대지
+            # 않는다 — 유출 경계는 '리포트'이지 '로컬 산출물'이 아니다.
             snapshot_json=json.dumps(
-                {
-                    "config": {
-                        "generator": (snapshot or {})
-                        .get("config", {})
-                        .get("generator", {}),
-                        "adapter": (snapshot or {})
-                        .get("config", {})
-                        .get("adapter", {}),
+                redact_secrets(
+                    {
+                        "config": {
+                            "generator": (snapshot or {})
+                            .get("config", {})
+                            .get("generator", {}),
+                            "adapter": (snapshot or {})
+                            .get("config", {})
+                            .get("adapter", {}),
+                        }
                     }
-                },
+                ),
                 ensure_ascii=False,
                 default=str,
             ),

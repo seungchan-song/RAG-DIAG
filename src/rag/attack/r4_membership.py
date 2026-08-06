@@ -18,6 +18,7 @@ R4 공격 시나리오: 멤버십 추론 (Document-Level Membership Inference At
   result = attack.execute(queries[0], rag_pipeline)
 """
 
+import threading
 from typing import Any
 
 from haystack import Pipeline
@@ -75,6 +76,18 @@ class R4MembershipAttack(BaseAttack):
     # 비회원(d* 제외) 반사실 어댑터를 target_doc_id 별로 캐시한다. 같은 d* 에 대한
     # 여러 쿼리가 동일한 반사실 인덱스를 재사용하도록 해 재구성 비용을 아낀다.
     self._non_member_adapters: dict[str, Any] = {}
+    # 캐시를 지키는 락. CLI 는 이 인스턴스 하나를 ThreadPoolExecutor(max_workers=5)
+    # 위에서 공유하는데, generate_queries 가 문서당 b=0 쿼리를 연속으로 쌓고 실행부가
+    # 전량을 한 번에 submit 하므로 **같은 target_doc_id 의 b=0 쿼리들이 나란히 워커에
+    # 들어간다**. 락이 없으면 전부 빈 캐시를 보고 build_variant 를 중복 실행했다
+    # (실측: 동시 5건 → 5회 전부 재구성, 캐시 적중 0). build_variant 는 문서 1,200개
+    # 재색인 + 파이프라인 재빌드라 비용이 크고, 그 순간 같은 크기의 store 가 워커 수만큼
+    # 동시에 메모리에 뜬다.
+    # ponytail: 캐시 전체를 하나의 락으로 덮어 build_variant 자체를 직렬화한다. 서로 다른
+    # 문서의 재구성까지 줄 세우지만, 재구성은 셀당 문서 수(기본 20)만큼만 일어나고 오히려
+    # 메모리 피크를 1개분으로 눌러 주므로 이득이다. 재구성이 병목이 되면 target_doc_id 별
+    # 락으로 쪼갤 것.
+    self._non_member_lock = threading.Lock()
     logger.debug(
       "R4MembershipAttack 초기화 완료 (attacker={}, probe_mode={}, pii_ner={})",
       self.attacker,
@@ -237,18 +250,24 @@ class R4MembershipAttack(BaseAttack):
 
     Returns:
       TargetRAG: d* 가 제외된 반사실 인덱스를 감싼 어댑터.
+
+    Thread-safety:
+      CLI 가 이 메서드를 워커 스레드 여러 개에서 동시에 부른다. 조회·생성·저장을
+      `_non_member_lock` 안에서 한 덩어리로 처리해 같은 문서에 대한 build_variant 가
+      정확히 한 번만 돌게 한다(`tests/test_r4_variant_cache.py` 가 고정).
     """
     target_doc_id = query_info.get("target_doc_id", "")
-    if target_doc_id in self._non_member_adapters:
-      return self._non_member_adapters[target_doc_id]
+    with self._non_member_lock:
+      if target_doc_id in self._non_member_adapters:
+        return self._non_member_adapters[target_doc_id]
 
-    base_target = self.target
-    if base_target is None:
-      from rag.adapters.builtin import BuiltinHaystackAdapter
+      base_target = self.target
+      if base_target is None:
+        from rag.adapters.builtin import BuiltinHaystackAdapter
 
-      base_target = BuiltinHaystackAdapter(rag_pipeline, self.config)
+        base_target = BuiltinHaystackAdapter(rag_pipeline, self.config)
 
-    non_member_target = base_target.build_variant(exclude_doc_ids={target_doc_id})
-    logger.debug("R4 non-member 반사실 어댑터 구성: target_doc_id={}", target_doc_id)
-    self._non_member_adapters[target_doc_id] = non_member_target
-    return non_member_target
+      non_member_target = base_target.build_variant(exclude_doc_ids={target_doc_id})
+      logger.debug("R4 non-member 반사실 어댑터 구성: target_doc_id={}", target_doc_id)
+      self._non_member_adapters[target_doc_id] = non_member_target
+      return non_member_target
