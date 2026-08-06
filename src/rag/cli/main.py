@@ -2686,10 +2686,14 @@ def _execute_single_run(
                     next_checkpoint["planned_query_count"] = len(queries)
                     next_checkpoint["status"] = "running"
 
-                    exp_manager.save_partial_results(
+                    # 결과 한 건만 덧붙인다. 예전에는 누적분 전체를 매번 다시 써서
+                    # 총 쓰기량이 O(n²)(전체 매트릭스 런 1회 9.14GB)였다.
+                    # 체크포인트 저장보다 **먼저** 써야 크래시 시 유실된 줄의 질의가
+                    # 완료 목록에 남지 않아 다음 실행에서 재시도된다.
+                    exp_manager.append_partial_result(
                         actual_run_id,
                         scenario,
-                        [_serialize_value(item) for item in next_stored_results],
+                        _serialize_value(sanitized_result),
                     )
                     exp_manager.save_checkpoint(actual_run_id, next_checkpoint)
 
@@ -3503,7 +3507,7 @@ def _resolve_replay_config(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def _infer_single_run_scenario(run_dir: Path) -> str:
     """Fallback to result filenames when legacy snapshots miss runtime.scenario."""
-    for pattern in ("*_result.json", "*_partial.json"):
+    for pattern in ("*_result.json", "*_partial.jsonl", "*_partial.json"):
         for artifact in sorted(run_dir.glob(pattern)):
             scenario = artifact.stem.split("_", 1)[0].upper()
             if scenario in {"R2", "R4", "R9"}:

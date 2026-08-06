@@ -257,7 +257,7 @@ class TestExperimentManager:
     assert checkpoint["failed_query_ids"] == ["q2"]
     assert "updated_at" in checkpoint
 
-  def test_save_and_load_partial_results(self, tmp_path):
+  def test_append_and_load_partial_results(self, tmp_path):
     config = {"report": {"output_dir": str(tmp_path)}}
     manager = ExperimentManager(config)
     run_id = manager.create_run()
@@ -266,11 +266,98 @@ class TestExperimentManager:
       {"query_id": "q2", "response": "masked answer 2"},
     ]
 
-    saved_path = manager.save_partial_results(run_id, "R2", partial_results)
+    for result in partial_results:
+      saved_path = manager.append_partial_result(run_id, "R2", result)
 
     assert saved_path == manager.partial_results_path(run_id, "R2")
     loaded_results = manager.load_partial_results(run_id, "R2")
     assert loaded_results == partial_results
+
+  def test_partial_results_write_volume_stays_linear(self, tmp_path, monkeypatch):
+    """부분 결과 저장이 **누적 재작성**으로 되돌아가면 실패한다.
+
+    실측 배경 — 예전 구현은 질의 하나가 끝날 때마다 지금까지의 결과 전체를
+    다시 썼다(O(n²)). 전체 매트릭스 런 1회에 9.14GB 를 쓰는데 최종 산출물은
+    124MB 였다(74배). 최종 파일 크기가 아니라 **총 쓰기 바이트**를 재야 이
+    회귀를 잡을 수 있어서, 실제 write 호출량을 세어 검증한다.
+    """
+    import builtins
+
+    config = {"report": {"output_dir": str(tmp_path)}}
+    manager = ExperimentManager(config)
+    run_id = manager.create_run()
+    partial_path = manager.partial_results_path(run_id, "R2")
+
+    written_bytes = 0
+    real_open = builtins.open
+
+    class _CountingFile:
+      """대상 파일에 실제로 기록된 바이트 수만 누적하는 얇은 래퍼."""
+
+      def __init__(self, handle):
+        self._handle = handle
+
+      def write(self, text):
+        nonlocal written_bytes
+        written_bytes += len(text)
+        return self._handle.write(text)
+
+      def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+      def __enter__(self):
+        self._handle.__enter__()
+        return self
+
+      def __exit__(self, *exc_info):
+        return self._handle.__exit__(*exc_info)
+
+    def _counting_open(file, mode="r", *args, **kwargs):
+      handle = real_open(file, mode, *args, **kwargs)
+      if Path(file) == partial_path and "r" not in mode:
+        return _CountingFile(handle)
+      return handle
+
+    monkeypatch.setattr(builtins, "open", _counting_open)
+
+    record_count = 50
+    for index in range(record_count):
+      manager.append_partial_result(
+        run_id, "R2", {"query_id": f"q{index}", "response": "x" * 200}
+      )
+
+    monkeypatch.undo()
+    final_size = partial_path.stat().st_size
+
+    # append 라면 총 쓰기량 == 최종 크기. 누적 재작성이면 약 n/2 배(여기선 25배)로 뛴다.
+    assert written_bytes <= final_size * 2, (
+      f"부분 결과 저장이 누적 재작성으로 회귀했습니다: "
+      f"총 {written_bytes}바이트 기록 / 최종 파일 {final_size}바이트"
+    )
+    assert len(manager.load_partial_results(run_id, "R2")) == record_count
+
+  def test_load_partial_results_skips_truncated_line(self, tmp_path):
+    """크래시로 마지막 줄이 잘려도 이어하기가 막히지 않아야 한다."""
+    config = {"report": {"output_dir": str(tmp_path)}}
+    manager = ExperimentManager(config)
+    run_id = manager.create_run()
+    manager.append_partial_result(run_id, "R2", {"query_id": "q1"})
+    with open(manager.partial_results_path(run_id, "R2"), "a", encoding="utf-8") as f:
+      f.write('{"query_id": "q2", "resp')
+
+    assert manager.load_partial_results(run_id, "R2") == [{"query_id": "q1"}]
+
+  def test_load_partial_results_reads_legacy_json(self, tmp_path):
+    """JSONL 이전 런 디렉터리에서도 이어하기가 동작해야 한다."""
+    config = {"report": {"output_dir": str(tmp_path)}}
+    manager = ExperimentManager(config)
+    run_id = manager.create_run()
+    legacy_path = manager.partial_results_path(run_id, "R2").with_suffix(".json")
+    legacy_path.write_text(
+      json.dumps({"results": [{"query_id": "q1"}]}), encoding="utf-8"
+    )
+
+    assert manager.load_partial_results(run_id, "R2") == [{"query_id": "q1"}]
 
   def test_save_and_load_partial_failures(self, tmp_path):
     config = {"report": {"output_dir": str(tmp_path)}}
