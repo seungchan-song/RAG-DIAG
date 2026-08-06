@@ -53,6 +53,20 @@ class AttackResult:
   metadata: dict[str, Any] = field(default_factory=dict)
 
 
+class TargetExecutionError(RuntimeError):
+  """진단 대상 RAG 를 부르는 데 실패했다 — 공격이 실패한 것이 아니다.
+
+  이 둘을 구분하지 못하면 리포트가 거짓말을 한다. 대상 서버가 죽어 있거나 API 키가
+  틀려서 응답이 비면 `success=False` 가 되고, 그건 화면에서 "공격 실패 = 방어 성공"과
+  똑같이 보인다. 어댑터 계층이 `is_blocked`/`guardrails` 로 "방어가 막았다"를 따로
+  전달하는 것과 정확히 같은 이유로, "부르지도 못했다"도 따로 올려야 한다.
+
+  이 예외는 `cli/main.py:_process_query_task` 가 받아 `ExecutionFailureRecord`
+  (stage="query_execute")로 적재하며, 해당 질의는 완료 목록에 들어가지 않아
+  다음 실행에서 재시도된다.
+  """
+
+
 @dataclass
 class ExecutionFailureRecord:
   """One masked execution failure captured outside the scored result path."""
@@ -74,6 +88,34 @@ class ExecutionFailureRecord:
   replayed_from_run_id: str = ""
   failed_at: str = ""
   metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _raise_if_generator_errored(trace: dict[str, Any]) -> None:
+  """생성기가 오류 메타를 실어 보냈으면 실행 실패로 올린다.
+
+  `generator/generator.py` 의 ClovaX·Local 생성기는 HTTP 4xx/5xx 나 예외를 만나면
+  **예외를 던지지 않고** `replies=[""]` + `meta=[{"error": ...}]` 를 돌려준다
+  (`rag query` 디버그 경로가 트레이스백 대신 메시지를 보여줄 수 있게 하려는 설계).
+  문제는 공격 경로에서 그 빈 응답이 그대로 채점돼 **"공격 실패"로 집계**된다는 것이다.
+  여기서 오류 메타를 예외로 승격시켜 두 상황을 갈라 놓는다.
+
+  외부 어댑터가 만든 트레이스는 `meta` 가 비어 있으므로(`RagTrace.to_engine_dict`)
+  이 검사에 걸리지 않는다. 대상 RAG 가 스스로 보고하는 가드레일 차단은 `error` 가
+  아니라 `target_metadata` 로 오므로 이 경로와 섞이지 않는다.
+
+  Args:
+    trace: 어댑터가 돌려준 트레이스 dict.
+
+  Raises:
+    TargetExecutionError: 생성기 메타에 `error` 가 실려 있을 때.
+  """
+  meta = (trace.get("generator") or {}).get("meta") or []
+  for entry in meta:
+    if isinstance(entry, dict) and entry.get("error"):
+      raise TargetExecutionError(
+        f"생성기 호출 실패(provider={entry.get('provider', '?')}, "
+        f"model={entry.get('model', '?')}): {entry['error']}"
+      )
 
 
 class BaseAttack(ABC):
@@ -128,30 +170,20 @@ class BaseAttack(ABC):
       query: 질의 문자열.
       target: 이 질의에만 사용할 어댑터 override(옵션). R4 b=0 반사실 실행처럼
         기본 대상이 아닌 별도 어댑터로 보내야 할 때 사용한다.
+
+    Raises:
+      TargetExecutionError: 대상 RAG 호출 자체가 실패했을 때. 예전에는 여기서 모든
+        예외를 삼키고 **빈 트레이스**를 돌려줬는데, 그러면 빈 응답 → `success=False`
+        → 리포트에는 "공격 실패"로 찍혀 **대상이 죽은 것과 방어가 막은 것이 구분되지
+        않았다.** 이제는 위로 올려 실행 실패로 기록한다.
+      Exception: 그 밖의 예외도 삼키지 않고 그대로 전파한다(호출부가 실패 기록으로
+        적재한다).
     """
-    try:
-      resolved = target or self.target
-      if resolved is None:
-        from rag.adapters.builtin import BuiltinHaystackAdapter
+    resolved = target or self.target
+    if resolved is None:
+      from rag.adapters.builtin import BuiltinHaystackAdapter
 
-        resolved = BuiltinHaystackAdapter(pipeline, self.config)
-      return resolved.query(query).to_engine_dict()
-    except Exception as error:
-      from loguru import logger
-
-      logger.error(f"RAG query execution failed: {error}")
-      return {
-        "query": query,
-        "prompt": "",
-        "retrieved_documents": [],
-        "raw_retrieved_documents": [],
-        "thresholded_documents": [],
-        "reranked_documents": [],
-        "profile_name": self.config.get("profile_name", "default"),
-        "retrieval_config": self.config.get("retrieval_config", {}),
-        "reranker_enabled": bool(
-          self.config.get("retrieval_config", {}).get("reranker", {}).get("enabled", False)
-        ),
-        "retriever": {"documents": []},
-        "generator": {"replies": [], "meta": []},
-      }
+      resolved = BuiltinHaystackAdapter(pipeline, self.config)
+    trace = resolved.query(query).to_engine_dict()
+    _raise_if_generator_errored(trace)
+    return trace
