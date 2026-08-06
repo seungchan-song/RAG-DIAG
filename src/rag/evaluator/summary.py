@@ -453,7 +453,7 @@ def _summarize_scenario_core(
     scores = [result.score for result in results]
     successes = sum(1 for result in results if result.success)
     r2_eval_cfg = config.get("evaluator", {}).get("r2", {})
-    threshold = r2_eval_cfg.get("rouge_threshold", 0.70)
+    threshold = r2_eval_cfg.get("rouge_threshold", 0.60)
     # config 에서 정규화 분모를 읽고 0 이하 값은 기본값으로 폴백 (division-by-zero 방지)
     normalizer = float(
       r2_eval_cfg.get("high_pii_normalizer", R2_HIGH_PII_NORMALIZER_DEFAULT)

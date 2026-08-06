@@ -59,7 +59,7 @@ RISK_TIER_ORDER = ("identifier", "contact", "context")
 # 마스킹 자리표시자가 이걸 그대로 뱉어서 리포트에 "[TMI_EMAIL]" 같은 은어가 노출됐다.
 # 마스커(pii/masker.py)와 대시보드(report/dashboard_template.py:TAG_KO)가 함께 쓴다.
 PII_TAG_LABELS: dict[str, str] = {
-  # 정형 PII(QT_*) — step1_regex 15종
+  # 정형 PII(QT_*) — step1_regex 내장 11종 + 조직별 ID(config) + NER 이 내는 태그
   "QT_RRN": "주민등록번호", "QT_ARN": "외국인등록번호", "QT_FOREIGN": "외국인등록번호",
   "QT_PASSPORT": "여권번호", "QT_DRIVER": "운전면허", "QT_DL": "운전면허",
   "QT_LICENSE": "운전면허", "QT_CARD": "카드번호", "QT_ACCOUNT": "계좌번호",
@@ -72,6 +72,11 @@ PII_TAG_LABELS: dict[str, str] = {
   # 비정형·문맥 PII(TMI_*) 및 NER 태그
   "TMI_EMAIL": "이메일", "TMI_OCCUPATION": "직업·직장", "TMI_SITE": "사이트·계정",
   "TMI_NATIONALITY": "국적",
+  # 신체·신념 계열(33종 NER 이 내는 태그). 여기 빠져 있으면 마스킹 자리표시자가
+  # `[TMI_BLOOD_TYPE]` 처럼 내부 코드명 그대로 리포트에 실린다 —
+  # tests/test_pii_tag_labels.py 가 누락을 막는다.
+  "QT_LENGTH": "키", "QT_WEIGHT": "몸무게", "TMI_BLOOD_TYPE": "혈액형",
+  "TMI_RELIGION": "종교", "TMI_HEALTH": "건강정보", "TMI_GENDER": "성별",
   "PS_NAME": "이름", "PS_POSITION": "직위", "PS_ORG": "소속",
   "PER": "이름", "LOC": "주소·장소", "ORG": "기관·소속",
   "DAT": "날짜", "TIM": "시간", "AFW": "작품·제품명",
@@ -187,14 +192,31 @@ class PIIClassifier:
     return confirmed
 
   def _remove_overlaps(self, confirmed: list[ConfirmedPII]) -> list[ConfirmedPII]:
+    """겹치는 확정 항목 중 하나만 남긴다 — 신뢰도 우선, 같으면 **긴 스팬** 우선.
+
+    길이를 동점 처리 기준으로 쓰는 이유(2026-08-06):
+      정규식 탐지는 전부 confidence=1.0 이라 신뢰도만 비교하면 승자가
+      `RegexDetector.PATTERNS` 의 **선언 순서**로 결정된다. 그 결과
+      `051109-3345671`(2002~2006년생 주민등록번호)에서 앞부분 11자를 삼킨
+      `QT_PHONE`(선언 순서 2번)이 온전한 `QT_RRN`(5번)을 밀어냈다. 피해는 셋이다.
+        · 위험 등급이 identifier → contact 로 강등된다
+        · needs_validation 이 False 라 mod11 체크섬이 아예 안 돈다
+        · 스팬이 짧아 마스킹이 뒷자리를 놓친다(`**-****-3345671`)
+      더 긴 매치가 더 구체적인 패턴이라는 것이 일반 규칙이므로 길이로 가른다.
+      (현재 코퍼스에서는 이 조합이 0건이라 리포트 수치는 바뀌지 않는다 —
+      2000년대 출생 데이터가 들어올 때를 대비한 잠재 결함 차단이다.)
+    """
     if not confirmed:
       return []
+
+    def rank(item: ConfirmedPII) -> tuple[float, int]:
+      return (item.confidence, item.end - item.start)
 
     result: list[ConfirmedPII] = [confirmed[0]]
     for current in confirmed[1:]:
       previous = result[-1]
       if current.start < previous.end:
-        if current.confidence > previous.confidence:
+        if rank(current) > rank(previous):
           result[-1] = current
       else:
         result.append(current)
