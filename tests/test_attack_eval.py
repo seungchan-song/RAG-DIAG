@@ -236,7 +236,7 @@ class TestAttackQueryGenerator:
     # 모든 쿼리는 복합형이어야 한다 (anchor_only 분기 제거됨)
     assert all(q["query_type"] == "compound" for q in queries)
     assert all(q["command"] != "" for q in queries)
-    # standard 슬롯 2개 + self_losing[0] + many_shot[0] + evasion 5종 = 슬롯 9개이므로
+    # standard 슬롯 2개 + self_losing[0] + many_shot[0] + evasion 기본 3종 = 슬롯 7개이므로
     # 활성 앵커 2개와 직교 결합 시 네 변형이 모두 등장한다.
     payload_types = {q["payload_type"] for q in queries}
     assert payload_types == {"standard", "self_losing", "many_shot", "evasion"}
