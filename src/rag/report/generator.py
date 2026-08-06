@@ -341,6 +341,7 @@ class ReportGenerator:
         # 출력되므로 응답 PII 가 항상 0 → intensity 가 항상 0 이 된다.
         # 올바른 강도 지표는 "공격 성공 시 검색된 문서 내 고위험 PII 포함 응답 비율"이므로
         # _build_r9_potential_pii_exposure 결과로 덮어씌운다.
+        pii_leakage_profile = self._detect_pii_in_responses(scenario_results)
         r9_exposure = self._build_r9_potential_pii_exposure(scenario_results)
         if "R9" in scenario_summaries:
             new_r9_intensity = float(
@@ -373,7 +374,10 @@ class ReportGenerator:
             "execution_reliability": self._build_execution_reliability_summary(
                 scenario_results
             ),
-            "pii_leakage_profile": self._detect_pii_in_responses(scenario_results),
+            "pii_leakage_profile": pii_leakage_profile,
+            # 탐지기가 정상 작동했는지. 이 블록이 없으면 "유출이 적었다"와
+            # "탐지기가 죽어서 못 봤다"를 리포트에서 구분할 수 없다.
+            "detection_quality": self._build_detection_quality(pii_leakage_profile),
             "clean_vs_poisoned_comparison": env_comparison,
             "reranker_on_off_comparison": reranker_comparison,
             "attacker_comparison": attacker_comparison or {},
@@ -643,6 +647,63 @@ class ReportGenerator:
             "labels": labels,
             "threshold": data.get("delta_threshold") or 0.15,
             "sample_count": len(deltas),
+        }
+
+    def _build_detection_quality(
+        self,
+        pii_leakage_profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        """PII 탐지기가 실제로 몇 건의 응답에서 정상 작동했는지 집계한다.
+
+        왜 필요한가 — 실측(`RAG-2026-0806-001`, 2026-08-06): 응답 1,468건 중
+        **611건(41.6%)이 NER 없이 채점됐다.** HF fast 토크나이저를 5워커가 공유하다
+        `RuntimeError: Already borrowed` 가 났는데, 실행은 성공으로 끝나고(실행 실패
+        0건) 리포트에는 유출이 그만큼 적게 찍혔을 뿐이다. **조용한 과소보고**다.
+
+        원인(경쟁)은 `pii/step3_ner.py` 에서 락으로 닫았지만, 탐지기가 죽는 길은
+        그것 말고도 있다(모델 다운로드 실패 · 캐시 손상 · OOM · 마스킹 예외).
+        그래서 원인을 하나씩 막는 대신 **결과를 항상 세어 노출한다** — 어떤 이유로
+        탐지기가 빠져도 리포트 첫 화면에서 드러나게.
+
+        Args:
+            pii_leakage_profile: `_detect_pii_in_responses` 결과(시나리오별 집계).
+
+        Returns:
+            dict: `degraded_response_count` 가 0 보다 크면 그 리포트의 PII 수치는
+                하한선이다(실제 유출은 더 많을 수 있다).
+        """
+        total = 0
+        degraded = 0
+        reasons: dict[str, int] = {}
+        scenarios: dict[str, dict[str, int]] = {}
+
+        for scenario, profile in pii_leakage_profile.items():
+            load_status = profile.get("step3_load_status", {}) or {}
+            scenario_total = sum(int(count) for count in load_status.values())
+            scenario_degraded = sum(
+                int(count)
+                for status, count in load_status.items()
+                if str(status) != "ready"
+            )
+            total += scenario_total
+            degraded += scenario_degraded
+            for status, count in load_status.items():
+                if str(status) != "ready":
+                    reasons[str(status)] = reasons.get(str(status), 0) + int(count)
+            if scenario_degraded:
+                scenarios[str(scenario)] = {
+                    "total": scenario_total,
+                    "degraded": scenario_degraded,
+                }
+
+        return {
+            "response_count": total,
+            "degraded_response_count": degraded,
+            "degraded_ratio": (degraded / total) if total else 0.0,
+            "degraded_reasons": reasons,
+            "degraded_scenarios": scenarios,
+            # 리포트/CLI 가 같은 문장을 쓰도록 판정 자체를 여기서 한 번만 내린다.
+            "is_reliable": degraded == 0,
         }
 
     def _build_execution_reliability_summary(
