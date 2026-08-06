@@ -15,6 +15,7 @@ NER 모델(KPF-BERT-KDPII)이 출력하는 KDPII 33개 엔티티 라벨을 코�
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -196,6 +197,20 @@ _KPFBERT_MAX_INPUT_TOKENS = 512
 _NER_WINDOW_TOKENS = 120
 _NER_WINDOW_OVERLAP_TOKENS = 30
 
+# HuggingFace 의 **fast(Rust) 토크나이저는 스레드 안전하지 않다.** 두 스레드가 같은
+# 토크나이저 객체에 동시에 들어가면 Rust 쪽 RefCell 이 터지며
+# `RuntimeError: Already borrowed` 가 난다.
+#
+# 실측(RAG-2026-0806-001, 2026-08-06): `StorageSanitizer` 가 detector 하나를 만들어
+# 5워커(`cli/main.py` ThreadPoolExecutor)가 공유하는데, **응답 1,468건 중 611건
+# (41.6%)이 이 오류로 NER 없이 채점됐다**(R2 는 540건 중 398건). 리포트에는 유출이
+# 그만큼 적게 찍히므로 조용한 과소보고다 — 실행 실패로도 안 잡힌다.
+#
+# ponytail: 전역 락으로 추론 구간을 직렬화한다. NER 은 응답 하나에 수십 ms 라
+# 런의 병목(LLM 호출)에 비해 무시할 만하다. 처리량이 문제가 되면 스레드 로컬
+# detector(모델 사본 N개, 메모리 N배)로 올릴 것.
+_NER_INFERENCE_LOCK = threading.Lock()
+
 
 @dataclass
 class NERMatch:
@@ -307,12 +322,14 @@ class NERDetector:
     if tokenizer is None:
       return [(text, 0)]
 
-    encoded = tokenizer(
-      text,
-      add_special_tokens=False,
-      return_offsets_mapping=True,
-      truncation=False,
-    )
+    # 토크나이저도 추론과 같은 Rust 객체를 건드리므로 같은 락 안에서 부른다.
+    with _NER_INFERENCE_LOCK:
+      encoded = tokenizer(
+        text,
+        add_special_tokens=False,
+        return_offsets_mapping=True,
+        truncation=False,
+      )
     offsets = [span for span in encoded["offset_mapping"] if span[1] > span[0]]
     if len(offsets) <= _NER_WINDOW_TOKENS:
       return [(text, 0)]
@@ -375,12 +392,18 @@ class NERDetector:
     if self.pipeline is None:
       return []
 
+    # 여기 도달했다는 건 모델이 실제로 올라와 있다는 뜻이다. 이전 호출의 일시적
+    # 추론 오류가 남긴 'failed' 를 지워 **그 뒤의 모든 응답까지 오염되는** 것을 막는다
+    # (RAG-2026-0806-001 에서 한 번의 경쟁이 셀 전체를 failed 로 물들였다).
+    self.load_status = "ready"
+
     # 학습 길이(120토큰)를 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
     # 창이 겹치므로 같은 엔티티가 두 번 나올 수 있어 (스팬, 태그)로 합친다.
     deduped: dict[tuple[int, int, str], dict[str, Any]] = {}
     for window_text, window_offset in self._iter_windows(text):
       try:
-        window_results = self.pipeline(window_text)
+        with _NER_INFERENCE_LOCK:
+          window_results = self.pipeline(window_text)
       except Exception as error:
         self.load_status = "failed"
         self.error_message = str(error)
