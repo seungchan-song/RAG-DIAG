@@ -985,7 +985,31 @@ function renderScope(){
     }).join("")+'</div>';
   }
   el("scopeBox").innerHTML='<div class="scope"><div class="scope-head">진단 대상 · 능력 계층</div>'
-    +'<div class="scope-target">'+target+'</div>'+body+renderAttackerGrants(scens)+'</div>';
+    +'<div class="scope-target">'+target+'</div>'+body+renderAttackerGrants(scens)
+    +renderDetectionQuality()+'</div>';
+}
+
+// ── 탐지 신뢰도 ──
+// 실측(RAG-2026-0806-001): 응답 1,468건 중 611건이 NER 없이 채점됐는데 실행 실패는
+// 0건이었다. 즉 "유출이 적었다"와 "탐지기가 죽어서 못 봤다"가 화면에서 똑같이 보였다.
+// 이 줄은 그 둘을 가른다 — 정상일 땐 아무것도 그리지 않고, 한 건이라도 빠지면
+// 판정 바로 아래에 경고로 뜬다(리포트의 모든 PII 수치가 하한선이 되기 때문).
+function renderDetectionQuality(){
+  const q=(DATA.summary||{}).detection_quality;
+  if(!q || !q.degraded_response_count) return "";
+  const pct=(Number(q.degraded_ratio||0)*100).toFixed(1);
+  const reasons=Object.entries(q.degraded_reasons||{})
+    .map(([k,v])=>esc(k)+" "+num(v)+"건").join(" · ");
+  const scens=Object.entries(q.degraded_scenarios||{})
+    .map(([k,v])=>esc(SCEN_NAME[k]||k)+" "+num(v.degraded)+"/"+num(v.total)).join(" · ");
+  return '<div class="scope-sub">탐지 신뢰도</div>'
+    +'<div class="scope-rows"><div class="scope-row">'
+    +'<span class="badge high">주의</span>'
+    +'<span class="sc-r"><b>응답 '+num(q.degraded_response_count)+'건('+pct+'%)이 PII 탐지 없이 채점됐습니다.</b> '
+    +'아래 유출 수치는 실제 유출의 <b>하한선</b>입니다 — 탐지기가 빠진 응답의 유출은 0으로 잡혀 있습니다.'
+    +(reasons?'<br>사유: '+reasons:'')
+    +(scens?'<br>영향 시나리오: '+scens:'')
+    +'</span></div></div>';
 }
 
 // ── 가정한 공격자 권한 ──
