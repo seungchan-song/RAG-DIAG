@@ -187,39 +187,76 @@ class ExperimentManager:
     with open(checkpoint_path, "r", encoding="utf-8") as file:
       return json.load(file)
 
-  def save_partial_results(
+  def append_partial_result(
     self,
     run_id: str,
     scenario: str,
-    results: list[dict[str, Any]],
+    result: dict[str, Any],
   ) -> Path:
-    """Persist scenario-scoped partial results for checkpoint/resume."""
+    """완료된 결과 한 건을 체크포인트 파일에 **한 줄 덧붙인다**(JSONL).
+
+    왜 append 인가 — 예전에는 질의가 하나 끝날 때마다 지금까지의 결과 **전체**를
+    `json.dump(indent=2)` 로 다시 썼다. n 번째 질의에서 n 건을 쓰므로 총 쓰기량이
+    O(n²) 로 늘어난다. 실측(2026-08-06): 전체 매트릭스 런 1회에 **9.14GB** 를 쓰는데
+    최종 산출물은 124MB 였다(74배). 셀별로는 R4 3.3GB · NORMAL 2.7GB · R2 4셀 2.56GB.
+    한 줄 append 로 바꾸면 총 쓰기량이 최종 파일 크기와 같아진다(O(n)).
+
+    크래시 내성도 같이 좋아진다 — 예전 방식은 `open(mode="w")` 가 파일을 먼저 비우고
+    쓰므로 그 순간 죽으면 **누적분 전체**를 잃었다. append 는 마지막 줄만 잘리고,
+    `load_partial_results` 가 깨진 줄을 건너뛴다. 호출부(`cli/main.py`)가 결과를 먼저
+    쓰고 체크포인트를 나중에 저장하므로, 잘린 줄에 해당하는 질의는 완료 목록에 없어
+    다음 실행에서 그대로 재시도된다.
+
+    Args:
+      run_id: 실행 ID
+      scenario: 시나리오명 (파일명 접두사로 대문자화된다)
+      result: 직렬화가 끝난 결과 한 건
+
+    Returns:
+      Path: 결과가 덧붙여진 JSONL 파일 경로
+    """
     self._ensure_run_dir(run_id)
-    partial_path = self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
-    payload = {
-      "run_id": run_id,
-      "scenario": scenario.upper(),
-      "updated_at": datetime.now().isoformat(),
-      "result_count": len(results),
-      "results": results,
-    }
-    with open(partial_path, "w", encoding="utf-8") as file:
-      json.dump(payload, file, ensure_ascii=False, indent=2)
-    logger.debug("Saved partial results to {}", partial_path)
+    partial_path = self.partial_results_path(run_id, scenario)
+    with open(partial_path, "a", encoding="utf-8") as file:
+      file.write(json.dumps(result, ensure_ascii=False) + "\n")
+    logger.debug("Appended partial result to {}", partial_path)
     return partial_path
 
   def load_partial_results(self, run_id: str, scenario: str) -> list[dict[str, Any]]:
-    """Load previously saved scenario-scoped partial results."""
-    partial_path = self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
-    if not partial_path.exists():
+    """이어하기용 부분 결과를 읽어온다(JSONL, 구형 `.json` 자동 호환).
+
+    깨진 줄은 버리고 경고만 남긴다 — 크래시로 마지막 줄이 잘린 경우가 정상 경로라
+    여기서 예외를 던지면 이어하기가 통째로 막힌다.
+    """
+    partial_path = self.partial_results_path(run_id, scenario)
+    if partial_path.exists():
+      results: list[dict[str, Any]] = []
+      with open(partial_path, "r", encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+          line = line.strip()
+          if not line:
+            continue
+          try:
+            results.append(json.loads(line))
+          except json.JSONDecodeError:
+            logger.warning(
+              "부분 결과의 손상된 줄을 건너뜁니다: {}:{} (해당 질의는 재시도됩니다)",
+              partial_path,
+              line_number,
+            )
+      return results
+
+    # 구형 런(JSONL 이전)에서 이어하기/리플레이를 걸 수 있으므로 단일 JSON 도 읽는다.
+    legacy_path = self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
+    if not legacy_path.exists():
       return []
-    with open(partial_path, "r", encoding="utf-8") as file:
+    with open(legacy_path, "r", encoding="utf-8") as file:
       payload = json.load(file)
     return list(payload.get("results", []))
 
   def partial_results_path(self, run_id: str, scenario: str) -> Path:
     """Return the path of the partial result artifact."""
-    return self._run_dir(run_id) / f"{scenario.upper()}_partial.json"
+    return self._run_dir(run_id) / f"{scenario.upper()}_partial.jsonl"
 
   def save_partial_failures(
     self,
