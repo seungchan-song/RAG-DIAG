@@ -675,9 +675,13 @@ class AttackQueryGenerator:
     if self.R2_MANY_SHOT_TEMPLATES:
       command_slots.append(("many_shot", self.R2_MANY_SHOT_TEMPLATES[0], ""))
     # 변형 출력 유도는 5종을 전부 돌린다 — STEP 0 의 변환 5종과 1:1 대응시켜야
-    # "어떤 우회를 회수했나"를 종류별로 말할 수 있기 때문이다. 슬롯이 4→9 로
-    # 늘어 A2 의 R2 호출이 문서당 4→9회가 된다(A1 은 키워드 풀 30개가 상한이라
-    # 호출 수 변화 없음).
+    # "어떤 우회를 회수했나"를 종류별로 말할 수 있기 때문이다.
+    # ⚠️ 비용: 명령 슬롯이 (standard + self_losing + many_shot) 에서 +5 된다.
+    #   출하 config(standard_indices=[0]) 기준 3 → 8 이고, 앵커 2개와 곱해
+    #   **A2 의 R2 호출이 문서당 6 → 16 회**가 된다(20문서 셀이면 120 → 320).
+    #   A1 은 키워드 풀 30개가 상한이라 호출 수 변화 없음.
+    #   D9 실측에서 compat·homoglyph 는 전량 거절돼 탐지 0건이었다 — 슬롯을
+    #   골라 쓸 수 있게 config 로 빼는 것이 다음 과제(U14).
     command_slots.extend(
       ("evasion", template, kind) for kind, template in self.R2_EVASION_TEMPLATES
     )

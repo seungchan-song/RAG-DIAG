@@ -73,7 +73,14 @@ NER_LABEL_MAP: dict[str, str] = {
   "MAJOR": "TMI_OCCUPATION",
   "POSITION": "TMI_OCCUPATION",
   "BIRTHDATE": "DAT",
-  "GENDER": "TMI_HEALTH",
+  # 성별은 건강정보가 아니다. 예전에는 TMI_HEALTH 로 접혀 있어서 리포트가 성별
+  # 탐지를 "건강정보"로 표기했다(개인정보보호법 제23조 민감정보는 건강·성생활·
+  # 사상·정치적 견해 등이고 성별은 여기 들지 않는다). 위험 등급은 어차피 둘 다
+  # context 라 점수는 안 바뀌지만 표기가 틀렸다.
+  # ⚠️ 이 값을 바꿀 때는 eval.py 의 CANONICAL_LABELS·LABEL_ALIASES 를 **같은
+  # 커밋에서** 함께 옮겨야 한다. 한쪽만 바꾸면 벤치마크가 같은 탐지를 오탐+미탐으로
+  # 이중 계산한다(tests/test_pii_tag_labels.py 가 이 정합을 고정한다).
+  "GENDER": "TMI_GENDER",
   # 혈액형은 eval 의 canonical 네임스페이스에 전용 태그가 이미 있다.
   "BLOOD_TYPE": "TMI_BLOOD_TYPE",
   "RELIGION": "TMI_RELIGION",
@@ -117,6 +124,7 @@ LOW_F1_TAGS = {
   "QT_LENGTH",
   "QT_WEIGHT",
   "TMI_BLOOD_TYPE",
+  "TMI_GENDER",
   "TMI_HEALTH",
   "TMI_NATIONALITY",
   "TMI_OCCUPATION",
@@ -271,9 +279,11 @@ class NERDetector:
 
   def _iter_windows(self, text: str) -> list[tuple[str, int]]:
     """
-    512 토큰 한계를 넘는 텍스트를 겹치는 창으로 나눠 (부분문자열, 원문 시작오프셋)로 돌려준다.
+    학습 길이(_NER_WINDOW_TOKENS = 120 토큰)를 넘는 텍스트를 겹치는 창으로 나눠
+    (부분문자열, 원문 시작오프셋)로 돌려준다.
 
-    KPF-BERT 는 절대 위치 임베딩이 512 라 그보다 긴 입력은 처리할 수 없다. 그런데
+    분할 기준이 512(위치 임베딩 한계)가 아니라 120 인 이유는 위 상수 주석 참조 —
+    모델 config 의 max_seq_len 이 120 이라 그보다 길면 절벽이 아니라 연속 붕괴한다. 그런데
     그냥 넘기면 **예외도 안 나고 결과가 통째로 0건**이 된다(2026-08-04 실측:
     590토큰 문서 → 후보 0개, load_status 는 'ready' 유지). 조용히 실패하므로
     "PII 가 없다"와 구분이 안 된다.
@@ -365,7 +375,7 @@ class NERDetector:
     if self.pipeline is None:
       return []
 
-    # 512 토큰을 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
+    # 학습 길이(120토큰)를 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
     # 창이 겹치므로 같은 엔티티가 두 번 나올 수 있어 (스팬, 태그)로 합친다.
     deduped: dict[tuple[int, int, str], dict[str, Any]] = {}
     for window_text, window_offset in self._iter_windows(text):

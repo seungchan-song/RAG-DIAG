@@ -104,6 +104,9 @@ CANONICAL_LABELS = (
   "TMI_EDUCATION",
   "TMI_EMAIL",
   "TMI_FAMILY",
+  # 성별 전용 태그. 예전에는 TMI_HEALTH 로 접혀 있었는데 성별은 건강정보가 아니다
+  # (step3_ner.py:NER_LABEL_MAP 의 GENDER 주석 참조). 둘을 함께 옮겼다.
+  "TMI_GENDER",
   "TMI_HEALTH",
   "TMI_HOBBY",
   "TMI_IDEOLOGY",
@@ -129,7 +132,7 @@ LABEL_ALIASES = {
   "CITY": "LOC",
   "DEPARTMENT": "ORG",
   "DRIVER_LICENSE": "QT_DRIVER",
-  "GENDER": "TMI_HEALTH",
+  "GENDER": "TMI_GENDER",
   "HEIGHT": "QT_LENGTH",
   "MAJOR": "TMI_OCCUPATION",
   "NICKNAME": "PER",

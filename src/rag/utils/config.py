@@ -12,6 +12,7 @@ YAML 설정 파일과 .env 환경변수를 통합적으로 관리하는 모듈�
 
 import copy
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,53 @@ def load_env() -> None:
       f".env 파일을 찾을 수 없습니다: {env_path}. "
       f".env.example을 복사하여 .env를 만들어주세요."
     )
+
+
+# `${VAR}` 형태만 정확히 인식한다. `$` 를 무차별 확장하면 system_prompt 같은
+# 자유 텍스트가 조용히 깨질 수 있어 범위를 좁게 잡는다.
+_ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env_placeholders(value: Any) -> Any:
+  """설정값 안의 `${VAR}` 를 환경변수 값으로 치환한 사본을 돌려준다.
+
+  왜 필요한가 — `config/default.yaml` 은 예전부터
+  `api_key: "${ANYTHINGLLM_API_KEY}"` 처럼 쓰라고 안내해 왔는데 **치환 로직이
+  아예 없었다.** 그대로 두면 리터럴 문자열 `${ANYTHINGLLM_API_KEY}` 가 Bearer
+  토큰으로 전송돼 401 만 보고 원인을 못 찾는다(외부 RAG 실증에서 바로 밟을 지뢰).
+  동시에 비밀값을 yaml 에 적지 않아도 되는 정석 경로가 열린다.
+
+  환경변수가 없으면 **빈 문자열로 치환하고 경고**한다. 자리표시자를 그대로 두면
+  가짜 토큰을 실제로 보내게 되는데, 빈 값이면 호출부가 헤더를 아예 안 붙여
+  (`adapters/rest.py`) 실패 원인이 로그에 남는다.
+
+  Args:
+    value: 설정 딕셔너리/리스트/문자열/스칼라. 원본은 변경하지 않는다.
+
+  Returns:
+    Any: 치환된 새 객체. 문자열이 아닌 값은 그대로 통과한다.
+  """
+  if isinstance(value, dict):
+    return {key: expand_env_placeholders(item) for key, item in value.items()}
+  if isinstance(value, list):
+    return [expand_env_placeholders(item) for item in value]
+  if not isinstance(value, str) or "${" not in value:
+    return value
+
+  def _replace(match: "re.Match[str]") -> str:
+    name = match.group(1)
+    resolved = os.getenv(name)
+    if resolved is None:
+      logger.warning(
+        "설정의 ${{{}}} 를 채울 환경변수가 없습니다. 빈 값으로 둡니다 — "
+        ".env 에 {}=... 을 추가하세요.",
+        name,
+        name,
+      )
+      return ""
+    return resolved
+
+  return _ENV_PLACEHOLDER.sub(_replace, value)
 
 
 def _deep_merge_dicts(
@@ -131,6 +179,10 @@ def load_config(
 
   profile_overrides = profiles.get(profile, {})
   config = _deep_merge_dicts(raw_config, profile_overrides)
+  # `${VAR}` 치환은 프로파일 병합 **이후**에 한다 — 프로파일이 덮어쓴 값에도
+  # 동일하게 적용돼야 하기 때문. load_env() 가 CLI 진입점에서 먼저 돌아
+  # .env 값이 os.environ 에 올라와 있는 상태를 전제한다.
+  config = expand_env_placeholders(config)
   config["profile_name"] = profile
   config["retrieval_config"] = build_retrieval_config(config)
 

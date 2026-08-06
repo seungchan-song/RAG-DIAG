@@ -109,7 +109,9 @@ class RegexDetector:
   """
   정규식 기반 PII 탐지기입니다.
 
-  15개의 한국형 PII 패턴을 사용하여 텍스트에서 개인정보를 탐지합니다.
+  내장 국가표준 패턴 11종에 배포처가 선언한 조직별 ID 패턴
+  (`pii.custom_id_patterns`)을 더해 텍스트에서 개인정보를 탐지합니다.
+  ⚠️ `detect()` 는 `self.PATTERNS`(내장)가 아니라 `self.patterns`(내장+조직별)를 순회한다.
   탐지된 각 항목은 PIIMatch 객체로 반환됩니다.
   """
 
@@ -121,25 +123,33 @@ class RegexDetector:
     PIIPattern(
       tag="QT_MOBILE",
       pattern=re.compile(
-        r"01[016789]"          # 010, 011, 016, 017, 018, 019
-        r"[-.\s]?"             # 구분자: 하이픈, 점, 공백 (선택)
-        r"\d{3,4}"             # 중간 3~4자리
-        r"[-.\s]?"             # 구분자 (선택)
-        r"\d{4}"               # 끝 4자리
+        ASCII_LEFT_BOUNDARY
+        + r"01[016789]"        # 010, 011, 016, 017, 018, 019
+        + r"[-.\s]?"           # 구분자: 하이픈, 점, 공백 (선택)
+        + r"\d{3,4}"           # 중간 3~4자리
+        + r"[-.\s]?"           # 구분자 (선택)
+        + r"\d{4}"             # 끝 4자리
+        + ASCII_RIGHT_BOUNDARY
       ),
       description="휴대전화번호 (010-XXXX-XXXX 등)",
     ),
 
     # === 2. 일반전화번호 ===
     # 02-1234-5678, 031-123-4567, 042-123-4567 등
+    # ⚠️ 경계가 없으면 이 패턴이 **주민등록번호 앞부분을 삼킨다.**
+    # `051109-3345671`(2002~2006년생) 에서 `051109-3345` 를 일반전화로 매칭해,
+    # 겹침 해소에서 온전한 QT_RRN 을 밀어내고 고유식별 → 연락처로 등급을 낮췄다.
+    # 경계를 붙이면 매치가 숫자 중간에서 끝날 수 없어 이 조합 자체가 성립하지 않는다.
     PIIPattern(
       tag="QT_PHONE",
       pattern=re.compile(
-        r"0[2-6][1-5]?"        # 지역번호 (02, 031, 042 등)
-        r"[-.\s]?"
-        r"\d{3,4}"
-        r"[-.\s]?"
-        r"\d{4}"
+        ASCII_LEFT_BOUNDARY
+        + r"0[2-6][1-5]?"      # 지역번호 (02, 031, 042 등)
+        + r"[-.\s]?"
+        + r"\d{3,4}"
+        + r"[-.\s]?"
+        + r"\d{4}"
+        + ASCII_RIGHT_BOUNDARY
       ),
       description="일반전화번호 (02-XXXX-XXXX, 031-XXX-XXXX 등)",
     ),
@@ -160,16 +170,20 @@ class RegexDetector:
     # === 4. 신용카드번호 ===
     # 4532-1234-5678-9012, 4532123456789012 등 (16자리)
     # needs_validation=True → STEP 2에서 Luhn 알고리즘으로 검증
+    # 경계가 없으면 20자리 계좌번호 같은 긴 숫자열의 **앞 16자리만** 카드번호로
+    # 집어가 Luhn 탈락 → rejection 채널을 오염시킨다.
     PIIPattern(
       tag="QT_CARD",
       pattern=re.compile(
-        r"\d{4}"               # 앞 4자리
-        r"[-.\s]?"
-        r"\d{4}"
-        r"[-.\s]?"
-        r"\d{4}"
-        r"[-.\s]?"
-        r"\d{4}"               # 끝 4자리
+        ASCII_LEFT_BOUNDARY
+        + r"\d{4}"             # 앞 4자리
+        + r"[-.\s]?"
+        + r"\d{4}"
+        + r"[-.\s]?"
+        + r"\d{4}"
+        + r"[-.\s]?"
+        + r"\d{4}"             # 끝 4자리
+        + ASCII_RIGHT_BOUNDARY
       ),
       description="신용카드번호 (16자리)",
       needs_validation=True,
@@ -182,12 +196,14 @@ class RegexDetector:
     PIIPattern(
       tag="QT_RRN",
       pattern=re.compile(
-        r"\d{2}"               # 출생년도 뒤 2자리 (90)
-        r"[01]\d"              # 출생월 (01~12)
-        r"[0-3]\d"             # 출생일 (01~31)
-        r"[-.\s]?"             # 구분자
-        r"[1-8]"               # 성별/외국인 코드 (1~8)
-        r"\d{6}"               # 나머지 6자리
+        ASCII_LEFT_BOUNDARY
+        + r"\d{2}"             # 출생년도 뒤 2자리 (90)
+        + r"[01]\d"            # 출생월 (01~12)
+        + r"[0-3]\d"           # 출생일 (01~31)
+        + r"[-.\s]?"           # 구분자
+        + r"[1-8]"             # 성별/외국인 코드 (1~8)
+        + r"\d{6}"             # 나머지 6자리
+        + ASCII_RIGHT_BOUNDARY
       ),
       description="주민등록번호 또는 외국인등록번호 (13자리)",
       needs_validation=True,
