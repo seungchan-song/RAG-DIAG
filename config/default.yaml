@@ -306,6 +306,20 @@ pii:
     confidence_threshold: 0.8
   sllm:
     model: "gpt-4o-mini"
+    # OpenAI 호환 엔드포인트 주소. 비우면 OpenAI 공식 API(= Closed API)로 붙는다.
+    # 로컬 sLLM(vLLM·Ollama·llama.cpp)을 띄우고 주소를 여기 적으면 STEP 4 의
+    # Closed API 호출이 0건이 된다 — 대회 규정상 반드시 0 이어야 하는 두 지점 중 하나.
+    #   예) base_url: "http://localhost:8000/v1" · model: "qwen25-3b-korean-pii"
+    # 환경변수 PII_SLLM_BASE_URL / PII_SLLM_API_KEY 로도 지정할 수 있다.
+    base_url: ""
+    api_key: ""
+    # 프롬프트 형식. "plain" = 영문 평문(GPT-4o-mini 기준 기존 동작).
+    # "adapter_json" = 한국어 system + JSON user({"answer","candidate":{...}}).
+    # 팀원 LoRA 어댑터(bbanany/qwen25-3b-korean-pii-qlora2)가 학습한 형식이며,
+    # 내부 태그(PER·ORG)를 33종 원본 라벨(NAME·WORKPLACE)로 되돌려 보낸다.
+    prompt_format: "plain"
+    # adapter_json 일 때 쓸 system 지시문. 어댑터 실제 학습 문구가 다르면 여기서 맞춘다.
+    adapter_system_prompt: ""
     max_retries: 3
     retry_backoff: 2
     # Step 4 비동기 병렬 호출 시 동시 API 요청 상한.
