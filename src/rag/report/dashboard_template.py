@@ -622,7 +622,7 @@ const tagKo = t => TAG_KO[t] || t;
 const PAYLOAD_KO = {
   // R2 명령 프롬프트 (q_c)
   standard:"직접 지시", self_losing:"역할 상실 유도", many_shot:"정상 예시 반복 학습",
-  deep_inception:"중첩 상황극",
+  deep_inception:"중첩 상황극", evasion:"변형 표기로 출력 요구",
   // R7 공격 프롬프트 — 2~3세대(core)
   persona_probe:"정체·역할 캐묻기", meta_audit:"내부 감사 사칭", debug_mode:"디버그 모드 사칭",
   translation_bypass:"번역 요청으로 우회", policy_probe:"운영 규칙 캐묻기",

@@ -210,9 +210,14 @@ class TestAttackQueryGenerator:
     assert "standard" in payload_types
     assert "self_losing" in payload_types
     assert "many_shot" in payload_types
+    # 변형 출력 유도(STEP 0 실증용) 슬롯도 항상 함께 나간다.
+    assert "evasion" in payload_types
     # query_id 에 payload_type 이 인코딩되어야 한다
     assert all(
-      any(pt in q["query_id"] for pt in ("standard", "self_losing", "many_shot"))
+      any(
+        pt in q["query_id"]
+        for pt in ("standard", "self_losing", "many_shot", "evasion")
+      )
       for q in queries
     )
 
@@ -232,10 +237,10 @@ class TestAttackQueryGenerator:
     # 모든 쿼리는 복합형이어야 한다 (anchor_only 분기 제거됨)
     assert all(q["query_type"] == "compound" for q in queries)
     assert all(q["command"] != "" for q in queries)
-    # standard 슬롯 2개 + self_losing[0] + many_shot[0] = 슬롯 4개이므로
-    # 활성 앵커 2개와 직교 결합 시 세 변형이 모두 등장한다.
+    # standard 슬롯 2개 + self_losing[0] + many_shot[0] + evasion 5종 = 슬롯 9개이므로
+    # 활성 앵커 2개와 직교 결합 시 네 변형이 모두 등장한다.
     payload_types = {q["payload_type"] for q in queries}
-    assert payload_types == {"standard", "self_losing", "many_shot"}
+    assert payload_types == {"standard", "self_losing", "many_shot", "evasion"}
 
   def test_r2_a2_anchor_pool_round_robins_diverse_pii_categories(self):
     """A2(Aware Observer) 의 R2 anchor 풀이 다양한 PII 카테고리를 라운드로빈 한다.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 
@@ -591,6 +592,78 @@ class TestSLLMVerifierRuntime:
     assert len(verified) == 1
     assert status["mode"] == "mock_conservative"
     assert status["reason"] == "mock_conservative"
+
+
+class TestSLLMLocalEndpoint:
+  """STEP 4 를 로컬 sLLM(OpenAI 호환 엔드포인트)으로 돌리는 경로."""
+
+  def _config(self, **sllm_overrides) -> dict:
+    config = _build_pii_config()
+    config["pii"]["sllm"].update(sllm_overrides)
+    return config
+
+  def test_base_url_disables_mock_and_reaches_client(self, monkeypatch) -> None:
+    """base_url 이 있으면 API 키가 없어도 mock 으로 빠지지 않고 실제로 호출한다."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("PII_SLLM_BASE_URL", raising=False)
+
+    verifier = SLLMVerifier(self._config(base_url="http://localhost:8000/v1"))
+
+    assert verifier.mock_mode is False
+    assert verifier.mode == "api"
+    kwargs = verifier._client_kwargs()
+    assert kwargs["base_url"] == "http://localhost:8000/v1"
+    # 로컬 서버는 키를 안 보지만 SDK 가 빈 키를 거부하므로 자리채움이 들어가야 한다.
+    assert kwargs["api_key"] == "EMPTY"
+
+    status = verifier.get_runtime_status()
+    assert status["is_closed_api"] is False
+    assert status["endpoint"] == "http://localhost:8000/v1"
+
+  def test_openai_default_is_flagged_as_closed_api(self, monkeypatch) -> None:
+    """base_url 없이 OpenAI 로 붙으면 리포트가 Closed API 로 표시할 수 있어야 한다."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("PII_SLLM_BASE_URL", raising=False)
+
+    status = SLLMVerifier(self._config()).get_runtime_status()
+
+    assert status["is_closed_api"] is True
+    assert status["endpoint"] == "openai-default"
+    assert SLLMVerifier(self._config())._client_kwargs() == {}
+
+  def test_plain_prompt_format_is_unchanged(self) -> None:
+    """기본 형식은 기존 영문 평문 그대로여야 한다(무회귀)."""
+    messages = SLLMVerifier(self._config())._build_messages(
+      "홍길동", "PER", "직원 홍길동이 방문했다."
+    )
+
+    assert len(messages) == 2
+    assert "personal information" in messages[0]["content"]
+    assert 'Entity: "홍길동"' in messages[1]["content"]
+    assert "NER tag: PER" in messages[1]["content"]
+
+  def test_adapter_json_format_translates_tag_back(self) -> None:
+    """어댑터 형식은 내부 태그를 33종 원본 라벨로 되돌려 JSON 으로 보낸다."""
+    verifier = SLLMVerifier(self._config(prompt_format="adapter_json"))
+    context = "직원 홍길동이 방문했다."
+    messages = verifier._build_messages("홍길동", "PER", context)
+    payload = json.loads(messages[1]["content"])
+
+    assert messages[0]["content"] == verifier.ADAPTER_SYSTEM_PROMPT
+    assert payload["answer"] == context
+    # PER 은 어댑터가 학습한 NAME 으로 되돌아가야 한다.
+    assert payload["candidate"]["tag"] == "NAME"
+    assert payload["candidate"]["text"] == "홍길동"
+    assert context[payload["candidate"]["start"] : payload["candidate"]["end"]] == "홍길동"
+
+  def test_org_falls_back_to_trained_label(self) -> None:
+    """ORG 는 DEPARTMENT/WORKPLACE/SCHOOL 합본이라 학습된 WORKPLACE 로 보낸다."""
+    verifier = SLLMVerifier(self._config(prompt_format="adapter_json"))
+    payload = json.loads(
+      verifier._build_messages("보안관제팀", "ORG", "소속은 보안관제팀이다.")[1]["content"]
+    )
+
+    assert payload["candidate"]["tag"] == "WORKPLACE"
 
 
 class TestPIIHardening:

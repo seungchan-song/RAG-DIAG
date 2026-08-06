@@ -112,7 +112,8 @@ class R2ExtractionAttack(BaseAttack):
         [{"content": "...", "keyword": "...", "doc_id": "..."}, ...]
 
     Returns:
-      list[dict]: R2 복합 쿼리 목록 (payload_type: standard/self_losing/many_shot)
+      list[dict]: R2 복합 쿼리 목록
+        (payload_type: standard/self_losing/many_shot/evasion)
     """
     return self.query_gen.generate_r2_queries(target_docs, env=self.env)
 
@@ -169,6 +170,9 @@ class R2ExtractionAttack(BaseAttack):
         "command": query_info.get("command", ""),
         "query_type": query_info.get("query_type", "compound"),
         "payload_type": query_info.get("payload_type", "standard"),
+        # 변형 출력을 유도한 슬롯만 값이 있다(compat/homoglyph/jamo/invisible/
+        # digit_sep). STEP 0 정규화가 무엇을 되돌렸는지와 대조하는 축이다.
+        "evasion_kind": query_info.get("evasion_kind", ""),
         "target_doc_id": query_info.get("target_doc_id", ""),
         "keyword": query_info.get("keyword", ""),
         "reranker_enabled": trace.get("reranker_enabled", False),

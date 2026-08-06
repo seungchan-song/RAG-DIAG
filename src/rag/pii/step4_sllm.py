@@ -16,13 +16,42 @@ GPT-4o-mini 등 외부 sLLM에 문맥과 함께 보내 PII 여부를 최종 판�
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from typing import Any
 
 from loguru import logger
 
-from rag.pii.step3_ner import NERMatch
+from rag.pii.step3_ner import NER_LABEL_MAP, NERMatch
+
+# === 내부 태그 → 33종 원본 라벨 역번역표 =================================
+# STEP 3 은 모델 라벨(NAME·WORKPLACE…)을 내부 태그(PER·ORG…)로 접어서 넘긴다.
+# 로컬 sLLM 어댑터는 33종 원본 라벨로 학습됐으므로 되돌려서 보내야 한다.
+# NER_LABEL_MAP 을 뒤집되(먼저 선언된 라벨이 이김) 아래 예외만 손으로 잡는다.
+_ADAPTER_TAG_OVERRIDES: dict[str, str] = {
+  # ORG 는 DEPARTMENT/WORKPLACE/SCHOOL 3개가 합쳐진 태그라 복원이 불가능하다.
+  # 어댑터가 학습한 것은 WORKPLACE 뿐이므로 그쪽으로 보낸다(정보 손실 감수).
+  # DEPARTMENT·SCHOOL 학습 추가는 팀원에게 요청해 둔 상태다.
+  "ORG": "WORKPLACE",
+}
+
+
+def _build_adapter_tag_map() -> dict[str, str]:
+  """내부 단축 태그 → 어댑터 학습 라벨 매핑을 만든다.
+
+  Returns:
+    dict[str, str]: {"PER": "NAME", "ORG": "WORKPLACE", ...}. 대응 라벨이
+      없는 태그는 아예 담기지 않으며, 호출부가 내부 태그를 그대로 쓴다.
+  """
+  reverse: dict[str, str] = {}
+  for source_label, internal_tag in NER_LABEL_MAP.items():
+    reverse.setdefault(internal_tag, source_label)
+  reverse.update(_ADAPTER_TAG_OVERRIDES)
+  return reverse
+
+
+ADAPTER_TAG_MAP: dict[str, str] = _build_adapter_tag_map()
 
 
 class SLLMVerifier:
@@ -39,6 +68,14 @@ Reply with exactly one token:
 - NOT_PII
 """
 
+  # 로컬 어댑터(한국어 system + JSON user)용 기본 지시문.
+  # 어댑터의 실제 학습 지시문과 다를 수 있어 `pii.sllm.adapter_system_prompt`
+  # 로 덮어쓸 수 있게 열어 둔다.
+  ADAPTER_SYSTEM_PROMPT = (
+    "당신은 개인정보 판별기입니다. 주어진 후보가 개인정보인지 판단해 "
+    "PII 또는 NOT_PII 중 하나만 출력하세요."
+  )
+
   def __init__(self, config: dict[str, Any]) -> None:
     """설정 딕셔너리에서 sLLM 옵션을 읽어 검증기를 초기화한다.
 
@@ -52,6 +89,11 @@ Reply with exactly one token:
       - ``pii.sllm.retry_backoff``: 지수 백오프 베이스(초)
       - ``pii.sllm.concurrency``: 동시 API 호출 상한
         (rate-limit 보호용; 기본 8)
+      - ``pii.sllm.base_url``: OpenAI 호환 엔드포인트 주소. 지정하면 로컬
+        sLLM(vLLM·Ollama 등)으로 붙고 Closed API 호출이 0건이 된다.
+        환경변수 ``PII_SLLM_BASE_URL`` 로도 지정할 수 있다.
+      - ``pii.sllm.prompt_format``: ``plain``(기본, 영문 평문) 또는
+        ``adapter_json``(한국어 system + JSON user, 팀원 로컬 어댑터 형식)
     """
     pii_config = config.get("pii", {})
     runtime_config = pii_config.get("runtime", {})
@@ -63,7 +105,21 @@ Reply with exactly one token:
     self.retry_backoff = int(sllm_config.get("retry_backoff", 2))
     # 동시 호출 수 상한 (1 이상 정수). 너무 크면 rate-limit, 너무 작으면 직렬화.
     self.concurrency = max(1, int(sllm_config.get("concurrency", 8)))
-    self.mock_mode = self.enabled and not bool(os.getenv("OPENAI_API_KEY"))
+    self.base_url = (
+      os.getenv("PII_SLLM_BASE_URL") or sllm_config.get("base_url") or ""
+    ).strip()
+    # 로컬 서버는 키를 검사하지 않지만 OpenAI SDK 가 빈 키를 거부하므로 자리채움을 준다.
+    self.api_key = (
+      os.getenv("PII_SLLM_API_KEY") or sllm_config.get("api_key") or ""
+    ).strip()
+    self.prompt_format = sllm_config.get("prompt_format", "plain")
+    self.adapter_system_prompt = (
+      sllm_config.get("adapter_system_prompt") or self.ADAPTER_SYSTEM_PROMPT
+    )
+    # base_url 이 있으면 OPENAI_API_KEY 없이도 실제 호출이 가능하므로 mock 으로 빠지지 않는다.
+    self.mock_mode = (
+      self.enabled and not self.base_url and not bool(os.getenv("OPENAI_API_KEY"))
+    )
     self.error_message = ""
 
     if not self.enabled:
@@ -72,6 +128,80 @@ Reply with exactly one token:
       self.mode = "mock_conservative"
     else:
       self.mode = "api"
+
+  # ---------------------------------------------------------------------
+  # 클라이언트 · 프롬프트 구성 (OpenAI / 로컬 sLLM 공통 경로)
+  # ---------------------------------------------------------------------
+
+  def _client_kwargs(self) -> dict[str, str]:
+    """OpenAI/AsyncOpenAI 생성자에 넘길 인자를 만든다.
+
+    Returns:
+      dict[str, str]: base_url·api_key 중 설정된 것만 담긴 딕셔너리.
+        비어 있으면 SDK 기본값(OpenAI 공식 엔드포인트 + 환경변수 키)을 쓴다.
+    """
+    kwargs: dict[str, str] = {}
+    if self.base_url:
+      kwargs["base_url"] = self.base_url
+      # 로컬 서버는 키를 검사하지 않지만 SDK 가 빈 키에서 예외를 던진다.
+      kwargs["api_key"] = self.api_key or "EMPTY"
+    elif self.api_key:
+      kwargs["api_key"] = self.api_key
+    return kwargs
+
+  def _build_messages(
+    self,
+    entity_text: str,
+    tag: str,
+    context: str,
+  ) -> list[dict[str, str]]:
+    """prompt_format 에 맞는 chat messages 를 만든다.
+
+    Args:
+      entity_text: 검증할 개체 문자열
+      tag: 내부 단축 태그(PER·ORG 등)
+      context: 개체 주변 문맥
+
+    Returns:
+      list[dict[str, str]]: chat.completions 에 그대로 넘길 messages.
+    """
+    if self.prompt_format != "adapter_json":
+      return [
+        {
+          "role": "system",
+          "content": "You are validating whether a span is personal information.",
+        },
+        {
+          "role": "user",
+          "content": self.VERIFICATION_PROMPT.format(
+            entity=entity_text,
+            tag=tag,
+            context=context,
+          ),
+        },
+      ]
+
+    # ponytail: 문맥 내 첫 출현 위치로 오프셋을 잡는다. 같은 값이 문맥에 두 번
+    # 나오면 앞쪽을 가리키지만, 어댑터는 text/tag 위주로 판단하므로 실익이 없다.
+    # 정확한 오프셋이 필요해지면 NERMatch 좌표를 여기까지 내려보내면 된다.
+    offset = context.find(entity_text)
+    payload = {
+      "answer": context,
+      "candidate": {
+        "text": entity_text,
+        # 어댑터는 33종 원본 라벨로 학습됐으므로 내부 태그를 되돌려 보낸다.
+        "tag": ADAPTER_TAG_MAP.get(tag, tag),
+        "start": offset,
+        "end": offset + len(entity_text) if offset >= 0 else -1,
+      },
+    }
+    return [
+      {
+        "role": "system",
+        "content": self.adapter_system_prompt,
+      },
+      {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
 
   # ---------------------------------------------------------------------
   # 외부 동기 인터페이스 (기존 호출자와의 호환을 보장한다)
@@ -151,7 +281,7 @@ Reply with exactly one token:
     """병렬 API 호출 코어. 단일 AsyncOpenAI 클라이언트를 공유한다."""
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(**self._client_kwargs())
     semaphore = asyncio.Semaphore(self.concurrency)
 
     try:
@@ -209,23 +339,13 @@ Reply with exactly one token:
       - 매 시도 사이에 retry_backoff ** attempt 초 대기 (asyncio.sleep)
       - 모두 실패하면 보수적으로 True(PII 인정) 반환
     """
-    prompt = self.VERIFICATION_PROMPT.format(
-      entity=entity_text,
-      tag=tag,
-      context=context,
-    )
+    messages = self._build_messages(entity_text, tag, context)
 
     for attempt in range(self.max_retries):
       try:
         response = await client.chat.completions.create(
           model=self.model,
-          messages=[
-            {
-              "role": "system",
-              "content": "You are validating whether a span is personal information.",
-            },
-            {"role": "user", "content": prompt},
-          ],
+          messages=messages,
           temperature=0.0,
           max_tokens=10,
         )
@@ -268,7 +388,7 @@ Reply with exactly one token:
     """단건 verify() 용. 임시 AsyncOpenAI 클라이언트를 1회만 사용한다."""
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(**self._client_kwargs())
     try:
       return await self._call_api_async(client, entity_text, tag, context)
     finally:
@@ -307,24 +427,14 @@ Reply with exactly one token:
     """동기 OpenAI 클라이언트를 사용한 단건 검증. 폴백 경로에서만 호출된다."""
     from openai import OpenAI
 
-    client = OpenAI()
-    prompt = self.VERIFICATION_PROMPT.format(
-      entity=entity_text,
-      tag=tag,
-      context=context,
-    )
+    client = OpenAI(**self._client_kwargs())
+    messages = self._build_messages(entity_text, tag, context)
 
     for attempt in range(self.max_retries):
       try:
         response = client.chat.completions.create(
           model=self.model,
-          messages=[
-            {
-              "role": "system",
-              "content": "You are validating whether a span is personal information.",
-            },
-            {"role": "user", "content": prompt},
-          ],
+          messages=messages,
           temperature=0.0,
           max_tokens=10,
         )
@@ -384,6 +494,10 @@ Reply with exactly one token:
       "status": status,
       "reason": reason,
       "model": self.model,
+      # 대회 규정(Closed API 0건) 증빙용 — 리포트가 이 값으로 로컬/외부를 구분한다.
+      "endpoint": self.base_url or "openai-default",
+      "is_closed_api": self.mode == "api" and not self.base_url,
+      "prompt_format": self.prompt_format,
       "concurrency": self.concurrency,
       "candidate_count": candidate_count,
       "verified_count": verified_count,
