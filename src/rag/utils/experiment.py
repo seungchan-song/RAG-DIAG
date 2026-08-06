@@ -34,6 +34,39 @@ SECRET_FIELD_TOKENS = (
   "secret",
   "token",
 )
+SECRET_PLACEHOLDER = "<redacted>"
+
+
+def redact_secrets(value: Any) -> Any:
+  """설정 트리에서 비밀값 필드만 자리표시자로 바꾼 사본을 돌려준다.
+
+  `_redact_diff_value` 가 config diff 렌더링에만 쓰던 정책(SECRET_FIELD_TOKENS)을
+  **밖으로 나가는 산출물에도** 적용하기 위한 공용 헬퍼다. 실제 유출 경로는
+  HTML 리포트였다 — `report/generator.py` 가 `snapshot.config.adapter` 를 통째로
+  임베드해서, 외부 RAG 를 진단하면 대상의 Bearer 토큰이 심사위원에게 건네는
+  `report_dashboard.html` 안에 평문으로 실렸다.
+
+  키 이름만 보고 판단하므로 구조는 그대로 보존된다(대시보드가 읽는
+  `adapter.type`·`capabilities`·`generator` 는 영향 없음).
+
+  Args:
+    value: 설정 딕셔너리/리스트/스칼라. 원본은 변경하지 않는다.
+
+  Returns:
+    Any: 비밀 필드가 `<redacted>` 로 치환된 새 객체.
+  """
+  if isinstance(value, dict):
+    redacted: dict[str, Any] = {}
+    for key, item in value.items():
+      lowered = str(key).lower()
+      if any(token in lowered for token in SECRET_FIELD_TOKENS):
+        redacted[str(key)] = SECRET_PLACEHOLDER
+      else:
+        redacted[str(key)] = redact_secrets(item)
+    return redacted
+  if isinstance(value, list):
+    return [redact_secrets(item) for item in value]
+  return value
 
 
 class ExperimentManager:
