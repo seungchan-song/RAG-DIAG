@@ -65,21 +65,38 @@ def _span_iou(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
   union = (a_end - a_start) + (b_end - b_start) - intersection
   return intersection / union if union > 0 else 0.0
 
+# ⚠️ 여기 없는 태그를 NER_LABEL_MAP 이 만들어내면 normalize_label 이
+# LabelNormalizationError 로 벤치마크 전체를 실패시킨다. step3_ner.py 의
+# NER_LABEL_MAP 우변 · step1_regex.py 의 tag 와 항상 같이 움직여야 한다.
 CANONICAL_LABELS = (
   "DAT",
+  "EMPLOYEE_ID",
   "LOC",
+  "MEMBER_ID",
   "ORG",
+  "PARTICIPANT_ID",
   "PER",
+  "QT_ACCOUNT",
   "QT_ADDR",
   "QT_AGE",
   "QT_ARN",
   "QT_CARD",
   "QT_CAR",
+  "QT_DRIVER",
+  "QT_GRADE",
   "QT_IP",
-  "QT_MOBILE",
+  "QT_LENGTH",
+  # ⚠️ QT_MOBILE 은 canonical 이 아니다 — 아래 LABEL_ALIASES 에서 QT_PHONE 으로 접는다.
+  #    개인정보 33종 표준이 휴대전화와 일반전화를 PHONE 하나로 통합했기 때문이다.
+  #    정규식(step1_regex)은 둘을 계속 구분하지만, 벤치마크 gold 에는 MOBILE 라벨이
+  #    아예 없어 그대로 채점하면 **맞게 탐지한 건이 오탐+미탐으로 이중 계산**된다
+  #    (실측 2026-08-03: QT_MOBILE fp=210 / QT_PHONE fn=210, 같은 210건).
   "QT_PASSPORT",
   "QT_PHONE",
   "QT_RRN",
+  "QT_WEIGHT",
+  "USER_ID",
+  "ZIPCODE",
   "TMI_BIRTH",
   "TMI_BLOOD_TYPE",
   "TMI_BODY",
@@ -99,9 +116,31 @@ CANONICAL_LABELS = (
   "TMI_RELATION",
   "TMI_RELIGION",
   "TMI_SEXUAL",
+  "TMI_SITE",
 )
 
 LABEL_ALIASES = {
+  # --- 자체 데이터셋(개인정보 33종) 라벨 → 내부 canonical 태그 ---
+  # NER_LABEL_MAP 과 같은 대응이어야 벤치마크 채점이 모델 출력과 맞물린다.
+  "ACCOUNT_NUMBER": "QT_ACCOUNT",
+  "ALIEN_NUMBER": "QT_ARN",
+  "BIRTHDATE": "DAT",
+  "CARD_NUMBER": "QT_CARD",
+  "CITY": "LOC",
+  "DEPARTMENT": "ORG",
+  "DRIVER_LICENSE": "QT_DRIVER",
+  "GENDER": "TMI_HEALTH",
+  "HEIGHT": "QT_LENGTH",
+  "MAJOR": "TMI_OCCUPATION",
+  "NICKNAME": "PER",
+  "PASSPORTNUM": "QT_PASSPORT",
+  "POSITION": "TMI_OCCUPATION",
+  "SCHOOL": "ORG",
+  "URL": "TMI_SITE",
+  "VEHICLE_NUMBER": "QT_CAR",
+  "WEIGHT": "QT_WEIGHT",
+  "WORKPLACE": "ORG",
+  # --- 기존 별칭 ---
   "ADDRESS": "QT_ADDR",
   "ADDR": "QT_ADDR",
   "AGE": "QT_AGE",
@@ -126,8 +165,9 @@ LABEL_ALIASES = {
   "IP_ADDRESS": "QT_IP",
   "LOCATION": "LOC",
   "MARRIAGE": "TMI_MARRIAGE",
-  "MOBILE": "QT_MOBILE",
-  "MOBILE_PHONE": "QT_MOBILE",
+  "MOBILE": "QT_PHONE",
+  "MOBILE_PHONE": "QT_PHONE",
+  "QT_MOBILE": "QT_PHONE",
   "NAME": "PER",
   "NATIONALITY": "TMI_NATIONALITY",
   "OCCUPATION": "TMI_OCCUPATION",
@@ -331,7 +371,7 @@ class PIIBenchmarkRunner:
     # canonical 값이 다를 때 부분일치(경계 어긋남)를 TP 로 인정하는 IoU 임계값.
     # 채점 관례값(0.5)이며, 태그별 탐지 임계값이 아니라 모델과 무관한 매칭 규칙이다.
     self.match_iou_threshold = float(eval_config.get("match_iou_threshold", 0.5))
-    self.regex_detector = RegexDetector()
+    self.regex_detector = RegexDetector(self.config)
     self.masker = PIIMasker()
 
   def evaluate(

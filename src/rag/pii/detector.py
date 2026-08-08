@@ -20,7 +20,7 @@ class PIIDetector:
 
   def __init__(self, config: dict[str, Any]) -> None:
     self.normalizer = TextNormalizer(config)
-    self.regex_detector = RegexDetector()
+    self.regex_detector = RegexDetector(config)
     self.checksum_validator = ChecksumValidator()
     self.ner_detector = NERDetector(config)
     self.sllm_verifier = SLLMVerifier(config)
@@ -51,6 +51,9 @@ class PIIDetector:
     ner_matches = self._remap_to_original(
       self.ner_detector.detect(detect_text), normalization
     )
+    # 정형 태그 후보 중 자릿수가 안 맞는 조각(모델이 스팬을 쪼갠 결과)을 걸러낸다.
+    # 버리지 않고 rejection 채널로 보내 리포트에서 미탐과 구분되게 한다.
+    ner_matches, ner_rejected = self.ner_detector.partition_structural(ner_matches)
     ner_b1, ner_b2 = self.ner_detector.split_by_route(ner_matches)
 
     step4_reason = ""
@@ -74,7 +77,7 @@ class PIIDetector:
     confirmed = self.classifier.classify(regex_validated, ner_b1, sllm_verified)
     summary = self.classifier.to_summary(confirmed)
     findings = self._build_public_findings(confirmed, text)
-    rejected = self._build_public_rejected(regex_rejected, text)
+    rejected = self._build_public_rejected(regex_rejected + ner_rejected, text)
 
     return {
       "confirmed": confirmed,
@@ -96,6 +99,7 @@ class PIIDetector:
           match_count=len(ner_matches),
           route_b1_count=len(ner_b1),
           route_b2_count=len(ner_b2),
+          structure_rejected_count=len(ner_rejected),
         ),
         "step4": self.sllm_verifier.get_runtime_status(
           candidate_count=len(ner_b2),
@@ -199,8 +203,16 @@ class PIIDetector:
     때문이다(예: 한 자리 깨진 실제 번호). 이 목록은 탐지 건수·위험도 집계에는
     포함하지 않으며 리포트 설명용으로만 쓰인다.
     """
+    # 탈락 사유가 STEP 2 체크섬인지 STEP 3 구조 게이트인지 구분한다. 한 이름으로
+    # 뭉뚱그리면 "체크섬이 틀린 값"과 "모델이 쪼갠 조각"이 리포트에서 같아 보인다.
+    stages = {
+      "regex": ("step2_checksum", "structurally_matched_unverified"),
+      "ner": ("step3_structure", "ner_fragment_discarded"),
+    }
+
     items: list[dict[str, Any]] = []
     for item in rejected:
+      stage, status = stages[item.source]
       items.append(
         {
           "tag": item.tag,
@@ -211,8 +223,9 @@ class PIIDetector:
           "end": item.end,
           "reason": item.reason,
           "validator": item.validator,
-          "stage": "step2_checksum",
-          "status": "structurally_matched_unverified",
+          "source": item.source,
+          "stage": stage,
+          "status": status,
           "recovered": self._is_recovered_by_step0(item, original_text),
         }
       )

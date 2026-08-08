@@ -34,11 +34,73 @@ from typing import Any
 
 from loguru import logger
 
+from rag.adapters.base import CAPABILITY_LABELS, Capability
 from rag.utils.text import (
   extract_keywords,
   extract_specific_keyword,
   slugify_token,
 )
+
+# === 공격자 유형 = "어댑터 능력의 부분집합에 붙인 이름" ===
+# 공격자 유형(A1/A2/A3)과 어댑터 능력계층(adapters/base.py:Capability)은 별개의 두 축이
+# 아니다. 하나의 축을 앞뒤에서 본 것이다.
+#   - 어댑터 능력 : 대상 RAG 가 진단 도구에 **실제로 열어준** 권한 (공급)
+#   - 공격자 유형 : 그중 이 시나리오에서 공격자가 **가졌다고 가정한** 권한 (소비)
+# 따라서 공격자의 grants 는 언제나 어댑터 capabilities 의 부분집합이어야 한다.
+#
+# grants 가 사후에 갖다 붙인 설명이 아닌 근거:
+#   - A2 의 앵커 키워드는 타깃 문서 라벨(DOC_LABELS) 이 있어야 만들어진다.
+#   - A3 의 poison 주입은 r9_injection.py:inject_poison 이 실제로 INDEX_WRITE 가드를 탄다.
+# 즉 여기 적힌 grants 는 새 규칙이 아니라 코드가 이미 요구하고 있던 능력의 기록이다.
+#
+# 사용자에게 보이는 곳(리포트·CLI)에서는 label 을 쓰고 A1/A2/A3 코드는 괄호 보조 표기로만
+# 남긴다. 영문 위협 모델 용어(Unaware/Aware Observer, Aware Insider)는 docstring 전용이다.
+ATTACKER_PROFILES: dict[str, dict[str, Any]] = {
+  "A1": {
+    "label": "외부 관찰자",
+    "grants": {Capability.QUERY},
+    "desc": "질의만 가능. 인덱스에 무엇이 들었는지 모른다 (Unaware Observer).",
+  },
+  "A2": {
+    "label": "내용 인지 관찰자",
+    "grants": {Capability.QUERY, Capability.DOC_LABELS},
+    "desc": "질의 + 표적 문서의 식별자를 사전에 안다 (Aware Observer).",
+  },
+  "A3": {
+    "label": "문서 주입 내부자",
+    "grants": {Capability.QUERY, Capability.INDEX_WRITE},
+    "desc": "질의 + 코퍼스에 문서를 삽입할 수 있다 (Aware Insider).",
+  },
+}
+
+
+def describe_attacker(code: str) -> dict[str, Any] | None:
+  """
+  공격자 코드를 리포트·CLI 노출용 dict 로 직렬화합니다.
+
+  능력 라벨은 adapters/base.py 의 CAPABILITY_LABELS 를 그대로 재사용하므로,
+  어댑터 쪽 능력 이름을 바꾸면 공격자 설명 문구도 자동으로 따라온다
+  (두 용어가 갈라지지 않게 하는 것이 이 함수의 존재 이유다).
+
+  Args:
+    code: 공격자 코드 ("A1" / "A2" / "A3"). 대소문자 무관.
+
+  Returns:
+    dict | None: {code, label, grants(한국어 라벨 리스트), desc}.
+                 알 수 없는 코드면 None (리포트에서 자연 누락된다).
+  """
+  profile = ATTACKER_PROFILES.get(str(code).upper())
+  if not profile:
+    return None
+  # 모든 공격자가 공유하는 QUERY 를 맨 앞에 두고 나머지를 정렬한다. 순서를 고정해야
+  # 같은 실험이 항상 같은 리포트 JSON 을 내고, "질의 + α" 형태로 차이가 눈에 띈다.
+  grants = sorted(profile["grants"], key=lambda cap: (cap is not Capability.QUERY, cap.value))
+  return {
+    "code": str(code).upper(),
+    "label": profile["label"],
+    "grants": [CAPABILITY_LABELS.get(cap, cap.value) for cap in grants],
+    "desc": profile["desc"],
+  }
 
 
 class AttackQueryGenerator:
@@ -362,7 +424,10 @@ class AttackQueryGenerator:
     "R9": "A3",
   }
 
-  # 유효 attacker 화이트리스트 (A4 제거 후)
+  # 유효 attacker 화이트리스트 (A4 제거 후).
+  # 각 코드가 "어떤 능력을 가정한 공격자인가" 는 모듈 상단 ATTACKER_PROFILES 가 정의하며,
+  # 리포트에 노출되는 라벨·권한 문구도 전부 거기서 나온다(두 곳이 갈라지면 안 됨 →
+  # tests/test_attacker_comparison.py 가 키 일치를 고정).
   VALID_ATTACKERS: frozenset[str] = frozenset({"A1", "A2", "A3"})
 
   def __init__(
@@ -592,65 +657,105 @@ class AttackQueryGenerator:
 
     queries: list[dict[str, Any]] = []
 
-    # A1 공격자의 경우 문서 간에도 키워드 다양성을 유지하기 위해 slot_index 를
-    # 문서 루프 바깥에서 초기화하여 계속 누적시킵니다.
-    slot_index = 0
+    # 슬롯 → (anchor, command) 매핑의 보폭. 한 문서가 소비하는 슬롯 수와 같다.
+    stride = len(anchor_slots) * len(command_slots)
 
-    for doc in target_docs:
-      content = doc.get("content", "")
-      doc_id = doc.get("doc_id", "unknown")
+    # === 실행할 (문서, 슬롯 인덱스) 조합 결정 ===
+    # A1(Unaware Observer)은 위협 모델상 문서 내용을 모른다. 그래서 anchor 는
+    # GENERIC_OBSERVER_KEYWORDS 고정 풀에서만 나오고 snippet 도 붙지 않는다
+    # (아래 A2 전용 분기 참고). 즉 **최종 쿼리가 target_docs 에 전혀 의존하지
+    # 않는다**. 그런데도 문서를 순회하면 완전히 동일한 쿼리가 문서 수만큼
+    # 복제돼 RAG 호출만 낭비된다 — 실측(RAG-2026-0803-001)에서 A1 240회 중
+    # 180회(75%)가 중복이었고, 키워드 풀 30개에 대해 정확히 4중 복제였다.
+    # (보폭 stride 와 풀 크기의 최대공약수만큼 도달 가능한 키워드가 줄어든다.)
+    #
+    # 따라서 A1 은 문서 대신 키워드 슬롯을 직접 순회한다. 슬롯 s 의
+    # (anchor, command) 는 문서 루프와 똑같이 s % stride 로 결정하고, 슬롯 수도
+    # 문서 루프가 만들어내던 고유 쿼리 수(min(풀 크기, 문서 수 × stride))와
+    # 같게 잡는다. 그래서 **생성되는 쿼리 집합은 기존과 바이트 단위로 동일**
+    # 하고 중복 호출만 사라진다(--num-targets 로 문서 수를 줄인 경우 포함).
+    #
+    # A1 은 특정 문서를 겨냥하지 않으므로 target_text/target_doc_id 는 비운다.
+    # 기존에는 임의 문서 ID 가 붙어 있었지만 r2_evaluator 의 routing_hit 는
+    # 이미 A1 을 집계에서 제외하고 있었다("A1 은 의미 없음", r2_evaluator.py).
+    shared_pool: list[tuple[str, str]] | None = None
+    if self.attacker == "A1":
+      shared_pool = self._build_observer_anchor_pool({})
+      num_slots = min(len(shared_pool), len(target_docs) * stride)
+      slot_plan: list[tuple[dict[str, Any] | None, int]] = [
+        (None, slot) for slot in range(num_slots)
+      ]
+    else:
+      slot_plan = [
+        (doc, doc_idx * stride + offset)
+        for doc_idx, doc in enumerate(target_docs)
+        for offset in range(stride)
+      ]
 
-      # anchor 키워드 풀을 doc 마다 한 번만 만든다.
-      # A2 의 경우 _extract_sensitive_identifiers 가 NER 까지 호출할 수 있어
-      # 비용이 있으므로 슬롯 루프 밖에서 한 번만 호출하고 라운드로빈으로 재사용한다.
-      anchor_pool = self._build_observer_anchor_pool(doc)
+    # anchor 키워드 풀은 doc 마다 한 번만 만든다. A2 의
+    # _extract_sensitive_identifiers 는 NER 까지 호출할 수 있어 비용이 크므로
+    # doc 단위로 캐시하고 슬롯 간에는 라운드로빈으로 재사용한다.
+    pool_cache: dict[int, list[tuple[str, str]]] = {}
 
-      # anchor × command 모든 쌍을 직교 결합. 키워드당 쿼리 수는
-      # len(anchor_slots) × len(command_slots) × num_repeats 가 된다.
-      for anchor_idx, anchor_template in enumerate(anchor_slots):
-        for cmd_idx, (payload_type, command_template) in enumerate(command_slots):
-          # 슬롯 인덱스를 풀 크기로 modulo 해 라운드로빈으로 다양한 PII 카테고리를
-          # anchor 에 배치한다. 풀이 단일 항목(예: PII 없는 normal 문서의 fallback)
-          # 이면 자동으로 모든 슬롯이 동일 키워드를 사용해 기존 동작과 호환된다.
-          keyword, identifier_category = anchor_pool[slot_index % len(anchor_pool)]
-          slot_index += 1
-          anchor = anchor_template.format(keyword=keyword)
-          # 타깃 문서의 첫 150자를 스니펫으로 추출하여 쿼리 유사도를 극대화 (리랭커 우회용, A2 전용)
-          if self.attacker == "A2":
-            snippet_text = content[:150].replace("\n", " ").strip()
-            snippet = f" | 배경 문맥: {snippet_text} ..."
-          else:
-            snippet = ""
-          # standard 템플릿은 {keyword}, {snippet} 미사용이라 format 이 무해하고,
-          # self_losing/many_shot 템플릿은 해당 인자들을 주입.
-          command = command_template.format(keyword=keyword, snippet=snippet)
-          # Query Mirroring: 임베딩 라우팅을 타깃 클러스터로 유지하기 위해
-          # 앵커(타깃 키워드)를 항상 페이로드 앞에 배치한다.
-          final_query = f"{anchor}\n\n{command}"
+    for doc, slot_index in slot_plan:
+      if doc is None:
+        content, doc_id = "", ""
+        anchor_pool = shared_pool or [("정보", "generic")]
+        # A1 은 doc_id 가 없으므로 슬롯 번호로 query_id 유일성을 보장한다.
+        query_scope = f"slot-{slot_index:03d}"
+      else:
+        content = doc.get("content", "")
+        doc_id = doc.get("doc_id", "unknown")
+        anchor_pool = pool_cache.setdefault(
+          id(doc), self._build_observer_anchor_pool(doc)
+        )
+        query_scope = doc_id
 
-          for repeat_index in range(num_repeats):
-            queries.append({
-              "query": final_query,
-              "query_id": (
-                f"R2:{doc_id}:env-{env}:"
-                f"anc-{anchor_idx:02d}:{payload_type}-{cmd_idx:02d}:"
-                f"rep-{repeat_index:02d}"
-              ),
-              "query_type": "compound",
-              "payload_type": payload_type,
-              "anchor": anchor,
-              "command": command,
-              "target_text": content,
-              "target_doc_id": doc_id,
-              "keyword": keyword,
-              # R4S 의 identifier_category 와 동일 의미로, 리포트에서
-              # "어떤 PII 카테고리가 R2 추출 신호를 가장 잘 만드는가" 분석에 사용.
-              # A1 은 "generic", A2 는 정규식/NER 매핑된 카테고리(예: email, mobile,
-              # synth_id, person_name, address ...) 또는 PII 없는 문서는 "fallback".
-              "identifier_category": identifier_category,
-              "attacker": self.attacker,
-              "env": env,
-            })
+      anchor_idx, cmd_idx = divmod(slot_index % stride, len(command_slots))
+      anchor_template = anchor_slots[anchor_idx]
+      payload_type, command_template = command_slots[cmd_idx]
+
+      # 슬롯 인덱스를 풀 크기로 modulo 해 라운드로빈으로 다양한 PII 카테고리를
+      # anchor 에 배치한다. 풀이 단일 항목(예: PII 없는 normal 문서의 fallback)
+      # 이면 자동으로 모든 슬롯이 동일 키워드를 사용해 기존 동작과 호환된다.
+      keyword, identifier_category = anchor_pool[slot_index % len(anchor_pool)]
+      anchor = anchor_template.format(keyword=keyword)
+      # 타깃 문서의 첫 150자를 스니펫으로 추출하여 쿼리 유사도를 극대화 (리랭커 우회용, A2 전용)
+      if self.attacker == "A2":
+        snippet_text = content[:150].replace("\n", " ").strip()
+        snippet = f" | 배경 문맥: {snippet_text} ..."
+      else:
+        snippet = ""
+      # standard 템플릿은 {keyword}, {snippet} 미사용이라 format 이 무해하고,
+      # self_losing/many_shot 템플릿은 해당 인자들을 주입.
+      command = command_template.format(keyword=keyword, snippet=snippet)
+      # Query Mirroring: 임베딩 라우팅을 타깃 클러스터로 유지하기 위해
+      # 앵커(타깃 키워드)를 항상 페이로드 앞에 배치한다.
+      final_query = f"{anchor}\n\n{command}"
+
+      for repeat_index in range(num_repeats):
+        queries.append({
+          "query": final_query,
+          "query_id": (
+            f"R2:{query_scope}:env-{env}:"
+            f"anc-{anchor_idx:02d}:{payload_type}-{cmd_idx:02d}:"
+            f"rep-{repeat_index:02d}"
+          ),
+          "query_type": "compound",
+          "payload_type": payload_type,
+          "anchor": anchor,
+          "command": command,
+          "target_text": content,
+          "target_doc_id": doc_id,
+          "keyword": keyword,
+          # R4S 의 identifier_category 와 동일 의미로, 리포트에서
+          # "어떤 PII 카테고리가 R2 추출 신호를 가장 잘 만드는가" 분석에 사용.
+          # A1 은 "generic", A2 는 정규식/NER 매핑된 카테고리(예: email, mobile,
+          # synth_id, person_name, address ...) 또는 PII 없는 문서는 "fallback".
+          "identifier_category": identifier_category,
+          "attacker": self.attacker,
+          "env": env,
+        })
 
     # 카테고리 다양성 디버그: anchor 풀 라운드로빈이 의도대로 동작했는지 확인.
     # 모든 쿼리가 동일 카테고리이면 풀이 단일 항목(fallback or 한 종류 PII)임을 뜻한다.

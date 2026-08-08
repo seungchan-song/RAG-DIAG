@@ -6,8 +6,24 @@ STEP 1에서 정규식으로 탐지된 PII 중, 추가 검증이 필요한 항�
 
 검증 대상:
   1. 주민등록번호(QT_RRN): 가중치 합산 mod 11 체크섬
-  2. 외국인등록번호(QT_ARN): 가중치 합산 mod 11 체크섬 (RRN과 동일)
-  3. 신용카드번호(QT_CARD): Luhn 알고리즘
+  2. 신용카드번호(QT_CARD): Luhn 알고리즘
+  3. 외국인등록번호(QT_ARN): **검증하지 않는다** (아래 참조)
+
+외국인등록번호에 체크섬을 걸지 않는 이유 (2026-08-03 실측으로 확정):
+  - 구 외국인등록번호(2020-10 이전)는 주민등록번호와 **다른** 검증식을 쓴다
+    (mod 11 결과에 +2 후 mod 10). 예전 이 모듈은 "RRN 과 동일"로 처리했는데
+    그건 틀린 가정이었다.
+  - 2020-10 부터 신규 외국인등록번호는 뒷자리가 임의번호로 바뀌어 **검증번호
+    체계 자체가 폐지**됐다. 즉 어떤 공식으로도 검증할 수 없는 번호가 존재한다.
+  - 실측: 자체 데이터셋의 외국인등록번호 996건을 두 공식으로 각각 돌린 결과
+    주민번호 공식 10.5% / 구 외국인등록번호 공식 10.1% — 둘 다 무작위 수준.
+  → 검증하면 진짜 유출을 대량으로 탈락시켜 미탐이 된다. 자릿수·성별코드(5~8)
+    구조는 STEP 1 정규식이 이미 강제하므로 그것으로 충분하다고 본다(경로 A-1).
+
+⚠️ 주민등록번호도 2020-10 부터 임의번호화돼 검증번호가 없다. 이 모듈의 mod 11
+   은 그 이후 발급 번호를 탈락시킨다. 다만 탈락분은 버려지지 않고 rejection
+   채널에 "구조 일치·검증 탈락"으로 남아 리포트에 보이므로, 오탐 제거 효과와
+   맞바꿔 현행 유지한다. 실제 최신 번호가 섞인 코퍼스로 재측정할 것.
 
 동작 방식:
   - STEP 1의 PIIMatch 중 needs_validation=True인 항목만 검증합니다
@@ -170,12 +186,13 @@ class ChecksumValidator:
     Returns:
       bool: 체크섬 검증 결과 (True=유효, False=무효)
     """
-    if pii_match.tag in ("QT_RRN", "QT_ARN"):
+    if pii_match.tag == "QT_RRN":
       return self.validate_rrn(pii_match.text)
     elif pii_match.tag == "QT_CARD":
       return self.validate_card(pii_match.text)
     else:
-      # 체크섬 검증 대상이 아닌 태그는 항상 True (검증 불필요)
+      # QT_ARN(외국인등록번호) 포함 — 검증 가능한 체크섬이 없는 태그는 통과시킨다.
+      # 사유는 모듈 docstring 참조(검증식이 다르고 2020-10 이후 폐지됨).
       return True
 
   def _validator_name(self, tag: str) -> str:
@@ -190,7 +207,7 @@ class ChecksumValidator:
     Returns:
       str: 검증 알고리즘 이름 ("mod11" / "luhn" / "none")
     """
-    if tag in ("QT_RRN", "QT_ARN"):
+    if tag == "QT_RRN":
       return "mod11"
     elif tag == "QT_CARD":
       return "luhn"
