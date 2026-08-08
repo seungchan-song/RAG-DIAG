@@ -523,6 +523,24 @@ class TestNERStructureGate:
     assert len(kept) == len(valid)
 
 
+class _FakeTokenizer:
+  """NERDetector.warm_up 이 만지는 최소 토크나이저 더블.
+
+  실제 코드는 KPF-BERT 토크나이저의 `model_max_length` 가 sentinel(~1e30) 인 것을
+  512 로 강제해 자동 truncation 을 켠다(`step3_ner.py:warm_up`). 그 경로가 속성
+  읽기/쓰기를 하므로 더블도 같은 속성을 가져야 한다.
+  """
+
+  def __init__(self) -> None:
+    self.model_max_length = 10**30
+
+
+class _FakeAutoTokenizer:
+  @staticmethod
+  def from_pretrained(_identifier: str, **_: object) -> _FakeTokenizer:
+    return _FakeTokenizer()
+
+
 class TestNERDetectorRuntime:
   def test_prefers_local_model_path_when_present(self, monkeypatch, tmp_path) -> None:
     local_model_dir = tmp_path / "local-kdpii"
@@ -537,6 +555,7 @@ class TestNERDetectorRuntime:
       return lambda text: []
 
     transformers_module.pipeline = lambda task, **kwargs: fake_pipeline(**kwargs)
+    transformers_module.AutoTokenizer = _FakeAutoTokenizer
     monkeypatch.setitem(sys.modules, "transformers", transformers_module)
 
     detector = NERDetector(
@@ -557,6 +576,9 @@ class TestNERDetectorRuntime:
       raise RuntimeError("hf download failed")
 
     transformers_module.pipeline = fake_pipeline
+    # AutoTokenizer 가 없으면 pipeline 에 닿기도 전에 ImportError 가 나서
+    # "모델 로드 실패가 기록되는가" 라는 이 테스트의 의도가 검증되지 않는다.
+    transformers_module.AutoTokenizer = _FakeAutoTokenizer
     monkeypatch.setitem(sys.modules, "transformers", transformers_module)
 
     detector = NERDetector(_build_pii_config())

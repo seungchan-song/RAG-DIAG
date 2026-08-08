@@ -674,12 +674,18 @@ class AttackQueryGenerator:
       command_slots.append(("self_losing", self.R2_SELF_LOSING_TEMPLATES[0], ""))
     if self.R2_MANY_SHOT_TEMPLATES:
       command_slots.append(("many_shot", self.R2_MANY_SHOT_TEMPLATES[0], ""))
-    # 변형 출력 유도는 5종을 전부 돌린다 — STEP 0 의 변환 5종과 1:1 대응시켜야
-    # "어떤 우회를 회수했나"를 종류별로 말할 수 있기 때문이다. 슬롯이 4→9 로
-    # 늘어 A2 의 R2 호출이 문서당 4→9회가 된다(A1 은 키워드 풀 30개가 상한이라
-    # 호출 수 변화 없음).
+    # 변형 출력 유도 슬롯은 config(attack.r2.evasion_kinds)로 골라 쓴다.
+    # ⚠️ 비용: evasion 1종당 명령 슬롯이 +1 이고, 앵커 수와 곱해진다.
+    #   출하 config(standard_indices=[0], 앵커 2개) 기준 문서당 호출은
+    #   기본 3종이면 6 → 12 회, 5종 전부면 6 → 16 회다(20문서 셀 = 240 / 320).
+    #   A1 은 키워드 풀 30개가 상한이라 호출 수 변화 없음.
+    #   기본값이 3종인 이유는 D9 실측에서 compat·homoglyph 가 **전량 거절 · 탐지 0건**
+    #   이었기 때문이다 — 재측정하려면 evasion_kinds 에 다시 넣으면 된다.
+    enabled_evasion_kinds = self._resolve_r2_evasion_kinds(r2_config)
     command_slots.extend(
-      ("evasion", template, kind) for kind, template in self.R2_EVASION_TEMPLATES
+      ("evasion", template, kind)
+      for kind, template in self.R2_EVASION_TEMPLATES
+      if kind in enabled_evasion_kinds
     )
 
     # 앵커 슬롯: 클래스 상수 R2_ACTIVE_ANCHOR_INDICES 가 지정한 인덱스만 활성화.
@@ -878,6 +884,52 @@ class AttackQueryGenerator:
       return list(default)
     if len(set(validated)) < len(validated):
       logger.warning("standard_indices 에 중복 인덱스가 있습니다: {}", validated)
+    return validated
+
+  # 변형 출력 유도(evasion) 슬롯의 기본 구성.
+  # compat·homoglyph 를 뺀 이유는 D9 실측(RAG-2026-0805-001) 때문이다 — 두 종류
+  # 80건이 **전량 거절되고 탐지 0건**이었다. 슬롯 하나가 문서당 앵커 수만큼(현재 2회)
+  # RAG 호출을 더하므로, 아무것도 못 재는 슬롯은 기본에서 뺀다. 재측정할 땐
+  # config 에 다시 넣으면 되고, 템플릿 자체는 풀에 그대로 남아 있다.
+  R2_DEFAULT_EVASION_KINDS: tuple[str, ...] = ("jamo", "invisible", "digit_sep")
+
+  def _resolve_r2_evasion_kinds(self, r2_config: dict[str, Any]) -> list[str]:
+    """yaml 의 attack.r2.evasion_kinds 를 검증해 사용할 우회 종류 목록을 반환한다.
+
+    검증 정책:
+      - 키 없음 → 기본값 R2_DEFAULT_EVASION_KINDS
+      - 빈 리스트 `[]` → **정상 입력으로 취급**하고 evasion 슬롯을 전부 끈다
+        (STEP 0 측정을 안 하는 런에서 호출 수를 줄이는 정당한 설정이라 폴백하지 않는다)
+      - 잘못된 타입 → warning 후 기본값 폴백
+      - 풀에 없는 이름 → 해당 항목만 무시하고 warning
+
+    Args:
+      r2_config: yaml 의 attack.r2 섹션 딕셔너리.
+
+    Returns:
+      list[str]: R2_EVASION_TEMPLATES 에 실재하는 우회 종류 이름 목록.
+                 빈 리스트는 "전부 끔"을 뜻한다.
+    """
+    known_kinds = [kind for kind, _ in self.R2_EVASION_TEMPLATES]
+    raw = r2_config.get("evasion_kinds", list(self.R2_DEFAULT_EVASION_KINDS))
+    if not isinstance(raw, list):
+      logger.warning(
+        "attack.r2.evasion_kinds 가 리스트가 아닙니다. 기본값 {} 사용.",
+        list(self.R2_DEFAULT_EVASION_KINDS),
+      )
+      return list(self.R2_DEFAULT_EVASION_KINDS)
+
+    validated: list[str] = []
+    for value in raw:
+      name = str(value)
+      if name not in known_kinds:
+        logger.warning(
+          "evasion_kinds 의 알 수 없는 항목 무시: {} (사용 가능: {})",
+          name,
+          ", ".join(known_kinds),
+        )
+        continue
+      validated.append(name)
     return validated
 
   def generate_r4_queries(

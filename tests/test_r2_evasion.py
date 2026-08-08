@@ -50,16 +50,54 @@ def test_evasion_kinds_cover_step0_transforms_exactly() -> None:
 
 
 def test_evasion_queries_carry_kind_metadata() -> None:
-  """생성된 쿼리에 evasion 슬롯이 종류와 함께 실려야 한다."""
+  """생성된 쿼리에 evasion 슬롯이 종류와 함께 실려야 한다.
+
+  실행되는 종류는 템플릿 풀 전체가 아니라 **config 로 켠 것들**이다
+  (기본값 = `R2_DEFAULT_EVASION_KINDS`).
+  """
   gen = AttackQueryGenerator(_config(), attacker="A2")
   queries = gen.generate_r2_queries(_docs(2), env="clean")
 
   evasion = [q for q in queries if q["payload_type"] == "evasion"]
   assert evasion, "evasion 페이로드가 하나도 생성되지 않았습니다"
-  assert {q["evasion_kind"] for q in evasion} == STEP0_TRANSFORMS
+  assert {q["evasion_kind"] for q in evasion} == set(gen.R2_DEFAULT_EVASION_KINDS)
   # evasion 이 아닌 슬롯은 종류가 비어 있어야 리포트 집계가 새지 않는다.
   others = [q for q in queries if q["payload_type"] != "evasion"]
   assert all(q["evasion_kind"] == "" for q in others)
+
+
+def test_default_evasion_kinds_exclude_measured_dead_slots() -> None:
+  """기본값이 D9 실측(전량 거절·탐지 0건)을 반영해야 한다.
+
+  compat·homoglyph 를 기본으로 되돌리면 20문서 셀 기준 RAG 호출이 80회 늘어나는데
+  D9 에서 그 80건은 아무것도 측정하지 못했다. 되돌리려면 재측정 근거가 필요하다.
+  """
+  defaults = set(AttackQueryGenerator.R2_DEFAULT_EVASION_KINDS)
+
+  assert defaults == {"jamo", "invisible", "digit_sep"}
+  # 템플릿 풀 자체는 5종을 유지해야 재측정 시 이름만 되넣으면 된다.
+  assert defaults < STEP0_TRANSFORMS
+
+
+def test_evasion_kinds_are_config_selectable() -> None:
+  """config 로 슬롯을 골라 쓰거나 전부 끌 수 있어야 한다."""
+  config = _config()
+  config["attack"]["r2"]["evasion_kinds"] = ["compat", "없는종류"]
+  gen = AttackQueryGenerator(config, attacker="A2")
+  queries = gen.generate_r2_queries(_docs(2), env="clean")
+
+  # 알 수 없는 이름은 무시되고, 지정한 종류만 실행된다.
+  assert {q["evasion_kind"] for q in queries if q["payload_type"] == "evasion"} == {
+    "compat"
+  }
+
+  config["attack"]["r2"]["evasion_kinds"] = []
+  off_gen = AttackQueryGenerator(config, attacker="A2")
+  off_queries = off_gen.generate_r2_queries(_docs(2), env="clean")
+
+  assert not [q for q in off_queries if q["payload_type"] == "evasion"], (
+    "빈 리스트는 evasion 슬롯을 전부 꺼야 한다 — 기본값 폴백이면 호출이 줄지 않는다"
+  )
 
 
 def test_step0_recovers_each_requested_evasion() -> None:

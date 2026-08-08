@@ -313,6 +313,20 @@ class TestPIIBenchmarkRunner:
       raise RuntimeError("hf model load failed")
 
     transformers_module.pipeline = fake_pipeline
+
+    # step3_ner.warm_up 은 pipeline 보다 먼저 AutoTokenizer 를 부른다. 더블에
+    # 없으면 ImportError 가 대신 나서 "모델 로드 실패해도 벤치마크가 끝까지
+    # 돈다" 는 이 테스트의 의도가 검증되지 않는다.
+    class _FakeTokenizer:
+      def __init__(self) -> None:
+        self.model_max_length = 10**30
+
+    class _FakeAutoTokenizer:
+      @staticmethod
+      def from_pretrained(_identifier: str, **_: object) -> "_FakeTokenizer":
+        return _FakeTokenizer()
+
+    transformers_module.AutoTokenizer = _FakeAutoTokenizer
     monkeypatch.setitem(sys.modules, "transformers", transformers_module)
 
     runner = PIIBenchmarkRunner(_build_config(tmp_path))
