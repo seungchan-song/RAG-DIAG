@@ -341,6 +341,7 @@ class ReportGenerator:
         # 출력되므로 응답 PII 가 항상 0 → intensity 가 항상 0 이 된다.
         # 올바른 강도 지표는 "공격 성공 시 검색된 문서 내 고위험 PII 포함 응답 비율"이므로
         # _build_r9_potential_pii_exposure 결과로 덮어씌운다.
+        pii_leakage_profile = self._detect_pii_in_responses(scenario_results)
         r9_exposure = self._build_r9_potential_pii_exposure(scenario_results)
         if "R9" in scenario_summaries:
             new_r9_intensity = float(
@@ -373,7 +374,10 @@ class ReportGenerator:
             "execution_reliability": self._build_execution_reliability_summary(
                 scenario_results
             ),
-            "pii_leakage_profile": self._detect_pii_in_responses(scenario_results),
+            "pii_leakage_profile": pii_leakage_profile,
+            # 탐지기가 정상 작동했는지. 이 블록이 없으면 "유출이 적었다"와
+            # "탐지기가 죽어서 못 봤다"를 리포트에서 구분할 수 없다.
+            "detection_quality": self._build_detection_quality(pii_leakage_profile),
             "clean_vs_poisoned_comparison": env_comparison,
             "reranker_on_off_comparison": reranker_comparison,
             "attacker_comparison": attacker_comparison or {},
@@ -643,6 +647,63 @@ class ReportGenerator:
             "labels": labels,
             "threshold": data.get("delta_threshold") or 0.15,
             "sample_count": len(deltas),
+        }
+
+    def _build_detection_quality(
+        self,
+        pii_leakage_profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        """PII 탐지기가 실제로 몇 건의 응답에서 정상 작동했는지 집계한다.
+
+        왜 필요한가 — 실측(`RAG-2026-0806-001`, 2026-08-06): 응답 1,468건 중
+        **611건(41.6%)이 NER 없이 채점됐다.** HF fast 토크나이저를 5워커가 공유하다
+        `RuntimeError: Already borrowed` 가 났는데, 실행은 성공으로 끝나고(실행 실패
+        0건) 리포트에는 유출이 그만큼 적게 찍혔을 뿐이다. **조용한 과소보고**다.
+
+        원인(경쟁)은 `pii/step3_ner.py` 에서 락으로 닫았지만, 탐지기가 죽는 길은
+        그것 말고도 있다(모델 다운로드 실패 · 캐시 손상 · OOM · 마스킹 예외).
+        그래서 원인을 하나씩 막는 대신 **결과를 항상 세어 노출한다** — 어떤 이유로
+        탐지기가 빠져도 리포트 첫 화면에서 드러나게.
+
+        Args:
+            pii_leakage_profile: `_detect_pii_in_responses` 결과(시나리오별 집계).
+
+        Returns:
+            dict: `degraded_response_count` 가 0 보다 크면 그 리포트의 PII 수치는
+                하한선이다(실제 유출은 더 많을 수 있다).
+        """
+        total = 0
+        degraded = 0
+        reasons: dict[str, int] = {}
+        scenarios: dict[str, dict[str, int]] = {}
+
+        for scenario, profile in pii_leakage_profile.items():
+            load_status = profile.get("step3_load_status", {}) or {}
+            scenario_total = sum(int(count) for count in load_status.values())
+            scenario_degraded = sum(
+                int(count)
+                for status, count in load_status.items()
+                if str(status) != "ready"
+            )
+            total += scenario_total
+            degraded += scenario_degraded
+            for status, count in load_status.items():
+                if str(status) != "ready":
+                    reasons[str(status)] = reasons.get(str(status), 0) + int(count)
+            if scenario_degraded:
+                scenarios[str(scenario)] = {
+                    "total": scenario_total,
+                    "degraded": scenario_degraded,
+                }
+
+        return {
+            "response_count": total,
+            "degraded_response_count": degraded,
+            "degraded_ratio": (degraded / total) if total else 0.0,
+            "degraded_reasons": reasons,
+            "degraded_scenarios": scenarios,
+            # 리포트/CLI 가 같은 문장을 쓰도록 판정 자체를 여기서 한 번만 내린다.
+            "is_reliable": degraded == 0,
         }
 
     def _build_execution_reliability_summary(
@@ -2861,6 +2922,11 @@ class ReportGenerator:
         """
         from rag.report.dashboard_template import render_dashboard
 
+        # HTML 에 실을 설정 블록에서 비밀값(api_key 등)을 가리는 공용 헬퍼.
+        # 정책(SECRET_FIELD_TOKENS)은 experiment.py 한 곳에만 둔다. 파일 상단이
+        # 아니라 여기서 임포트하는 것은 위 render_dashboard 와 같은 이유다.
+        from rag.utils.experiment import redact_secrets
+
         # HTML embed용 경량 복사본: 렌더에 안 쓰는 무거운 필드 제거 + 시나리오당 표본 cap.
         # 대시보드의 응답 탐색기(검색·필터)가 이 표본 위에서 동작하므로, 기법별 성공/실패
         # 예시를 실제로 훑을 수 있을 만큼(=100건) 싣는다. 전체 원본은 <시나리오>_result.json.
@@ -2928,17 +2994,25 @@ class ReportGenerator:
             # 템플릿이 snapshot 에서 읽는 건 config.generator(모델명 칩)와
             # config.adapter(진단 대상·능력 계층) 둘뿐이다. 전체 snapshot 은 런에 따라
             # 수백 KB 라 통째로 임베드할 이유가 없다.
+            #
+            # ⚠️ redact_secrets 를 반드시 통과시킨다. HTML 리포트는 심사위원·고객에게
+            # 건네라고 만든 유일한 산출물인데, adapter 블록에는 외부 RAG 의 Bearer
+            # 토큰(`adapter.api_key`)이 들어 있다. 예전에는 이게 평문으로 실려 나갔다.
+            # snapshot.yaml 원본은 replay 가 config 를 그대로 복원해야 하므로 손대지
+            # 않는다 — 유출 경계는 '리포트'이지 '로컬 산출물'이 아니다.
             snapshot_json=json.dumps(
-                {
-                    "config": {
-                        "generator": (snapshot or {})
-                        .get("config", {})
-                        .get("generator", {}),
-                        "adapter": (snapshot or {})
-                        .get("config", {})
-                        .get("adapter", {}),
+                redact_secrets(
+                    {
+                        "config": {
+                            "generator": (snapshot or {})
+                            .get("config", {})
+                            .get("generator", {}),
+                            "adapter": (snapshot or {})
+                            .get("config", {})
+                            .get("adapter", {}),
+                        }
                     }
-                },
+                ),
                 ensure_ascii=False,
                 default=str,
             ),

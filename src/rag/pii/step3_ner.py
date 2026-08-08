@@ -15,6 +15,7 @@ NER 모델(KPF-BERT-KDPII)이 출력하는 KDPII 33개 엔티티 라벨을 코�
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -73,7 +74,14 @@ NER_LABEL_MAP: dict[str, str] = {
   "MAJOR": "TMI_OCCUPATION",
   "POSITION": "TMI_OCCUPATION",
   "BIRTHDATE": "DAT",
-  "GENDER": "TMI_HEALTH",
+  # 성별은 건강정보가 아니다. 예전에는 TMI_HEALTH 로 접혀 있어서 리포트가 성별
+  # 탐지를 "건강정보"로 표기했다(개인정보보호법 제23조 민감정보는 건강·성생활·
+  # 사상·정치적 견해 등이고 성별은 여기 들지 않는다). 위험 등급은 어차피 둘 다
+  # context 라 점수는 안 바뀌지만 표기가 틀렸다.
+  # ⚠️ 이 값을 바꿀 때는 eval.py 의 CANONICAL_LABELS·LABEL_ALIASES 를 **같은
+  # 커밋에서** 함께 옮겨야 한다. 한쪽만 바꾸면 벤치마크가 같은 탐지를 오탐+미탐으로
+  # 이중 계산한다(tests/test_pii_tag_labels.py 가 이 정합을 고정한다).
+  "GENDER": "TMI_GENDER",
   # 혈액형은 eval 의 canonical 네임스페이스에 전용 태그가 이미 있다.
   "BLOOD_TYPE": "TMI_BLOOD_TYPE",
   "RELIGION": "TMI_RELIGION",
@@ -117,6 +125,7 @@ LOW_F1_TAGS = {
   "QT_LENGTH",
   "QT_WEIGHT",
   "TMI_BLOOD_TYPE",
+  "TMI_GENDER",
   "TMI_HEALTH",
   "TMI_NATIONALITY",
   "TMI_OCCUPATION",
@@ -187,6 +196,20 @@ _KPFBERT_MAX_INPUT_TOKENS = 512
 # 맞춰 늘리는 건 모델 재학습 몫이다(팀원 요청 항목).
 _NER_WINDOW_TOKENS = 120
 _NER_WINDOW_OVERLAP_TOKENS = 30
+
+# HuggingFace 의 **fast(Rust) 토크나이저는 스레드 안전하지 않다.** 두 스레드가 같은
+# 토크나이저 객체에 동시에 들어가면 Rust 쪽 RefCell 이 터지며
+# `RuntimeError: Already borrowed` 가 난다.
+#
+# 실측(RAG-2026-0806-001, 2026-08-06): `StorageSanitizer` 가 detector 하나를 만들어
+# 5워커(`cli/main.py` ThreadPoolExecutor)가 공유하는데, **응답 1,468건 중 611건
+# (41.6%)이 이 오류로 NER 없이 채점됐다**(R2 는 540건 중 398건). 리포트에는 유출이
+# 그만큼 적게 찍히므로 조용한 과소보고다 — 실행 실패로도 안 잡힌다.
+#
+# ponytail: 전역 락으로 추론 구간을 직렬화한다. NER 은 응답 하나에 수십 ms 라
+# 런의 병목(LLM 호출)에 비해 무시할 만하다. 처리량이 문제가 되면 스레드 로컬
+# detector(모델 사본 N개, 메모리 N배)로 올릴 것.
+_NER_INFERENCE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -271,9 +294,11 @@ class NERDetector:
 
   def _iter_windows(self, text: str) -> list[tuple[str, int]]:
     """
-    512 토큰 한계를 넘는 텍스트를 겹치는 창으로 나눠 (부분문자열, 원문 시작오프셋)로 돌려준다.
+    학습 길이(_NER_WINDOW_TOKENS = 120 토큰)를 넘는 텍스트를 겹치는 창으로 나눠
+    (부분문자열, 원문 시작오프셋)로 돌려준다.
 
-    KPF-BERT 는 절대 위치 임베딩이 512 라 그보다 긴 입력은 처리할 수 없다. 그런데
+    분할 기준이 512(위치 임베딩 한계)가 아니라 120 인 이유는 위 상수 주석 참조 —
+    모델 config 의 max_seq_len 이 120 이라 그보다 길면 절벽이 아니라 연속 붕괴한다. 그런데
     그냥 넘기면 **예외도 안 나고 결과가 통째로 0건**이 된다(2026-08-04 실측:
     590토큰 문서 → 후보 0개, load_status 는 'ready' 유지). 조용히 실패하므로
     "PII 가 없다"와 구분이 안 된다.
@@ -297,12 +322,14 @@ class NERDetector:
     if tokenizer is None:
       return [(text, 0)]
 
-    encoded = tokenizer(
-      text,
-      add_special_tokens=False,
-      return_offsets_mapping=True,
-      truncation=False,
-    )
+    # 토크나이저도 추론과 같은 Rust 객체를 건드리므로 같은 락 안에서 부른다.
+    with _NER_INFERENCE_LOCK:
+      encoded = tokenizer(
+        text,
+        add_special_tokens=False,
+        return_offsets_mapping=True,
+        truncation=False,
+      )
     offsets = [span for span in encoded["offset_mapping"] if span[1] > span[0]]
     if len(offsets) <= _NER_WINDOW_TOKENS:
       return [(text, 0)]
@@ -365,12 +392,18 @@ class NERDetector:
     if self.pipeline is None:
       return []
 
-    # 512 토큰을 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
+    # 여기 도달했다는 건 모델이 실제로 올라와 있다는 뜻이다. 이전 호출의 일시적
+    # 추론 오류가 남긴 'failed' 를 지워 **그 뒤의 모든 응답까지 오염되는** 것을 막는다
+    # (RAG-2026-0806-001 에서 한 번의 경쟁이 셀 전체를 failed 로 물들였다).
+    self.load_status = "ready"
+
+    # 학습 길이(120토큰)를 넘으면 창으로 나눠 돌리고 스팬을 원문 좌표로 되돌린다.
     # 창이 겹치므로 같은 엔티티가 두 번 나올 수 있어 (스팬, 태그)로 합친다.
     deduped: dict[tuple[int, int, str], dict[str, Any]] = {}
     for window_text, window_offset in self._iter_windows(text):
       try:
-        window_results = self.pipeline(window_text)
+        with _NER_INFERENCE_LOCK:
+          window_results = self.pipeline(window_text)
       except Exception as error:
         self.load_status = "failed"
         self.error_message = str(error)

@@ -41,7 +41,11 @@ def _command_pool(gen: AttackQueryGenerator) -> list[str]:
     commands.append(gen.R2_SELF_LOSING_TEMPLATES[0])
   if gen.R2_MANY_SHOT_TEMPLATES:
     commands.append(gen.R2_MANY_SHOT_TEMPLATES[0])
-  commands.extend(template for _kind, template in gen.R2_EVASION_TEMPLATES)
+  # evasion 슬롯은 풀 전체가 아니라 config 로 켠 것만 나간다(기본 3종).
+  enabled = gen._resolve_r2_evasion_kinds(gen.attack_config.get("r2", {}))
+  commands.extend(
+    template for kind, template in gen.R2_EVASION_TEMPLATES if kind in enabled
+  )
   return commands
 
 
@@ -112,11 +116,10 @@ def test_a1_queries_are_subset_of_doc_loop_and_cover_all_commands() -> None:
   assert {q["payload_type"] for q in produced} == {
     "standard", "self_losing", "many_shot", "evasion",
   }
-  # 변형 출력 유도는 5종이 전부 나가야 STEP 0 를 종류별로 측정할 수 있다.
+  # config 로 켠 우회 종류는 전부 나가야 STEP 0 를 종류별로 측정할 수 있다.
+  enabled = set(gen._resolve_r2_evasion_kinds(gen.attack_config.get("r2", {})))
   kinds = {q["evasion_kind"] for q in produced if q["payload_type"] == "evasion"}
-  assert len(kinds) == len(gen.R2_EVASION_TEMPLATES), (
-    f"실행되지 않은 우회 종류가 있습니다: {len(gen.R2_EVASION_TEMPLATES) - len(kinds)}개"
-  )
+  assert kinds == enabled, f"실행되지 않은 우회 종류가 있습니다: {enabled - kinds}"
 
 
 def test_a1_respects_target_doc_count() -> None:
@@ -128,7 +131,7 @@ def test_a1_respects_target_doc_count() -> None:
   gen = AttackQueryGenerator(_config(), attacker="A1")
   stride = _stride(gen)
   pool_size = len(gen.GENERIC_OBSERVER_KEYWORDS)
-  # 슬롯 수가 풀보다 적어 상한에 걸리지 않는 문서 수를 고른다(현재 stride=16 → 1개).
+  # 슬롯 수가 풀보다 적어 상한에 걸리지 않는 문서 수를 고른다(기본 config 에서 stride=12 → 2개).
   small = max(1, pool_size // stride)
   few = gen.generate_r2_queries(_docs(small), env="clean")
   many = gen.generate_r2_queries(_docs(20), env="clean")

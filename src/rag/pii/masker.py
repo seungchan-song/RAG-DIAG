@@ -121,14 +121,19 @@ class PIIMasker:
 
   def _mask_mobile(self, text: str) -> str:
     """
-    휴대전화번호 마스킹: 뒷 4자리 보존
+    휴대전화번호 마스킹: 앞 3자리(식별번호) + 뒷 4자리 보존
 
     예: "010-1234-5678" → "010-****-5678"
+        "011-123-4567"  → "011-****-4567"
+
+    앞 3자리를 하드코딩하지 않는 이유: 예전 구현은 무조건 "010-" 를 붙여서
+    011·016·017·018·019 번호를 **010 으로 위조**했다. 마스킹은 정보를 가리는
+    작업이지 없는 사실을 만드는 작업이 아니며, 이 산출물은 리포트에 그대로 실린다.
     """
     digits = re.sub(r"[-.\s]", "", text)
-    if len(digits) >= 4:
-      last4 = digits[-4:]
-      return f"010-****-{last4}"
+    # 앞 3 + 뒤 4 = 최소 7자리가 있어야 두 조각이 겹치지 않는다.
+    if len(digits) >= 7:
+      return f"{digits[:3]}-****-{digits[-4:]}"
     return f"[{tag_label('QT_MOBILE')}]"
 
   def _mask_phone(self, text: str) -> str:
