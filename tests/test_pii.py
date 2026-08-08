@@ -44,9 +44,25 @@ def _build_pii_config(
   }
 
 
+# 조직별 ID 체계(사원번호·회원 ID·참가자 ID·계정 ID)는 회사마다 형식이 달라
+# 국가 표준이 없다. 그래서 코드가 아니라 배포처 설정(`pii.custom_id_patterns`)에
+# 둔다. 아래는 우리 합성 코퍼스가 쓰는 형식으로, 정규식 경로를 검증할 때 주입한다.
+_DEMO_ID_PATTERNS: dict[str, str] = {
+  "EMPLOYEE_ID": r"EMP-\d{4}-\d{4,6}",
+  "MEMBER_ID": r"MBR\d{7}",
+  "PARTICIPANT_ID": r"(?:PART|PTC|RES|SUB)-\d{4}",
+  "USER_ID": r"(?:user|admin|staff|dev|mgr)_\d{4}",
+}
+
+
+def _config_with_demo_ids() -> dict:
+  """우리 코퍼스 ID 형식을 선언한 최소 설정."""
+  return {"pii": {"custom_id_patterns": dict(_DEMO_ID_PATTERNS)}}
+
+
 class TestRegexDetector:
   def setup_method(self) -> None:
-    self.detector = RegexDetector()
+    self.detector = RegexDetector(_config_with_demo_ids())
 
   def test_mobile_with_hyphen(self) -> None:
     matches = self.detector.detect("전화번호는 010-1234-5678입니다.")
@@ -325,6 +341,31 @@ class TestPIIMasker:
     assert "h" in masked
     assert "example.com" in masked
 
+  def test_placeholder_uses_korean_label_not_internal_tag(self) -> None:
+    """자리표시자에 내부 태그명(QT_*/TMI_*)이 새면 안 된다.
+
+    마스킹된 문서·응답은 그대로 리포트 화면에 실린다. 예전에는 "[TMI_OCCUPATION]",
+    "[QT_IP]" 같은 우리 파이프라인 네임스페이스가 사용자에게 그대로 노출됐다.
+    """
+    from rag.pii.classifier import ConfirmedPII
+
+    for tag, expected in (("QT_IP", "[IP 주소]"), ("TMI_OCCUPATION", "[직업·직장]"),
+                          ("MEMBER_ID", "[회원 ID]"), ("QT_PASSPORT", "[여권번호]")):
+      masked = self.masker.mask_single(
+        ConfirmedPII(tag=tag, text="x", start=0, end=1, route="A-1", source="regex")
+      )
+      assert masked == expected
+      assert "QT_" not in masked and "TMI_" not in masked
+
+  def test_unknown_tag_falls_back_to_tag_name(self) -> None:
+    """라벨이 없는 새 태그도 조용히 깨지지 않고 태그명 그대로 남는다."""
+    from rag.pii.classifier import ConfirmedPII
+
+    masked = self.masker.mask_single(
+      ConfirmedPII(tag="BRAND_NEW_TAG", text="x", start=0, end=1, route="A-1", source="regex")
+    )
+    assert masked == "[BRAND_NEW_TAG]"
+
   def test_mask_text_replaces_pii(self) -> None:
     from rag.pii.classifier import ConfirmedPII
 
@@ -344,6 +385,141 @@ class TestPIIMasker:
     )
     assert "010-1234-5678" not in masked
     assert "5678" in masked
+
+
+class TestKoreanParticleBoundary:
+  """한국어 조사가 값에 붙어도 정규식이 탐지해야 한다.
+
+  `\\b` 는 한글도 단어문자로 보기 때문에 "203.0.113.11를" 처럼 조사가 바로 붙으면
+  경계가 생기지 않아 매칭이 통째로 실패했다(2026-08-03 실측: clean 코퍼스 IP
+  331건 중 112건 미탐). 더 나쁜 건 "MBR1234567은" 에서 MEMBER_ID 가 실패해
+  여권번호 오분류가 되살아나던 것 — 고유식별 등급 건수를 부풀린다.
+  """
+
+  def test_values_followed_by_particles_are_detected(self) -> None:
+    detector = RegexDetector(_config_with_demo_ids())
+    cases = {
+      "허용 목록에 203.0.113.11를 등록했습니다": "QT_IP",
+      "우편번호 06234가 표시됩니다": "ZIPCODE",
+      "사번 EMP-2024-13579로 조회하세요": "EMPLOYEE_ID",
+      "회원 MBR1234567은 탈퇴했습니다": "MEMBER_ID",
+      "PART-4821에게 안내했습니다": "PARTICIPANT_ID",
+      "admin_7391으로 접속했습니다": "USER_ID",
+    }
+    for text, expected_tag in cases.items():
+      tags = {match.tag for match in detector.detect(text)}
+      assert expected_tag in tags, f"{text!r} 에서 {expected_tag} 미탐: {tags}"
+
+  def test_ascii_prefix_still_blocks_partial_match(self) -> None:
+    """경계를 넓히되 ASCII 영숫자 안쪽의 부분 매칭은 계속 막아야 한다."""
+    detector = RegexDetector()
+    assert not [m for m in detector.detect("x203.0.113.11") if m.tag == "QT_IP"]
+    assert not [m for m in detector.detect("1203.0.113.119") if m.tag == "QT_IP"]
+
+
+class TestCustomIdPatterns:
+  """조직별 ID 체계는 코드가 아니라 설정에서 온다.
+
+  예전엔 우리 합성 코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)가 정규식에
+  하드코딩돼 있었다. 그러면 우리 데이터에서만 맞고 **남의 RAG 를 진단하면 조용히
+  0건**이 나온다(2026-08-04 발견). 이 도구의 목적이 외부 RAG 진단이므로,
+  선언하지 않은 대상에는 ID 정규식이 아예 붙지 않아야 한다.
+  """
+
+  def test_no_id_patterns_without_declaration(self) -> None:
+    """선언이 없으면 ID 는 정규식으로 잡지 않는다(문맥을 보는 NER 담당)."""
+    detector = RegexDetector()
+    text = "사번 EMP-2024-13579, 회원 MBR1234567, 참가 PART-4821, 계정 admin_7391"
+    assert [match.tag for match in detector.detect(text)] == []
+
+  def test_declared_patterns_are_applied(self) -> None:
+    """선언하면 그 형식으로 탐지한다."""
+    detector = RegexDetector(_config_with_demo_ids())
+    tags = {match.tag for match in detector.detect("계정 admin_7391 로 접속")}
+    assert "USER_ID" in tags
+
+  def test_other_org_format_is_supported(self) -> None:
+    """다른 조직 형식을 선언하면 그쪽이 잡힌다 — 우리 형식에 묶이지 않는다."""
+    detector = RegexDetector({"pii": {"custom_id_patterns": {"USER_ID": r"u-[0-9]{3}"}}})
+    assert {m.tag for m in detector.detect("계정 u-106 로 접속")} == {"USER_ID"}
+    assert [m.tag for m in detector.detect("계정 admin_7391 로 접속")] == []
+
+  def test_invalid_pattern_is_skipped_without_crashing(self) -> None:
+    """설정 오타 하나로 파이프라인 전체가 죽으면 안 된다."""
+    detector = RegexDetector(
+      {"pii": {"custom_id_patterns": {"BROKEN": r"([0-9", "USER_ID": r"u-[0-9]{3}"}}}
+    )
+    assert {m.tag for m in detector.detect("계정 u-106")} == {"USER_ID"}
+
+  def test_standard_patterns_survive_without_config(self) -> None:
+    """표준 형식(전화·이메일 등)은 설정과 무관하게 항상 동작한다."""
+    detector = RegexDetector()
+    tags = {m.tag for m in detector.detect("연락처 010-1234-5678, 메일 a@b.com")}
+    assert {"QT_MOBILE", "TMI_EMAIL"} <= tags
+
+
+class TestPassportPattern:
+  """여권번호는 영문 1글자 + 숫자 8자리(구형)다.
+
+  이전 `[A-Z]{1,2}\\d{7,8}` 은 근거 없이 넓어서 `MBR1234567` 의 뒤 9글자를
+  `BR1234567` 여권번호로 집어갔고, 그걸 막으려고 MEMBER_ID 정규식이 방패 역할을
+  하고 있었다. 조직별 ID 를 설정으로 뺀 뒤에는 방패가 없으므로 패턴 자체가
+  안전해야 한다.
+  """
+
+  def test_old_format_is_detected(self) -> None:
+    detector = RegexDetector()
+    assert {m.tag for m in detector.detect("여권번호 S99585004 입니다")} == {"QT_PASSPORT"}
+
+  def test_member_id_is_not_grabbed_as_passport(self) -> None:
+    """ID 정규식 선언이 없어도 여권으로 오분류되면 안 된다."""
+    detector = RegexDetector()
+    assert [m.tag for m in detector.detect("회원 MBR1234567 입니다")] == []
+    assert [m.tag for m in detector.detect("MBR1234567은 탈퇴")] == []
+
+
+class TestNERStructureGate:
+  """STEP 3 구조 게이트 — 모델이 쪼갠 조각이 고유식별정보로 확정되는 걸 막는다.
+
+  실측 배경(2026-08-03): 라벨 단어가 없는 나열/표 형태 응답에서 NER 이 스팬을
+  서브워드 조각까지 쪼개, 진짜 PII 6건짜리 문단이 엔티티 17개로 집계됐다
+  (`'1'`→계좌번호, `'.'`→운전면허번호, `'김민수'`→계좌번호 등).
+  """
+
+  def _match(self, tag: str, text: str) -> NERMatch:
+    return NERMatch(tag=tag, text=text, start=0, end=len(text), confidence=0.9)
+
+  def test_fragments_are_rejected_not_confirmed(self) -> None:
+    detector = NERDetector(_build_pii_config())
+    fragments = [
+      self._match("QT_ACCOUNT", "1"),      # 목록 번호
+      self._match("QT_DRIVER", "."),       # 마침표
+      self._match("QT_ACCOUNT", "김민수"),  # 사람 이름
+      self._match("QT_RRN", "900"),        # 주민번호 앞 3자리
+      self._match("QT_ARN", "101-"),       # 주민번호 가운데 조각
+      self._match("QT_RRN", "06234"),      # 우편번호가 주민번호로 찍힌 경우
+    ]
+    kept, rejected = detector.partition_structural(fragments)
+
+    assert kept == []
+    assert len(rejected) == len(fragments)
+    assert {item.reason for item in rejected} == {"ner_structure_mismatch"}
+
+  def test_well_formed_values_pass(self) -> None:
+    detector = NERDetector(_build_pii_config())
+    valid = [
+      self._match("QT_RRN", "900101-1234567"),
+      self._match("QT_ARN", "900101-5234567"),
+      self._match("QT_CARD", "4532-1234-5678-9012"),
+      self._match("QT_PHONE", "010-1234-5678"),
+      self._match("TMI_EMAIL", "hong@example.com"),
+      self._match("ZIPCODE", "06234"),
+      self._match("PER", "홍길동"),  # 비정형 태그는 자릿수 개념이 없어 그대로 통과
+    ]
+    kept, rejected = detector.partition_structural(valid)
+
+    assert rejected == []
+    assert len(kept) == len(valid)
 
 
 class TestNERDetectorRuntime:

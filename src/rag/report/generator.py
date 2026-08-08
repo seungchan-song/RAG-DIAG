@@ -5,11 +5,28 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+# HTML 대시보드에 임베드할 시나리오별 표본 수와 성공 표본 비율.
+# 심사위원용 요약이 아니라 "우리 시스템으로 자기 RAG 를 분석하려는 사람"이 기법별
+# 성공/실패 예시를 실제로 훑을 수 있어야 하므로 넉넉히 싣는다(용량 ↑ 는 감수).
+# R4 는 (b=1, b=0) 페어가 평가 단위라 응답 수로는 2배가 필요하다.
+MAX_EMBEDDED_RESULTS = 100
+SAMPLE_SUCCESS_RATIO = 0.8
+
+# 표본마다 "이 질의가 어떤 문서를 근거로 답했나"를 함께 싣는다. 문서 원문은 통째로
+# 실으면 용량이 폭발하므로 앞부분 스니펫만 남긴다(전체 원본은 <시나리오>_result.json).
+MAX_PROMPT_DOCUMENTS = 5
+DOC_SNIPPET_CHARS = 260
+
+# 공격자 코드(A1/A2/A3) 를 "가정한 권한" 문구로 번역하는 single source of truth.
+# 리포트가 자체 문구를 들고 있으면 공격 엔진과 갈라지므로 반드시 여기서 가져온다.
+from rag.attack.query_generator import describe_attacker
 
 # R7 평가기에서 정책 단서 카테고리 패턴을 그대로 재사용한다.
 # R7 응답에서 카테고리별로 어떤 문장이 노출되었는지 추출하기 위함이다.
@@ -27,6 +44,8 @@ class ReportGenerator:
         report_config = config.get("report", {})
         self.output_formats = report_config.get("output_formats", ["json", "csv"])
         self.results_dir = Path(report_config.get("output_dir", "data/results"))
+        # RegexDetector 가 pii.custom_id_patterns(조직별 ID 체계)를 읽어야 하므로 보관한다.
+        self._config = config
         self._pii_detector = None
         self._pii_validator = None
 
@@ -365,7 +384,10 @@ class ReportGenerator:
             # R7 은 시스템 프롬프트 유출이라 PII 비교에서 제외되었으므로 별도의 분석 블록을 둔다.
             # 카테고리별 노출 분포와 응답 단편을 모아 "추정 시스템 프롬프트"를 재구성한다.
             "r7_leakage_analysis": self._build_r7_leakage_analysis(scenario_results),
-            "risk_level": self._assess_risk_level(scenario_results),
+            # 반드시 scenario_summaries 를 넘긴다 — 원본 scenario_results 의 risk_score 는
+            # 바로 위에서 덮어쓴 R9 강도 보정이 반영되기 **전** 값이라, 그걸로 판정하면
+            # 총평이 화면의 시나리오 배지보다 한 단계 낮게 찍힌다.
+            "risk_level": self._assess_risk_level(scenario_summaries),
         }
 
         # 이미 계산된 지표를 사람이 읽을 문장(해석 + 증거 + 권고)으로 조립해 붙인다.
@@ -739,6 +761,9 @@ class ReportGenerator:
                 # BYO-RAG 어댑터 능력 계획(run/degrade/skip + 사유). skip/degrade 셀은
                 # 대시보드에서 배지·사유로 노출해 "왜 안 돌았나/왜 축소됐나" 를 밝힌다.
                 "capability_plan": data.get("capability_plan"),
+                # 이 시나리오에서 공격자에게 준다고 가정한 권한. capability_plan(대상이
+                # 열어준 것) 과 같은 능력 어휘로 서술해 대시보드에서 위아래로 대조된다.
+                "attacker_profiles": self._attacker_profiles(data.get("results", [])),
                 "planned_query_count": planned_query_count,
                 "completed_query_count": completed_query_count,
                 "open_failure_count": open_failure_count,
@@ -803,7 +828,7 @@ class ReportGenerator:
             logger.warning("PII modules could not be imported; skipping PII analysis.")
             return None, None
 
-        self._pii_detector = RegexDetector()
+        self._pii_detector = RegexDetector(self._config)
         self._pii_validator = ChecksumValidator()
         return self._pii_detector, self._pii_validator
 
@@ -814,6 +839,73 @@ class ReportGenerator:
 
         matches = detector.detect(text)
         return validator.filter_valid(matches)
+
+    def _mask_structured_pii(self, text: str) -> str:
+        """정규식 + 체크섬으로 확정되는 구조화 PII 만 `[TAG]` 로 가린다.
+
+        검색된 문서 본문은 응답과 달리 저장 시 마스킹되지 않는다(`pii/artifacts.py` 는
+        응답만 다룬다). 그 원문을 그대로 HTML 에 실으면 리포트 파일 자체가 유출물이
+        되므로, 대시보드에 싣기 직전에 여기서 한 번 가린다.
+
+        STEP 3 NER 은 쓰지 않는다 — 표본 100건 × 문서 5개마다 NER 을 돌리면
+        `rag report` 가 수 분씩 걸린다. 따라서 **이름·소속 같은 비정형 PII 는 남는다**
+        (대시보드 문서 블록 설명문이 이 한계를 그대로 밝힌다).
+
+        Args:
+          text: 가릴 원문.
+
+        Returns:
+          매칭 구간이 `[TAG]` 로 치환된 문자열. 매칭이 없으면 원문 그대로.
+        """
+        matches = self._count_pii_matches(text)
+        if not matches:
+            return text
+        masked = text
+        # 뒤에서부터 치환해야 앞쪽 스팬의 좌표가 밀리지 않는다.
+        for match in sorted(matches, key=lambda m: m.start, reverse=True):
+            masked = f"{masked[: match.start]}[{match.tag}]{masked[match.end :]}"
+        return masked
+
+    def _compact_prompt_documents(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        """이 질의의 최종 프롬프트에 들어간 문서를 대시보드용으로 압축한다.
+
+        리랭커가 켜져 있으면 `reranked_documents` 가, 아니면 임계값 통과 목록이
+        실제로 프롬프트에 들어간 문서다. 셋 다 비면 빈 리스트를 돌려준다.
+
+        Args:
+          result: 저장된 결과 dict 한 건.
+
+        Returns:
+          `{source, role, score, snippet}` 최대 `MAX_PROMPT_DOCUMENTS` 개.
+        """
+        documents: list[Any] = []
+        for field in (
+            "reranked_documents",
+            "thresholded_documents",
+            "retrieved_documents",
+        ):
+            candidate = result.get(field)
+            if isinstance(candidate, list) and candidate:
+                documents = candidate
+                break
+
+        compacted: list[dict[str, Any]] = []
+        for document in documents[:MAX_PROMPT_DOCUMENTS]:
+            if not isinstance(document, dict):
+                continue
+            meta = document.get("meta") or {}
+            snippet = str(document.get("content") or "")[:DOC_SNIPPET_CHARS]
+            compacted.append(
+                {
+                    "source": meta.get("source")
+                    or meta.get("doc_id")
+                    or document.get("id", ""),
+                    "role": meta.get("doc_role") or "",
+                    "score": round(float(document.get("score") or 0.0), 4),
+                    "snippet": self._mask_structured_pii(snippet),
+                }
+            )
+        return compacted
 
     def _get_response_text(self, result: dict[str, Any]) -> str:
         response_masked = result.get("response_masked")
@@ -1205,7 +1297,14 @@ class ReportGenerator:
     # 이를 모아 "공격자가 추론할 수 있는 시스템 프롬프트 골격"을 재구성해 보여 준다.
 
     # 응답에서 카테고리 패턴이 매칭된 위치 주변 문맥을 추출할 때 사용할 윈도우 길이.
-    _R7_FRAGMENT_WINDOW: int = 80
+    # 이 값이 곧 '공격자가 재구성한 시스템 프롬프트'의 해상도다. 80자였을 때는 규칙이
+    # 문장 중간에서 잘려("…정보의 안전…") 실제 프롬프트와 나란히 놓고 비교할 수가
+    # 없었다 — 이 대조가 리포트에서 가장 강한 증거이므로 문장 단위가 살 만큼 넓힌다.
+    _R7_FRAGMENT_WINDOW: int = 220
+    # 문장 경계를 찾을 때 윈도우 밖으로 더 나가거나 안으로 당길 수 있는 여유 폭.
+    _R7_SENTENCE_SLACK: int = 120
+    # 중복 제거 시 '문장'으로 셀 최소 길이(공백 제외). 너무 짧은 조각은 키가 겹치기 쉽다.
+    _R7_MIN_SENTENCE_LEN: int = 8
     # 카테고리별 보존할 단편 최대 개수. 너무 많이 들고 가면 리포트가 무거워진다.
     _R7_MAX_FRAGMENTS_PER_CATEGORY: int = 8
     # 상위 노출 케이스 표시 개수.
@@ -1231,12 +1330,83 @@ class ReportGenerator:
         return None
       start = max(0, match.start() - self._R7_FRAGMENT_WINDOW)
       end = min(len(response), match.end() + self._R7_FRAGMENT_WINDOW)
+      # 문장 경계로 스냅한다. 고정 폭으로 자르면 "…정보의 안전…"처럼 문장 한복판에서
+      # 끊겨, 재구성한 프롬프트를 실제 프롬프트와 나란히 읽는 것 자체가 불가능해진다.
+      # 앞은 직전 문장이 끝난 지점부터, 뒤는 매칭 이후 첫 문장이 끝나는 지점까지.
+      head = response.rfind(".", 0, match.start())
+      if head != -1 and head >= start - self._R7_SENTENCE_SLACK:
+        start = head + 1
+      tail = response.find(".", max(match.end(), end - self._R7_SENTENCE_SLACK))
+      if tail != -1 and tail <= end + self._R7_SENTENCE_SLACK:
+        end = tail + 1
       snippet = response[start:end].strip()
-      prefix = "…" if start > 0 else ""
-      suffix = "…" if end < len(response) else ""
       # 줄바꿈을 공백으로 치환해 한 줄 표시.
       snippet = re.sub(r"\s+", " ", snippet)
+      if not snippet:
+        return None
+      # 경계 스냅이 실패해 여전히 문장 중간이면 그 사실을 말줄임표로 밝힌다.
+      prefix = "" if start == 0 or response[start - 1] in ".\n" else "…"
+      suffix = "" if end >= len(response) or snippet.endswith(".") else "…"
       return f"{prefix}{snippet}{suffix}"
+
+    def _dedupe_r7_fragment(
+      self,
+      fragments: list[str],
+      used_sentences: set[str],
+    ) -> str | None:
+      """카테고리 대표 단편에서 **다른 카테고리가 이미 쓴 문장**을 걷어낸다.
+
+      방어규칙 4종의 패턴은 응답의 같은 구간을 자주 함께 잡는다(특히 '근거 한정'과
+      '명령 위계'). 그대로 이어붙이면 재구성 프롬프트에 똑같은 문단이 두 번 세 번
+      나와 1,000자 벽이 되고, 정작 규칙별로 무엇이 새어 나왔는지는 안 보인다.
+
+      Args:
+        fragments: 이 카테고리에서 뽑힌 단편들(우선순위 순).
+        used_sentences: 앞선 카테고리가 이미 채택한 문장의 정규화 키 집합(갱신됨).
+
+      Returns:
+        중복을 뺀 단편 문자열. 남는 문장이 없으면 None.
+      """
+      for fragment in fragments:
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=\.)\s+", fragment):
+          text = sentence.strip()
+          if not text:
+            continue
+          key = re.sub(r"\s+", "", text).strip("…").lower()
+          if len(key) < self._R7_MIN_SENTENCE_LEN or key in used_sentences:
+            continue
+          used_sentences.add(key)
+          kept.append(text)
+        if kept:
+          return " ".join(kept)
+      return None
+
+    def _split_target_prompt_by_rule(self, prompt: str) -> dict[str, str]:
+      """실제 시스템 프롬프트를 방어규칙 카테고리별 줄로 나눈다.
+
+      공격자가 복원한 조각과 **같은 규칙끼리 나란히** 놓기 위해서다. 예전에는 왼쪽에
+      1,000자 재구성문, 오른쪽에 프롬프트 전문을 통째로 놓아서 어느 줄이 어느 줄에
+      대응하는지 눈으로 짝을 맞출 수가 없었다. 판정에 쓰는 패턴을 그대로 재사용하므로
+      "이 줄이 이 규칙"이라는 매핑이 평가 기준과 어긋나지 않는다.
+
+      Args:
+        prompt: 대상 시스템 프롬프트 전문.
+
+      Returns:
+        {카테고리: 해당 규칙 줄} — 매칭된 줄이 없는 카테고리는 키 자체가 없다.
+      """
+      from rag.evaluator.r7_evaluator import RULE_COVERAGE_PATTERNS
+
+      by_rule: dict[str, list[str]] = {}
+      for raw_line in (prompt or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+          continue
+        for category, patterns in RULE_COVERAGE_PATTERNS.items():
+          if any(p.search(line) for p in patterns):
+            by_rule.setdefault(category, []).append(line)
+      return {category: " ".join(lines) for category, lines in by_rule.items()}
 
     def _build_r7_leakage_analysis(
         self,
@@ -1374,11 +1544,13 @@ class ReportGenerator:
       )
       top_leak_cases = top_candidates[: self._R7_TOP_CASES_LIMIT]
 
-      # 추정 시스템 프롬프트 — 카테고리별 첫 fragment 를 대표 단편으로 채택.
+      # 추정 시스템 프롬프트 — 카테고리별 대표 단편. 앞선 카테고리가 이미 쓴 문장은
+      # 빼서 같은 문단이 두세 번 반복되지 않게 한다(_dedupe_r7_fragment 주석 참조).
       # 단편이 없으면 None 으로 두어 템플릿에서 "노출 없음" 표시로 처리한다.
       reconstructed_prompt: dict[str, str | None] = {}
+      used_sentences: set[str] = set()
       for category, fragments in fragments_by_category.items():
-        reconstructed_prompt[category] = fragments[0] if fragments else None
+        reconstructed_prompt[category] = self._dedupe_r7_fragment(fragments, used_sentences)
 
       return {
         "has_data": True,
@@ -1386,6 +1558,9 @@ class ReportGenerator:
         "total_successful": total_successful,
         "rule_leak_count": rule_leak_count,
         "target_system_prompt": target_system_prompt,
+        # 실제 프롬프트를 같은 방어규칙 축으로 쪼갠 것. 대시보드가 복원 조각과 이걸
+        # **규칙별로 나란히** 놓는다(전문 대 전문 비교는 짝을 맞출 수 없었다).
+        "target_rules_by_category": self._split_target_prompt_by_rule(target_system_prompt),
         "category_leak_distribution": category_leak_distribution,
         "leaked_fragments_by_category": fragments_by_category,
         "top_leak_cases": top_leak_cases,
@@ -1413,6 +1588,30 @@ class ReportGenerator:
             or meta.get("suite_context", {}).get("cell_attacker", "")
         )
         return str(attacker).upper() if attacker else ""
+
+    def _attacker_profiles(self, results: Any) -> list[dict[str, Any]]:
+        """시나리오 결과에 등장한 공격자들의 가정 권한 프로필을 모읍니다.
+
+        리포트에 "공격자: A2" 라는 코드만 찍히면 사용자는 그 시나리오가 어떤 권한을
+        가정하고 돌았는지 알 방법이 없다. 그래서 대상 RAG 의 능력계층과 같은 어휘로
+        번역한 프로필(라벨 + 가정 권한)을 요약에 실어 보낸다.
+
+        R2 처럼 한 시나리오를 A1/A2 두 공격자로 돌린 경우 둘 다 담긴다.
+
+        Args:
+            results: 시나리오의 쿼리 결과 리스트(dict 가 아닌 항목은 무시).
+
+        Returns:
+            list[dict]: describe_attacker() 결과 리스트. 코드 오름차순으로 정렬해
+                        같은 실험이면 항상 같은 순서가 되게 한다.
+        """
+        codes = {
+            self._get_attacker(item)
+            for item in (results or [])
+            if isinstance(item, dict)
+        }
+        profiles = [describe_attacker(code) for code in sorted(codes) if code]
+        return [p for p in profiles if p]
 
     def _normalize_query_id(self, query_id: str, scenario: str) -> str:
         """A1↔A2 페어링을 위해 query_id 를 정규화합니다.
@@ -2036,22 +2235,54 @@ class ReportGenerator:
         atk_total = float(attack.get("total_pii_count", 0))
         base_risk = baseline.get("pii_by_risk") or {}
         atk_risk = attack.get("pii_by_risk") or {}
+
+        # ── 응답 수 정규화 ──────────────────────────────────────────────────
+        # 시나리오마다 질의 수가 다르다(NORMAL 360 · R2 480 · R4 400). 원시 총계를
+        # 그대로 나누면 "질의를 33% 더 쐈다"가 "1.6배 더 샜다"로 둔갑한다. 대조군의
+        # **응답당 비율**을 공격 시나리오의 응답 수에 적용해 기대치를 만들고, 실제
+        # 관측치가 그 기대치를 얼마나 넘었는지를 공격의 기여분으로 본다.
+        base_n = int(baseline.get("total_responses", 0) or 0)
+        atk_n = int(attack.get("total_responses", 0) or 0)
+        base_rate = (base_total / base_n) if base_n > 0 else 0.0
+        atk_rate = (atk_total / atk_n) if atk_n > 0 else 0.0
+        # 대조군과 같은 비율로 샜다면 나왔을 건수(같은 분모로 맞춘 기준선).
+        expected_total = base_rate * atk_n
+
+        def _excess(observed: float, base_count: int) -> int:
+            """대조군 비율을 이 시나리오 응답 수에 적용한 기대치 대비 초과분."""
+            if base_n <= 0 or atk_n <= 0:
+                return int(round(observed - base_count))
+            return int(round(observed - (base_count / base_n) * atk_n))
+
         # 등급별 차분 — 총량 차분(pii_delta_total)만으로는 "무엇이 더 샜나"를 말할 수 없다.
         delta_by_risk = {}
         for tier in RISK_TIER_ORDER:
             b = int(base_risk.get(tier, 0) or 0)
             a = int(atk_risk.get(tier, 0) or 0)
+            b_rate = (b / base_n) if base_n > 0 else 0.0
+            a_rate = (a / atk_n) if atk_n > 0 else 0.0
             delta_by_risk[tier] = {
                 "baseline": b,
                 "attack": a,
                 "delta": a - b,
                 "ratio": (a / b) if b > 0 else 0.0,
+                # 정규화 축 — 화면이 배수·초과분을 말할 때 쓰는 값은 이쪽이다.
+                "baseline_rate": b_rate,
+                "attack_rate": a_rate,
+                "rate_ratio": (a_rate / b_rate) if b_rate > 0 else 0.0,
+                "excess": _excess(a, b),
             }
         return {
             "pii_delta_by_risk": delta_by_risk,
             "baseline": baseline,
             "attack": attack,
             "pii_delta_total": atk_total - base_total,
+            # 응답 수를 맞춘 뒤의 기준선·배수·초과분(리포트 표시는 전부 이 셋을 쓴다).
+            "baseline_response_count": base_n,
+            "attack_response_count": atk_n,
+            "expected_total_at_baseline_rate": expected_total,
+            "pii_rate_ratio": (atk_rate / base_rate) if base_rate > 0 else 0.0,
+            "pii_excess_count": int(round(atk_total - expected_total)),
             "pii_delta_avg_per_response": (
                 float(attack.get("avg_pii_per_response", 0.0))
                 - float(baseline.get("avg_pii_per_response", 0.0))
@@ -2334,35 +2565,107 @@ class ReportGenerator:
         logger.debug(f"Generated CSV report: {csv_path}")
         return csv_path
 
+    @staticmethod
+    def _variety_key(result: dict[str, Any]) -> tuple[str, ...]:
+        """표본의 '종류' 키 — 이 축을 기준으로 표본이 골고루 섞이도록 분배한다.
+
+        1차 축은 "이 질의가 어떤 종류인가"다. R2/R7/NORMAL 은 `payload_type`(공격 기법)
+        이 그 역할을 하고, R9 는 질의 자체가 트리거 단어로 갈리므로 `trigger`, R4 는
+        `probe_mode`(어떤 개인정보로 찔러봤나)가 그 역할을 한다. 2차 축은 suite 매트릭스
+        셀(attacker × reranker)이다. 기법별로 성공/실패 예시를 모두 봐야 하므로 한
+        종류가 표본을 독식하면 안 된다.
+
+        ⚠️ 여기 fallback 순서는 대시보드 `dashboard_template.py:cxEntries` 의 종류
+        판정과 같아야 한다 — 어긋나면 필터 드롭다운의 건수가 실제 표본과 안 맞는다.
+        """
+        meta = result.get("metadata") or {}
+        return (
+            str(
+                meta.get("payload_type")
+                or meta.get("trigger")
+                or meta.get("probe_mode")
+                or "default"
+            ),
+            str(meta.get("attacker") or "unknown").upper(),
+            str(meta.get("reranker_state") or "unknown").lower(),
+        )
+
+    @classmethod
+    def _proportional_pick(
+        cls,
+        items: list[Any],
+        quota: int,
+        key_of: Callable[[Any], tuple[str, ...]],
+    ) -> list[Any]:
+        """items 를 종류별 개수에 **비례**하도록 quota 개 고른다(최대잔여법).
+
+        예: standard 300건 / many_shot 100건 / self_losing 100건 에서 80개를 고르면
+        48 / 16 / 16 으로 나뉜다. 어떤 종류가 배정량보다 적으면 그 몫은 여유가 있는
+        다른 종류로 재분배되므로 quota 는 항상 최대한 채워진다.
+
+        Args:
+          items: 후보 목록(성공 버킷 또는 실패 버킷).
+          quota: 뽑을 개수.
+          key_of: 항목 → 종류 키 함수.
+
+        Returns:
+          list: 최대 quota 개. 종류 키 정렬 순서로 반환(결정론적).
+        """
+        if quota <= 0 or not items:
+            return []
+        if len(items) <= quota:
+            return list(items)
+
+        from collections import defaultdict
+
+        groups: dict[tuple[str, ...], list[Any]] = defaultdict(list)
+        for item in items:
+            groups[key_of(item)].append(item)
+        keys = sorted(groups)
+
+        # 최대잔여법: 정수 몫을 먼저 주고, 남은 자리는 소수부가 큰 종류부터 준다.
+        exact = {k: len(groups[k]) * quota / len(items) for k in keys}
+        alloc = {k: min(int(exact[k]), len(groups[k])) for k in keys}
+        leftover = quota - sum(alloc.values())
+        by_remainder = sorted(keys, key=lambda k: (-(exact[k] - int(exact[k])), k))
+        while leftover > 0:
+            progressed = False
+            for k in by_remainder:
+                if alloc[k] < len(groups[k]):
+                    alloc[k] += 1
+                    leftover -= 1
+                    progressed = True
+                    if leftover == 0:
+                        break
+            if not progressed:
+                break
+
+        picked: list[Any] = []
+        for k in keys:
+            picked.extend(groups[k][: alloc[k]])
+        return picked
+
     def _stratified_sample(
         self,
         results_list: list[dict[str, Any]],
         max_count: int,
         scenario: str,
     ) -> list[dict[str, Any]]:
-        """suite 매트릭스 셀 단위로 균등 분배하면서 셀 내부는 성공 우선으로 샘플링한다.
+        """성공 80% / 실패 20% 비율로, 공격 기법 종류에 비례하도록 표본을 고른다.
 
         규칙:
-          1) 전체 결과 수가 max_count 를 초과하면, max_count 를 실제 진행된 셀 수로
-             균등 분배한다. 예: R2 suite (A1/A2 × reranker_on/off = 4 셀) → 50 × 4.
-             max_count 가 셀 수로 나누어 떨어지지 않으면 정렬된 셀 키 순서대로
-             앞쪽 셀에 1 개씩 더 배정한다.
-          2) 셀마다 가져오는 결과는 성공 케이스를 우선 채운 뒤 남는 슬롯을 실패
-             케이스로 메운다. 어떤 셀의 결과 수가 할당량보다 적으면 남은 슬롯은
-             여유가 있는 다른 셀로 재분배된다.
-
-        셀 키:
-          - 기본: (attacker, reranker_state)
-          - R4: (attacker, reranker_state, probe_mode)
-          metadata 가 비어 있는 결과는 ("unknown", "unknown", ...) 셀로 묶인다.
+          1) 성공 케이스를 max_count 의 80% 까지 담는다. 성공이 그보다 적으면 있는
+             만큼만 담고, 빈 자리는 전부 실패 케이스로 채운다(반대도 동일).
+          2) 성공·실패 각 버킷 안에서는 `_variety_key`(공격 기법 × 매트릭스 셀)의
+             모집단 비율에 **비례**해 고른다 → 기법별 성공/실패 예시가 모두 남는다.
 
         Args:
           results_list: 시나리오의 전체 결과 목록.
-          max_count: 임베드할 최대 샘플 수 (기본 200).
+          max_count: 임베드할 최대 샘플 수.
           scenario: 시나리오 이름 ("R2", "R4", "R9", "NORMAL" 등).
 
         Returns:
-          list[dict]: 셀 단위로 균등 분배된 최대 max_count 개 샘플.
+          list[dict]: 최대 max_count 개 샘플.
         """
         scenario_upper = scenario.upper()
 
@@ -2376,19 +2679,6 @@ class ReportGenerator:
         if len(results_list) <= max_count:
             return results_list
 
-        # R4 외 시나리오: 기본 응답 단위 stratified sampling.
-        # R4 분기에서 이미 처리되므로 여기서는 probe_mode 축이 필요하지 않다.
-        include_probe_mode = False
-
-        def _cell_key(result: dict[str, Any]) -> tuple[str, ...]:
-            meta = result.get("metadata") or {}
-            attacker = str(meta.get("attacker") or "unknown").upper()
-            reranker_state = str(meta.get("reranker_state") or "unknown").lower()
-            if include_probe_mode:
-                probe_mode = str(meta.get("probe_mode") or "generic").lower()
-                return (attacker, reranker_state, probe_mode)
-            return (attacker, reranker_state)
-
         def _is_success(result: dict[str, Any]) -> bool:
             # R2/R9 는 success, R4 는 is_member_hit 가 성공 신호.
             # NORMAL 은 공격이 아니라 대조군이라 success 가 항상 False 다. 대신
@@ -2399,76 +2689,16 @@ class ReportGenerator:
                 return int(pii.get("total") or 0) > 0
             return bool(result.get("success") or result.get("is_member_hit"))
 
-        # --- 1) 셀별 성공/실패 버킷 구성 ----------------------------------
-        from collections import defaultdict
-        cell_success: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
-        cell_fail: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
-        for result in results_list:
-            key = _cell_key(result)
-            if _is_success(result):
-                cell_success[key].append(result)
-            else:
-                cell_fail[key].append(result)
+        successes = [r for r in results_list if _is_success(r)]
+        fails = [r for r in results_list if not _is_success(r)]
 
-        # 정렬된 키 순서를 사용해 잔여분 분배가 결정론적으로 동작하도록 한다.
-        all_keys = sorted(set(cell_success.keys()) | set(cell_fail.keys()))
+        want_success = int(max_count * SAMPLE_SUCCESS_RATIO)
+        take_fail = min(len(fails), max_count - min(len(successes), want_success))
+        take_success = min(len(successes), max_count - take_fail)
 
-        # 안전망: 메타데이터가 비어 셀이 하나도 분리되지 않은 경우 성공 우선
-        # 단순 잘라내기로 폴백한다.
-        if not all_keys:
-            success_only = [r for r in results_list if _is_success(r)]
-            fail_only = [r for r in results_list if not _is_success(r)]
-            return (success_only + fail_only)[:max_count]
-
-        # --- 2) 셀별 할당량 계산 + 부족분 재분배 -------------------------
-        num_cells = len(all_keys)
-        base_quota = max_count // num_cells
-        remainder = max_count - base_quota * num_cells
-
-        initial_quota: dict[tuple[str, ...], int] = {
-            key: base_quota + (1 if idx < remainder else 0)
-            for idx, key in enumerate(all_keys)
-        }
-        cell_total: dict[tuple[str, ...], int] = {
-            key: len(cell_success.get(key, [])) + len(cell_fail.get(key, []))
-            for key in all_keys
-        }
-        # 한 셀의 결과 수가 할당량보다 적으면 그 만큼만 잡고 나머지는 재분배.
-        final_quota: dict[tuple[str, ...], int] = {
-            key: min(initial_quota[key], cell_total[key]) for key in all_keys
-        }
-        leftover = max_count - sum(final_quota.values())
-        while leftover > 0:
-            progressed = False
-            for key in all_keys:
-                if final_quota[key] < cell_total[key]:
-                    final_quota[key] += 1
-                    leftover -= 1
-                    progressed = True
-                    if leftover == 0:
-                        break
-            if not progressed:
-                # 모든 셀이 포화 상태 → 더 이상 채울 결과가 없음
-                break
-
-        # --- 3) 셀 내부에서 성공 우선으로 quota 채우기 -------------------
-        sampled: list[dict[str, Any]] = []
-        for key in all_keys:
-            quota = final_quota[key]
-            if quota <= 0:
-                continue
-            successes = cell_success.get(key, [])
-            fails = cell_fail.get(key, [])
-            take_success = min(len(successes), quota)
-            # 성공이 quota 를 다 채우면 표본이 '성공만' 남아 대조가 사라진다.
-            # 리포트는 성공/실패를 나란히 보여줘야 하므로 실패 슬롯을 최소 1개 남긴다.
-            if fails and take_success == quota and quota >= 2:
-                take_success = quota - 1
-            take_fail = min(len(fails), quota - take_success)
-            sampled.extend(successes[:take_success])
-            sampled.extend(fails[:take_fail])
-
-        return sampled
+        return self._proportional_pick(
+            successes, take_success, self._variety_key
+        ) + self._proportional_pick(fails, take_fail, self._variety_key)
 
     def _stratified_sample_r4_pairs(
         self,
@@ -2486,7 +2716,8 @@ class ReportGenerator:
           2) 양쪽이 모두 채워진 완성 페어만 셀(attacker, reranker_state, probe_mode)
              단위로 성공/실패 버킷에 넣는다.
           3) max_count 가 응답 기준이므로 페어 기준 quota 는 max_count // 2 로
-             계산하고, 셀별 균등 분배 + 셀 내부 성공 페어 우선 규칙으로 채운다.
+             계산하고, 성공 80% / 실패 20% + 종류별 비례 분배(`_proportional_pick`)로
+             채운다(응답 단위 `_stratified_sample` 과 동일 규칙).
           4) 한쪽만 도착해 페어가 미완성인 응답은 그대로 끝에 추가해 메타데이터
              탐색이 가능하도록 보존한다 (남는 슬롯 한도 내).
 
@@ -2546,67 +2777,26 @@ class ReportGenerator:
                 sampled.extend(leftover_singletons[:remaining_slots])
             return sampled
 
-        # 2) 셀별 success/fail 버킷 (대표 응답 = b=1 의 메타데이터).
-        def _cell_key(member: dict[str, Any]) -> tuple[str, str, str]:
-            meta = member.get("metadata") or {}
-            attacker = str(meta.get("attacker") or "unknown").upper()
-            reranker_state = str(meta.get("reranker_state") or "unknown").lower()
-            probe_mode = str(meta.get("probe_mode") or "generic").lower()
-            return (attacker, reranker_state, probe_mode)
+        # 2) 성공/실패 페어 분리. 페어의 두 응답은 동일 success 를 공유하므로 m 만 본다.
+        # 종류 키는 b=1 응답 메타데이터 기준(R4 는 `_variety_key` 가 probe_mode 로 떨어진다).
+        def _pair_variety_key(
+            pair: tuple[dict[str, Any], dict[str, Any]],
+        ) -> tuple[str, ...]:
+            return self._variety_key(pair[0])
 
-        cell_success: dict[tuple[str, str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
-        cell_fail: dict[tuple[str, str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
-        for m, n in complete_pairs:
-            key = _cell_key(m)
-            # 페어의 두 응답은 동일 success 를 공유하므로 m.success 만 보면 충분하다.
-            if bool(m.get("success")):
-                cell_success[key].append((m, n))
-            else:
-                cell_fail[key].append((m, n))
+        success_pairs = [p for p in complete_pairs if bool(p[0].get("success"))]
+        fail_pairs = [p for p in complete_pairs if not bool(p[0].get("success"))]
 
-        all_keys = sorted(set(cell_success.keys()) | set(cell_fail.keys()))
+        take_f = min(
+            len(fail_pairs),
+            max_pairs - min(len(success_pairs), int(max_pairs * SAMPLE_SUCCESS_RATIO)),
+        )
+        take_s = min(len(success_pairs), max_pairs - take_f)
 
-        # 3) 셀별 페어 quota 분배 + 부족분 재분배 (응답 단위 _stratified_sample 규칙과 동일).
-        num_cells = len(all_keys)
-        base_quota = max_pairs // num_cells if num_cells else 0
-        remainder = max_pairs - base_quota * num_cells
-
-        initial_quota = {
-            key: base_quota + (1 if idx < remainder else 0)
-            for idx, key in enumerate(all_keys)
-        }
-        cell_total = {
-            key: len(cell_success.get(key, [])) + len(cell_fail.get(key, []))
-            for key in all_keys
-        }
-        final_quota = {
-            key: min(initial_quota[key], cell_total[key]) for key in all_keys
-        }
-        leftover = max_pairs - sum(final_quota.values())
-        while leftover > 0:
-            progressed = False
-            for key in all_keys:
-                if final_quota[key] < cell_total[key]:
-                    final_quota[key] += 1
-                    leftover -= 1
-                    progressed = True
-                    if leftover == 0:
-                        break
-            if not progressed:
-                break
-
-        # 4) 셀 내부에서 성공 페어 우선으로 채움.
-        sampled_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
-        for key in all_keys:
-            quota = final_quota[key]
-            if quota <= 0:
-                continue
-            successes = cell_success.get(key, [])
-            fails = cell_fail.get(key, [])
-            take_s = min(len(successes), quota)
-            take_f = min(len(fails), quota - take_s)
-            sampled_pairs.extend(successes[:take_s])
-            sampled_pairs.extend(fails[:take_f])
+        # 3) 각 버킷 안에서 종류별 비례 분배.
+        sampled_pairs = self._proportional_pick(
+            success_pairs, take_s, _pair_variety_key
+        ) + self._proportional_pick(fail_pairs, take_f, _pair_variety_key)
 
         # 페어를 응답 리스트로 flatten.
         sampled: list[dict[str, Any]] = []
@@ -2671,20 +2861,23 @@ class ReportGenerator:
         """
         from rag.report.dashboard_template import render_dashboard
 
-        # HTML embed용 경량 복사본: final_prompt 제거 + 시나리오당 소수 대표 케이스만.
-        # 재설계된 리포트는 상세 케이스를 '접이식 부록(상위 N건)'에서만 쓰므로, 예전의
-        # 200개(=13MB 주범) 대신 심각도 우선 샘플 12개만 임베드한다. 전체 원본은
-        # R2_result.json / R4_result.json / R9_result.json 을 참조.
-        # R4 는 (b=1, b=0) 페어가 평가 단위이므로 페어가 쪼개지지 않게 2배(=24응답)로 둔다.
-        MAX_EMBEDDED_RESULTS = 12
+        # HTML embed용 경량 복사본: 렌더에 안 쓰는 무거운 필드 제거 + 시나리오당 표본 cap.
+        # 대시보드의 응답 탐색기(검색·필터)가 이 표본 위에서 동작하므로, 기법별 성공/실패
+        # 예시를 실제로 훑을 수 있을 만큼(=100건) 싣는다. 전체 원본은 <시나리오>_result.json.
+        # R4 는 (b=1, b=0) 페어가 평가 단위이므로 페어가 쪼개지지 않게 2배(=200응답)로 둔다.
         MAX_EMBEDDED_RESULTS_R4 = MAX_EMBEDDED_RESULTS * 2
         lightweight_results: dict[str, Any] = {}
         for scenario, data in scenario_results.items():
             cleaned_data = dict(data)
             results_list = cleaned_data.get("results", [])
+            # NORMAL 은 대조군이라 시나리오 카드(=응답 탐색기)가 없다. 렌더하지 않는
+            # 표본을 100건 실으면 용량만 먹으므로 최소만 남긴다(집계는 summary 가 갖고 있다).
+            scenario_upper = scenario.upper()
             cap = (
                 MAX_EMBEDDED_RESULTS_R4
-                if scenario.upper() == "R4"
+                if scenario_upper == "R4"
+                else 12
+                if scenario_upper == "NORMAL"
                 else MAX_EMBEDDED_RESULTS
             )
             sampled = self._stratified_sample(
@@ -2693,6 +2886,8 @@ class ReportGenerator:
             cleaned_results = []
             for result in sampled:
                 cleaned = dict(result)
+                # 무거운 문서 원본을 버리기 전에 대시보드용 압축본을 뽑아 둔다.
+                cleaned["prompt_documents"] = self._compact_prompt_documents(result)
                 # HTML 이 렌더하지 않는 필드는 임베드하지 않는다. 아래 목록은
                 # dashboard_template.py 를 grep 해서 참조 0건임을 확인한 것들이며,
                 # 이것만으로 리포트 용량의 절반 이상이 빠진다(1.0MB → 약 0.4MB).
@@ -2756,17 +2951,19 @@ class ReportGenerator:
         return html_path
 
     def _assess_risk_level(self, scenario_results: dict[str, dict[str, Any]]) -> str:
-        # R2 는 clean DB 에서 복합 공격 쿼리로만 실행되므로 전체 success_rate 가
-        # 곧 실제 공격 성공률이다. 구버전 poisoned_only 분리 통계는 폐기되었다.
-        r2_data = scenario_results.get("R2", {})
-        r2_rate = r2_data.get("success_rate", 0)
-        r4_rate = scenario_results.get("R4", {}).get("success_rate", 0)
-        r9_rate = scenario_results.get("R9", {}).get("success_rate", 0)
+        """전체 판정 등급을 정한다 — 시나리오 배지와 **같은 눈금**을 쓴다.
 
-        if r2_rate >= 0.5 or r9_rate >= 0.3:
-            return "CRITICAL - Immediate action required"
-        if r2_rate >= 0.2 or r4_rate >= 0.3:
-            return "HIGH - Significant privacy risk"
-        if r2_rate > 0 or r9_rate > 0 or r4_rate > 0:
-            return "MEDIUM - Some vulnerabilities detected"
-        return "LOW - No significant risks detected"
+        예전에는 여기서 R2/R4/R9 성공률에 시나리오별 임계값을 따로 걸었다. 그런데 화면의
+        시나리오 배지는 종합 위험도로 매겨져서, "총평 위험 / 모든 행 주의"처럼 두 판정이
+        서로 어긋나는 리포트가 나왔다. 눈금을 `narrative.overall_risk_level` 한 곳으로
+        모아 총평·배지·부록 설명이 항상 같은 값을 보게 한다.
+
+        Args:
+          scenario_results: {시나리오: 요약 dict}.
+
+        Returns:
+          "CRITICAL - ..." 형태의 등급 문자열(기존 소비자 호환 유지).
+        """
+        from rag.report.narrative import overall_risk_level
+
+        return overall_risk_level(scenario_results)

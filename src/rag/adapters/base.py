@@ -58,13 +58,19 @@ class Capability(str, Enum):
 
 
 # 리포트·로그에 사람이 읽을 수 있게 노출하기 위한 한국어 라벨.
+#
+# 이 라벨은 성격이 다른 두 문장에 동시에 들어간다 — 어댑터 쪽 사유("권장 능력 부족으로
+# 축소 진단: …")와 공격자 쪽 권한("내용 인지 관찰자 (A2) — 질의 · 민감 문서 식별").
+# 그래서 양쪽에서 다 읽히는 **행위 표현**으로 통일한다. 구현 어휘(인덱스·트레이스·선언·
+# 영문 병기)는 쓰지 않는다 — 리포트를 읽는 사람은 우리 내부 구조를 모른다.
+# 리포트 본문에서 이미 쓰는 말과 맞춘다: "질의", "이 질의가 근거로 삼은 문서" → "근거 문서".
 CAPABILITY_LABELS: dict[Capability, str] = {
-  Capability.QUERY: "질의(query)",
-  Capability.SYSTEM_PROMPT: "시스템 프롬프트 선언",
-  Capability.RETRIEVAL_TRACE: "검색 원문 노출",
-  Capability.DOC_LABELS: "민감 문서 라벨 선언",
-  Capability.INDEX_REBUILD: "반사실 인덱스 재구성",
-  Capability.INDEX_WRITE: "문서 주입",
+  Capability.QUERY: "질의",
+  Capability.SYSTEM_PROMPT: "시스템 프롬프트 열람",
+  Capability.RETRIEVAL_TRACE: "근거 문서 열람",
+  Capability.DOC_LABELS: "민감 문서 식별",
+  Capability.INDEX_REBUILD: "특정 문서 빼고 재구성",
+  Capability.INDEX_WRITE: "문서 추가",
 }
 
 

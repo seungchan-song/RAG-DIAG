@@ -316,12 +316,22 @@ def build_snapshot_provenance(
   if not index_manifest_hash and isinstance(index_manifest, dict) and index_manifest:
     index_manifest_hash = fingerprint_payload(index_manifest)
 
+  # 진단 대상 LLM. 설정에는 provider:auto 만 적혀 있을 수 있어서, 실행 시점에 실제로
+  # 고른 provider/model 을 여기서 확정해 남긴다 — 이게 없으면 리포트가 "어떤 모델을
+  # 진단했나"에 답하지 못하고 재현도 불가능해진다.
+  from rag.generator.generator import describe_generator
+
+  generator_identity = describe_generator(config)
+
   return {
     "code_version": _resolve_code_version(),
     "python_version": platform.python_version(),
     "platform": platform.platform(),
     "random_seed": config.get("experiment", {}).get("random_seed", ""),
     "embedding_model": config.get("embedding", {}).get("model_name", ""),
+    "generator_provider": generator_identity["provider"],
+    "generator_model": generator_identity["model"],
+    "generator_configured": generator_identity["configured"],
     "reranker_model": reranker_config.get(
       "model_name",
       config.get("reranker", {}).get("model_name", ""),

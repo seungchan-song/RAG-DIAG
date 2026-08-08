@@ -54,6 +54,34 @@ PII_RISK_TIERS: dict[str, set[str]] = {
 }
 RISK_TIER_ORDER = ("identifier", "contact", "context")
 
+# PII 태그 → 사용자에게 보여줄 한국어 이름. **사용자 노출 문구의 single source of truth** 다.
+# QT_/TMI_ 접두사는 우리 탐지 파이프라인의 내부 네임스페이스(정형/비정형)일 뿐인데,
+# 마스킹 자리표시자가 이걸 그대로 뱉어서 리포트에 "[TMI_EMAIL]" 같은 은어가 노출됐다.
+# 마스커(pii/masker.py)와 대시보드(report/dashboard_template.py:TAG_KO)가 함께 쓴다.
+PII_TAG_LABELS: dict[str, str] = {
+  # 정형 PII(QT_*) — step1_regex 15종
+  "QT_RRN": "주민등록번호", "QT_ARN": "외국인등록번호", "QT_FOREIGN": "외국인등록번호",
+  "QT_PASSPORT": "여권번호", "QT_DRIVER": "운전면허", "QT_DL": "운전면허",
+  "QT_LICENSE": "운전면허", "QT_CARD": "카드번호", "QT_ACCOUNT": "계좌번호",
+  "QT_BIZ": "사업자번호", "QT_MOBILE": "휴대전화", "QT_PHONE": "전화번호",
+  "QT_EMAIL": "이메일", "QT_ADDR": "주소", "QT_IP": "IP 주소", "QT_CAR": "차량번호",
+  "QT_AGE": "나이",
+  # 개인정보 33종 개편(2026-08) 신규 식별자
+  "EMPLOYEE_ID": "사원번호", "MEMBER_ID": "회원 ID", "PARTICIPANT_ID": "참가자 ID",
+  "USER_ID": "계정 ID", "ZIPCODE": "우편번호", "CITY": "도시",
+  # 비정형·문맥 PII(TMI_*) 및 NER 태그
+  "TMI_EMAIL": "이메일", "TMI_OCCUPATION": "직업·직장", "TMI_SITE": "사이트·계정",
+  "TMI_NATIONALITY": "국적",
+  "PS_NAME": "이름", "PS_POSITION": "직위", "PS_ORG": "소속",
+  "PER": "이름", "LOC": "주소·장소", "ORG": "기관·소속",
+  "DAT": "날짜", "TIM": "시간", "AFW": "작품·제품명",
+}
+
+
+def tag_label(tag: str) -> str:
+  """PII 태그를 사용자에게 보여줄 한국어 이름으로 바꾼다(모르는 태그는 원문 유지)."""
+  return PII_TAG_LABELS.get(str(tag), str(tag))
+
 
 def risk_tier(tag: str) -> str:
   """PII 태그의 위험 등급을 반환한다(identifier/contact/context)."""
@@ -104,7 +132,9 @@ class PIIClassifier:
     confirmed: list[ConfirmedPII] = []
 
     for match in regex_validated:
-      route = "A-2" if match.tag in {"QT_RRN", "QT_ARN", "QT_CARD"} else "A-1"
+      # A-2 = 체크섬을 실제로 통과한 항목. QT_ARN 은 검증 가능한 체크섬이 없어
+      # (step2_checksum docstring 참조) 구조 일치만으로 확정되므로 A-1 이다.
+      route = "A-2" if match.tag in {"QT_RRN", "QT_CARD"} else "A-1"
       confirmed.append(
         ConfirmedPII(
           tag=match.tag,

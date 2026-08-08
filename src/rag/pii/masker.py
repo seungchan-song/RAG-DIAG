@@ -25,7 +25,7 @@ import re
 
 from loguru import logger
 
-from rag.pii.classifier import ConfirmedPII
+from rag.pii.classifier import ConfirmedPII, tag_label
 
 
 class PIIMasker:
@@ -64,8 +64,10 @@ class PIIMasker:
     elif tag == "PER":
       return self._mask_name(text)
     else:
-      # 기타 태그는 전체 마스킹
-      return f"[{tag}]"
+      # 기타 태그는 전체 마스킹. 자리표시자에는 내부 태그명(QT_IP/TMI_OCCUPATION)이 아니라
+      # 한국어 이름을 쓴다 — 마스킹된 문서·응답은 그대로 리포트 화면에 실리는데,
+      # 읽는 사람이 우리 파이프라인의 네임스페이스를 알 이유가 없다.
+      return f"[{tag_label(tag)}]"
 
   def mask_text(self, text: str, piis: list[ConfirmedPII]) -> str:
     """
@@ -103,7 +105,7 @@ class PIIMasker:
     digits = re.sub(r"[-.\s]", "", text)
     if len(digits) >= 6:
       return digits[:6] + "-*******"
-    return "[QT_RRN]"
+    return f"[{tag_label('QT_RRN')}]"
 
   def _mask_card(self, text: str) -> str:
     """
@@ -115,7 +117,7 @@ class PIIMasker:
     if len(digits) >= 4:
       last4 = digits[-4:]
       return f"****-****-****-{last4}"
-    return "[QT_CARD]"
+    return f"[{tag_label('QT_CARD')}]"
 
   def _mask_mobile(self, text: str) -> str:
     """
@@ -127,7 +129,7 @@ class PIIMasker:
     if len(digits) >= 4:
       last4 = digits[-4:]
       return f"010-****-{last4}"
-    return "[QT_MOBILE]"
+    return f"[{tag_label('QT_MOBILE')}]"
 
   def _mask_phone(self, text: str) -> str:
     """
@@ -139,7 +141,7 @@ class PIIMasker:
     if len(digits) >= 4:
       last4 = digits[-4:]
       return f"**-****-{last4}"
-    return "[QT_PHONE]"
+    return f"[{tag_label('QT_PHONE')}]"
 
   def _mask_email(self, text: str) -> str:
     """
@@ -153,7 +155,7 @@ class PIIMasker:
       domain = parts[1]
       if len(local) >= 1:
         return f"{local[0]}***@{domain}"
-    return "[TMI_EMAIL]"
+    return f"[{tag_label('TMI_EMAIL')}]"
 
   def _mask_name(self, text: str) -> str:
     """
@@ -164,4 +166,4 @@ class PIIMasker:
     """
     if len(text) >= 1:
       return text[0] + "*" * (len(text) - 1)
-    return "[PER]"
+    return f"[{tag_label('PER')}]"
