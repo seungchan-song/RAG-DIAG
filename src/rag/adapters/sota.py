@@ -168,7 +168,7 @@ class SotaRagAdapter:
     if not documents_root:
       raise AdapterConfigError("adapter.type=sota 에는 adapter.documents_root 가 필요합니다.")
 
-    return cls(
+    adapter = cls(
       base_url=str(base_url),
       documents_root=str(documents_root),
       local_corpus_root=str(adapter_cfg.get("local_corpus_root", "data/documents/clean")),
@@ -179,6 +179,12 @@ class SotaRagAdapter:
       system_prompt=adapter_cfg.get("system_prompt"),
       timeout=float(adapter_cfg.get("timeout", 120.0)),
     )
+    # 지난 실행이 남긴 poison 을 질의가 시작되기 전에 걷어낸다(대조군 오염 차단).
+    # 여기가 런당 정확히 한 번만 도는 지점이다 — CLI 의 `_resolve_target_adapter` →
+    # `registry.create_target_adapter` 가 이 팩토리를 부르고, `build_variant()` 는
+    # 생성자를 직접 쓰므로 R4 반사실 인스턴스는 이 경로를 타지 않는다.
+    adapter.cleanup_stale_poison()
+    return adapter
 
   def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     """SOTA_RAG 에 POST 요청을 보내고 JSON 응답을 반환합니다(transport 주입 가능)."""
@@ -340,6 +346,51 @@ class SotaRagAdapter:
 
     logger.info("SotaRagAdapter.write_documents: poison {}건 업로드", count)
     return count
+
+  def cleanup_stale_poison(self) -> int:
+    """이전 실행이 남긴 R9 poison 문서 파일을 지웁니다.
+
+    `write_documents()` 는 poison 을 SOTA 문서 트리에 `.txt` 로 써넣는데 그걸 지우는
+    주체가 아무도 없었다. 방치하면 **다음 실행의 NORMAL(대조군)이 지난 회차 poison 을
+    검색**해, "공격이 대조군보다 PII 를 얼마나 더 노출했나" 라는 이 프로젝트의 핵심
+    비교가 통째로 깨진다. corpus 트리거 모드(`attack.r9.trigger_source: "corpus"`)에서는
+    회당 250건까지 쌓이므로 방치 비용이 특히 크다. 덤으로 `R9InjectionAttack.
+    _detect_poison_retrieval` 이 지난 회차 poison 도 "검색됨" 으로 세어
+    `blocked_at_retrieval_count` 를 과소집계하는 것도 함께 막는다.
+
+    삭제 대상은 **우리가 만든 `poison-*.txt` 뿐**이다 — poison 의 doc_id 는
+    `attack/query_generator.py:generate_r9_payloads` 가 항상 `poison-` 접두사로
+    만든다. 사용자가 같은 폴더에 둔 다른 문서는 건드리지 않는다.
+
+    ponytail: 파일만 지운다. SOTA 인덱스에 이미 들어간 임베딩은 재인제스트 전까지
+    남는다(SOTA_RAG 에 문서 삭제 API 가 없다 — `/api/v1/query` 와 `/api/v1/ingest`
+    뿐). 대상에 delete 엔드포인트가 생기면 여기서 함께 호출할 것.
+
+    Returns:
+      int: 실제로 지운 파일 수. poison 폴더가 없으면 0(정상 — 첫 실행).
+    """
+    upload_dir = Path(self.documents_root) / self.poison_upload_dir
+    if not upload_dir.is_dir():
+      return 0
+
+    removed = 0
+    for path in sorted(upload_dir.glob("poison-*.txt")):
+      try:
+        path.unlink()
+        removed += 1
+      except OSError as error:
+        logger.warning("stale poison 삭제 실패: {} ({})", path, error)
+
+    if removed:
+      # WARNING 인 이유: 남아 있었다는 건 지난 실행이 정리 없이 끝났다는 뜻이고,
+      # 그 사이에 돌린 대조군 수치가 오염됐을 수 있다는 신호다. 조용히 넘기면 안 된다.
+      logger.warning(
+        "이전 실행이 남긴 poison {}건을 {} 에서 삭제했습니다. "
+        "SOTA 인덱스에는 재인제스트 전까지 남아 있을 수 있습니다.",
+        removed,
+        upload_dir,
+      )
+    return removed
 
 
 # 레지스트리에 "sota" 타입 등록. __init__.py 가 이 모듈을 import 하면 등록이 실행된다.
