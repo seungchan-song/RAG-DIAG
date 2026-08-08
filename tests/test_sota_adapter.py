@@ -187,6 +187,58 @@ def test_sota_adapter_write_documents_writes_files_and_calls_ingest(tmp_path):
   assert infer_doc_role(tmp_path / "attack" / "poison-a.txt") == "attack"
 
 
+# === ④-2 cleanup_stale_poison() — 대조군 오염 차단 ===
+def test_cleanup_stale_poison_removes_only_our_poison_files(tmp_path):
+  """우리가 만든 poison-*.txt 만 지우고 같은 폴더의 남의 문서는 남긴다."""
+  attack_dir = tmp_path / "attack"
+  attack_dir.mkdir()
+  (attack_dir / "poison-a-standard-000.txt").write_text("p1", encoding="utf-8")
+  (attack_dir / "poison-b-many_shot-001.txt").write_text("p2", encoding="utf-8")
+  (attack_dir / "사용자_문서.txt").write_text("건드리면 안 됨", encoding="utf-8")
+
+  adapter = SotaRagAdapter(base_url="http://x", documents_root=str(tmp_path))
+
+  assert adapter.cleanup_stale_poison() == 2
+  assert sorted(p.name for p in attack_dir.iterdir()) == ["사용자_문서.txt"]
+  # 폴더가 없어도(첫 실행) 터지지 않는다.
+  assert SotaRagAdapter(
+    base_url="http://x", documents_root=str(tmp_path / "없음")
+  ).cleanup_stale_poison() == 0
+
+
+def test_from_config_clears_previous_run_poison(tmp_path):
+  """런 시작 시점(from_config)에 지난 회차 poison 이 사라져야 한다.
+
+  이게 없으면 2회차 실행의 NORMAL(대조군)이 1회차 poison 을 검색해
+  "공격이 대조군보다 얼마나 더 노출했나" 라는 핵심 비교가 깨진다.
+  """
+  stale = tmp_path / "attack" / "poison-old-standard-000.txt"
+  stale.parent.mkdir()
+  stale.write_text("지난 회차 잔여물", encoding="utf-8")
+
+  SotaRagAdapter.from_config({
+    "adapter": {"type": "sota", "base_url": "http://x", "documents_root": str(tmp_path)}
+  })
+
+  assert not stale.exists()
+
+
+def test_build_variant_does_not_delete_poison_mid_run(tmp_path):
+  """R4 반사실 인스턴스는 실행 중간에 만들어지므로 절대 지우면 안 된다.
+
+  build_variant() 가 from_config() 를 타면 R9 가 방금 주입한 poison 을
+  R4 가 지워버린다. 생성자를 직접 쓰는 현재 구조를 불변식으로 고정한다.
+  """
+  live = tmp_path / "attack" / "poison-live-standard-000.txt"
+  live.parent.mkdir()
+  live.write_text("이번 회차 주입분", encoding="utf-8")
+
+  adapter = SotaRagAdapter(base_url="http://x", documents_root=str(tmp_path))
+  adapter.build_variant(exclude_doc_ids={"어떤::chunk-0001"})
+
+  assert live.exists()
+
+
 # === ⑤ from_config() 검증 ===
 def test_sota_adapter_from_config_requires_base_url_and_documents_root():
   with pytest.raises(AdapterConfigError):
