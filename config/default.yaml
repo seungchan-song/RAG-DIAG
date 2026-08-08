@@ -225,6 +225,27 @@ attack:
     # 생성되므로, 트리거 유도 경로에 문제가 생겨 target_docs 전체가 새어 들어와도
     # 여기서 잘려 폭주하지 않는다. max_target_docs(50) 기준 정상 규모를 넉넉히 덮는 값.
     max_trigger_keywords: 200
+    # 트리거 키워드를 어디서 뽑을지. poison 문서 본문과 트리거 쿼리가 **모두** 이
+    # 키워드로 생성되므로(query_generator.R9_POISON_DOC_TEMPLATES /
+    # R9_TRIGGER_QUERY_TEMPLATES), 이 선택이 R9 가 실제로 무엇을 측정하는지를 바꾼다.
+    #
+    #   "attack_docs"(기본) — data/documents/poisoned/attack/ 문서의 keyword 를 쓴다.
+    #     builtin RAG 전용. 그 문서들이 곧 FAISS 에 색인된 poison 그 자체이므로
+    #     트리거와 poison 이 같은 출처인 게 맞다.
+    #
+    #   "corpus" — 진단 대상이 실제로 색인한 코퍼스 문서의 keyword 를 쓴다.
+    #     poison 을 런타임에 주입하는 외부 어댑터(adapter.inject_poison: true)용.
+    #     이때 attack 문서는 아무 역할도 하지 않는다(poison 은 템플릿으로 생성됨).
+    #     트리거가 실제 문서가 소유한 키워드라, 주입한 poison 이 그 진짜 문서와
+    #     **검색 경쟁**을 하게 된다 — "사용자가 실제로 묻는 주제를 공격자가 탈취할
+    #     수 있는가"라는 R9 본래 질문을 정직하게 측정한다. attack_docs 는 poison 이
+    #     소유한 단어를 그대로 되물어 경쟁자가 없으므로 성공률이 과대평가된다.
+    trigger_source: "attack_docs"
+    # trigger_source: "corpus" 일 때 어느 역할의 문서에서 키워드를 뽑을지.
+    #   "normal"(기본) — 일상 업무 질의 탈취. 민감 주제 탈취는 R2/R4 가 이미 다루므로
+    #     R9 고유의 질문("평범한 질의가 납치당하는가")에 집중한다.
+    #   "sensitive" — 민감 문서 주제를 탈취. PII 동반 유출과의 상호작용을 보고 싶을 때.
+    trigger_corpus_role: "normal"
   doc_path: "data/documents/"
 
 evaluator:
@@ -354,6 +375,14 @@ experiment:
     # 시나리오별 고정 환경:
     #   - NORMAL/R2/R4/R7 → clean DB
     #   - R9              → poisoned DB (공격 문서 주입이 본질)
+    #
+    # 예외 — R9 를 런타임 주입으로 돌 때는 아래 R9 값과 무관하게 clean 이 된다:
+    #   adapter.inject_poison: true  +  attack.r9.trigger_source: "corpus"
+    # 이 조합에서는 poison 이 대상에 직접 주입되고 트리거도 대상 코퍼스에서 나오므로
+    # data/documents/poisoned/ 가 어디에도 쓰이지 않는다. clean 환경은 scenario 를
+    # 보지 않고 "base" 스코프를 쓰므로(ingest/metadata.py:resolve_scenario_scope),
+    # R9 가 NORMAL/R2/R4/R7 이 이미 쓰는 data/indexes/clean 을 그대로 재사용한다.
+    # → 외부 RAG 진단에서는 `rag ingest --env poisoned -s R9` 자체가 불필요하다.
     scenario_environments:
       NORMAL: ["clean"]
       R2: ["clean"]
