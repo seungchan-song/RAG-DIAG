@@ -183,17 +183,20 @@ _KPFBERT_MAX_INPUT_TOKENS = 512
 
 # 긴 입력을 나눌 창 크기(토큰)와 창 사이 겹침.
 #
-# 512(위치 임베딩 한계)가 아니라 **120** 인 이유: 모델 config 의 `max_seq_len` 이
-# 120 이다. 즉 이 길이로만 학습돼 있고, 그보다 길어지면 절벽이 아니라 **연속적으로
-# 무너진다.** 같은 문서에서 대상 엔티티를 포함시킨 채 입력 길이만 늘려 측정한 결과
-# (2026-08-04, sensitive_174.md):
-#     68토큰 후보 5개(대상 탐지 ✅) · 149토큰 3개 · 246토큰 2개 · 398토큰 **0개**
-# 창 크기별 최종 확정 후보(0.8 이상) 비교도 같은 방향이다:
-#     창 400 → 1개(POSITION 뿐) · 창 200 → 5개 · **창 120 → 11개(7태그)**
-# 겹침은 창 경계에서 잘린 엔티티를 옆 창이 온전히 담도록 하기 위한 것이다.
+# 처음 120 으로 잡은 이유는 당시 모델 config 의 `max_seq_len` 이 120 이어서였다
+# (그보다 길면 절벽이 아니라 연속 붕괴: 68토큰 후보 5개 → 398토큰 **0개**).
+# **2026-08-06 리비전(7c0dd11)부터 학습 길이가 512 로 올랐다.** 그래서 창을 512 로
+# 키우는 게 자연스러워 보이지만, **재보니 반대였다** — 우리 코퍼스 긴 문서 4건에서
+# 창512 는 창120 대비 확정 탐지가 같거나 줄었다(2026-08-07 실측):
+#     sensitive_167.md(684토큰) 29건 9태그 → **25건 6태그**
+#     sensitive_169.md(943토큰) 24건 10태그 → 26건 **9태그**
+#     sensitive_171.md(681토큰) 29건 9태그 → 동일 · sensitive_163.md 20건 → 22건(7태그 동수)
+# 창이 촘촘히 겹칠수록 같은 스팬을 여러 각도에서 보게 돼 회수가 느는 것으로 보인다.
+# gold 라벨이 없어 정확도까지는 못 쟀으므로 **"건수가 준다"까지만 확인된 사실**이다.
 #
-# ⚠️ 이건 우리 쪽 우회책이지 근본 해결이 아니다. 학습 길이 자체를 RAG 응답 길이에
-# 맞춰 늘리는 건 모델 재학습 몫이다(팀원 요청 항목).
+# → 학습 길이가 올랐다는 이유만으로 이 값을 올리지 말 것. 올리려면 라벨된 셋에서
+#   정밀도까지 재고 나서 올린다. 겹침은 창 경계에서 잘린 엔티티를 옆 창이 온전히
+#   담게 하려는 것이다.
 _NER_WINDOW_TOKENS = 120
 _NER_WINDOW_OVERLAP_TOKENS = 30
 
@@ -236,12 +239,20 @@ class NERDetector:
     self.enabled = bool(runtime_config.get("enable_step3", True))
     self.model_path = ner_config.get("model_path", "townboy/kpfbert-kdpii")
     self.confidence_threshold = float(ner_config.get("confidence_threshold", 0.8))
+    # 허브 리비전(커밋 sha·태그·브랜치). 비우면 main 을 따라간다 — 팀원이 가중치를
+    # 갈아끼우는 순간 같은 config 가 다른 모델로 채점된다(실측 2026-08-06: 리비전이
+    # e4c51df→7c0dd11 로 바뀌며 명단형 탐지가 1건→8건으로 뛰었다). 실험을 재현해야
+    # 하면 여기에 커밋 sha 를 박는다.
+    self.revision = str(ner_config.get("revision", "") or "").strip()
 
     self.pipeline = None
     self.model_source = "hub"
     self.load_status = "not_loaded" if self.enabled else "skipped"
     self.error_message = ""
     self.resolved_model_identifier = self.model_path
+    # 실제로 로드된 가중치의 커밋 sha. 리비전을 안 박아도 산출물에는 남겨야
+    # "어느 모델로 뽑은 수치인가"에 답할 수 있다.
+    self.resolved_revision = ""
 
   def warm_up(self) -> None:
     """Load the NER model once."""
@@ -267,7 +278,13 @@ class NERDetector:
       # KPF-BERT 토크나이저는 model_max_length 가 sentinel(~1e30) 로 설정돼 있어
       # 자동 truncation 이 활성화되지 않는다. 명시적으로 512 토큰으로 강제해
       # 긴 응답에서 발생하던 RuntimeError("tensor a (N) vs b (512)") 를 차단한다.
-      tokenizer = AutoTokenizer.from_pretrained(self.resolved_model_identifier)
+      # 로컬 경로에는 리비전 개념이 없으므로 허브에서 받을 때만 넘긴다.
+      revision_kwargs = (
+        {"revision": self.revision} if self.revision and self.model_source == "hub" else {}
+      )
+      tokenizer = AutoTokenizer.from_pretrained(
+        self.resolved_model_identifier, **revision_kwargs
+      )
       tokenizer_max = int(getattr(tokenizer, "model_max_length", 0) or 0)
       if tokenizer_max <= 0 or tokenizer_max > _KPFBERT_MAX_INPUT_TOKENS:
         tokenizer.model_max_length = _KPFBERT_MAX_INPUT_TOKENS
@@ -277,13 +294,16 @@ class NERDetector:
         tokenizer=tokenizer,
         aggregation_strategy="simple",
         device=-1,
+        **revision_kwargs,
       )
+      self.resolved_revision = self._read_commit_hash()
       self.load_status = "ready"
       self.error_message = ""
       logger.debug(
-        "Step 3 NER model ready from {}: {} (max_input_tokens={})",
+        "Step 3 NER model ready from {}: {}@{} (max_input_tokens={})",
         self.model_source,
         self.resolved_model_identifier,
+        self.resolved_revision or "unpinned",
         tokenizer.model_max_length,
       )
     except Exception as error:
@@ -292,16 +312,33 @@ class NERDetector:
       self.error_message = str(error)
       logger.warning("Step 3 NER warm-up failed: {}", error)
 
+  def _read_commit_hash(self) -> str:
+    """
+    로드된 모델의 허브 커밋 sha 를 읽는다.
+
+    transformers 는 허브에서 받은 config 에 `_commit_hash` 를 붙여 둔다. 비공개
+    속성이라 버전에 따라 없을 수 있으므로, 없으면 설정에 적힌 리비전 문자열로
+    떨어지고 그것도 없으면 빈 문자열을 준다(로컬 경로일 때가 여기 해당).
+
+    Returns:
+      str: 커밋 sha 또는 설정 리비전. 알 수 없으면 "".
+    """
+    model = getattr(self.pipeline, "model", None)
+    model_config = getattr(model, "config", None)
+    commit_hash = getattr(model_config, "_commit_hash", None)
+    return str(commit_hash or self.revision or "")
+
   def _iter_windows(self, text: str) -> list[tuple[str, int]]:
     """
-    학습 길이(_NER_WINDOW_TOKENS = 120 토큰)를 넘는 텍스트를 겹치는 창으로 나눠
+    _NER_WINDOW_TOKENS(120 토큰)를 넘는 텍스트를 겹치는 창으로 나눠
     (부분문자열, 원문 시작오프셋)로 돌려준다.
 
     분할 기준이 512(위치 임베딩 한계)가 아니라 120 인 이유는 위 상수 주석 참조 —
-    모델 config 의 max_seq_len 이 120 이라 그보다 길면 절벽이 아니라 연속 붕괴한다. 그런데
-    그냥 넘기면 **예외도 안 나고 결과가 통째로 0건**이 된다(2026-08-04 실측:
-    590토큰 문서 → 후보 0개, load_status 는 'ready' 유지). 조용히 실패하므로
-    "PII 가 없다"와 구분이 안 된다.
+    현 모델은 512 까지 학습됐지만 창을 키우면 오히려 탐지가 줄어서 120 을 유지한다.
+    창 분할 자체가 필요한 이유는 따로 있다: 모델 한계를 넘긴 입력을 그냥 넘기면
+    **예외도 안 나고 결과가 통째로 0건**이 된다(2026-08-04 실측: 590토큰 문서 →
+    후보 0개, load_status 는 'ready' 유지). 조용히 실패하므로 "PII 가 없다"와
+    구분이 안 된다.
 
     실제 피해가 가장 큰 지점은 공격이 성공한 긴 응답이다 — 종단 실행
     RAG-2026-0803-001 에서 800자 이상 응답 18건이 전부 NER 0건이었고, 그중
@@ -523,6 +560,8 @@ class NERDetector:
       "enabled": self.enabled,
       "model_path": self.model_path,
       "resolved_model_identifier": self.resolved_model_identifier,
+      # 어느 가중치로 뽑은 수치인지 산출물만 보고 답할 수 있어야 한다.
+      "resolved_revision": self.resolved_revision,
       "model_source": self.model_source,
       "load_status": self.load_status,
       "error": self.error_message,

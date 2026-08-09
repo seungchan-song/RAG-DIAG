@@ -17,7 +17,7 @@
 | 대상 | 사안 |
 | --- | --- |
 | `certifi`, `tqdm` (MPL-2.0) | MPL 은 **파일 단위** copyleft다. 우리는 두 패키지를 수정하지 않고 pip 로 설치해 쓰기만 하므로 소스 공개 의무가 발생하지 않는다. 벤더링(저장소에 복사)하는 순간 조건이 달라지니 하지 말 것. |
-| `KPF/KPF-bert-ner` (미선언) | STEP 3 NER 의 base 모델인데 HuggingFace 에 라이선스 표기가 없다. 파생 가중치(`townboy/kpfbert-kdpii`)를 MIT 로 공개할 근거가 확인되지 않은 상태다. **한국언론진흥재단에 이용 조건을 확인하거나, 라이선스가 명확한 다른 백본으로 재학습**해야 대회 산출물 공개 요건이 안전하다. |
+| `KPF/KPF-bert-ner` (HF 카드 메타데이터만 미선언) | **재배포 조건 자체는 확인됐다(2026-08-09).** HuggingFace 카드에 `license:` 필드가 없을 뿐이고, 이 모델을 배포하는 상류 프로젝트 저장소 두 곳이 모두 MIT 다 — [KPFBERT/kpfbert](https://github.com/KPFBERT/kpfbert)(base KPF-BERT, © 2021 KPFBERT) · [KPF-bigkinds/BIGKINDS-LAB](https://github.com/KPF-bigkinds/BIGKINDS-LAB)(`KPF-BERT-NER/` 하위, © 2022 빅카인즈랩). MIT 는 재배포·서브라이선스를 허용하므로 파생 가중치를 MIT 로 공개할 근거가 있으며, 조건인 **저작권 고지 유지**는 `townboy/kpfbert-ner` 의 `NOTICE` 가 두 건 다 담고 있다. 남은 것은 상류 HF 카드의 메타데이터 공백뿐이라 우리 쪽 조치 사항은 없다. |
 | KDPII 데이터셋 | 재배포 제약이 있어 저장소에 포함하지 않는다. 자체 합성 데이터셋으로 대체하는 작업이 진행 중이다. |
 
 ## 모델 가중치
@@ -26,13 +26,14 @@
 | --- | --- | --- | --- |
 | `dragonkue/BGE-m3-ko` | HuggingFace | Apache-2.0 | 문서/질의 임베딩. 재배포 제약 없음 |
 | `dragonkue/bge-reranker-v2-m3-ko` | HuggingFace | Apache-2.0 | reranker_on 프로파일. 재배포 제약 없음 |
-| `townboy/kpfbert-kdpii` | HuggingFace | MIT (선언값) | STEP 3 한국어 PII NER. base 가 KPF/KPF-bert-ner 이고 그쪽 라이선스가 미선언이라 이 MIT 선언의 근거가 확인되지 않았다 — 위 '확인 필요' 참조 |
-| `KPF/KPF-bert-ner` | HuggingFace | 미선언 | 위 모델의 base. 라이선스 표기가 없어 파생물 재배포 조건을 알 수 없다 |
+| `townboy/kpfbert-ner` | HuggingFace | MIT | STEP 3 한국어 PII NER (개인정보 33종). 저장소에 `LICENSE`(MIT) + `NOTICE`(상류 저작권 고지 2건) 포함. 상류가 MIT 라 이 선언에 근거가 있다 — 위 '확인 필요' 참조 |
+| `KPF/KPF-bert-ner` | HuggingFace | MIT (상류 저장소 기준) | 위 모델의 base. HF 카드에는 `license:` 필드가 없으나 배포 주체의 GitHub 저장소가 MIT — 위 '확인 필요' 참조 |
 
 ## 데이터셋
 
 | 데이터셋 | 출처 | 라이선스 | 비고 |
 | --- | --- | --- | --- |
+| `townboy/korean-pii-dataset` | HuggingFace | CC-BY-4.0 | STEP 3 NER 학습셋(전량 합성, 11,732문서·33종). 저장소에 `LICENSE` 포함. 출처 표기만 하면 상업적 이용까지 허용 |
 | `KDPII` | 외부 제공 | 재배포 제약 | 연구 목적 한정·외부 배포 금지. 저장소에 포함하지 않으며 벤치마크(`rag pii-eval`) 실행 시 사용자가 직접 준비한다. 자체 데이터셋으로 대체 예정 |
 | `data/documents/**` | 본 저장소 | MIT (본 저장소와 동일) | `scripts/generate_dataset.py` 로 생성한 전량 합성 데이터. 실제 개인정보 0건 |
 

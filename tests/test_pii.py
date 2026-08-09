@@ -21,6 +21,7 @@ def _build_pii_config(
   enable_step3: bool = True,
   enable_step4: bool = True,
   model_path: str = "townboy/kpfbert-kdpii",
+  revision: str = "",
 ) -> dict:
   return {
     "pii": {
@@ -30,6 +31,7 @@ def _build_pii_config(
       },
       "ner": {
         "model_path": model_path,
+        "revision": revision,
         "confidence_threshold": 0.8,
       },
       "sllm": {
@@ -568,6 +570,61 @@ class TestNERDetectorRuntime:
     assert status["load_status"] == "ready"
     assert status["resolved_model_identifier"] == str(local_model_dir)
     assert captured["model"] == str(local_model_dir)
+
+  def test_hub_revision_is_pinned_and_reported(self, monkeypatch) -> None:
+    """설정한 리비전이 실제 로드에 넘어가고 산출물에도 남는지 고정한다.
+
+    핀이 안 넘어가면 허브의 main 이 바뀌는 순간 같은 config 가 다른 가중치로
+    채점한다(2026-08-06 실측: e4c51df→7c0dd11 로 명단형 탐지 1건→8건).
+    그러면 모델이 바뀐 것을 우리 코드 개선으로 오독하게 된다.
+    """
+    captured: dict[str, object] = {}
+    transformers_module = types.ModuleType("transformers")
+
+    class _RevisionCapturingTokenizer:
+      @staticmethod
+      def from_pretrained(_identifier: str, **kwargs: object) -> _FakeTokenizer:
+        captured["tokenizer_revision"] = kwargs.get("revision")
+        return _FakeTokenizer()
+
+    def fake_pipeline(_task: str, **kwargs: object) -> object:
+      captured["pipeline_revision"] = kwargs.get("revision")
+      return lambda text: []
+
+    transformers_module.pipeline = fake_pipeline
+    transformers_module.AutoTokenizer = _RevisionCapturingTokenizer
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    detector = NERDetector(_build_pii_config(revision="e4c51df"))
+    detector.warm_up()
+    status = detector.get_runtime_status()
+
+    assert captured["tokenizer_revision"] == "e4c51df"
+    assert captured["pipeline_revision"] == "e4c51df"
+    assert status["resolved_revision"] == "e4c51df"
+
+  def test_local_model_path_ignores_revision(self, monkeypatch, tmp_path) -> None:
+    """로컬 디렉토리에는 리비전 개념이 없으므로 넘기면 안 된다(넘기면 로드가 깨진다)."""
+    local_model_dir = tmp_path / "local-ner"
+    local_model_dir.mkdir()
+
+    captured: dict[str, object] = {}
+    transformers_module = types.ModuleType("transformers")
+
+    def fake_pipeline(_task: str, **kwargs: object) -> object:
+      captured["pipeline_revision"] = kwargs.get("revision")
+      return lambda text: []
+
+    transformers_module.pipeline = fake_pipeline
+    transformers_module.AutoTokenizer = _FakeAutoTokenizer
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    detector = NERDetector(
+      _build_pii_config(model_path=str(local_model_dir), revision="e4c51df")
+    )
+    detector.warm_up()
+
+    assert captured["pipeline_revision"] is None
 
   def test_records_failed_status_when_model_load_fails(self, monkeypatch) -> None:
     transformers_module = types.ModuleType("transformers")

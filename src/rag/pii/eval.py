@@ -894,6 +894,7 @@ class PIIBenchmarkRunner:
       "enabled",
       "model_path",
       "resolved_model_identifier",
+      "resolved_revision",
       "model_source",
       "load_status",
       "error",
