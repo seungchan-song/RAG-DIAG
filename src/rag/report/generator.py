@@ -2970,6 +2970,17 @@ class ReportGenerator:
                     "response_masked",
                 ):
                     cleaned.pop(unused_field, None)
+                # ⚠️ pii_summary.items[].text 에는 **마스킹 안 된 원문 PII** 가 들어 있다
+                # (classifier.to_summary 가 연구용 JSON 을 위해 남기는 필드).
+                # mask_raw_pii=true 인데도 그게 HTML 에 그대로 임베드돼 있었다 — 실측:
+                # report_dashboard.html 안에 "areum.kim79@example.test" 원문 노출.
+                # 대시보드는 items 를 안 쓰므로(pii_findings 만 사용) HTML 에서만 뺀다.
+                # JSON 원본은 연구용이라 그대로 둔다.
+                summary_view = cleaned.get("pii_summary")
+                if isinstance(summary_view, dict) and "items" in summary_view:
+                    cleaned["pii_summary"] = {
+                        key: value for key, value in summary_view.items() if key != "items"
+                    }
                 cleaned_results.append(cleaned)
             cleaned_data["results"] = cleaned_results
             cleaned_data["results_truncated"] = len(results_list) > cap
