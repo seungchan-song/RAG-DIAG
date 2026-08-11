@@ -2821,7 +2821,15 @@ def _execute_single_run(
         except Exception as err:
             return False, q_id, q_info, t_index, None, None, err, current_stage
 
-    max_workers = config.get("runner", {}).get("max_workers", 5)
+    # 로컬 생성기는 동시 요청을 늘려도 처리량이 늘지 않는다. Ollama 는 메모리가 빠듯하면
+    # llama-server 를 `-np 1`(병렬 슬롯 1개)로 띄우므로 요청이 전부 직렬화되고, 워커만
+    # 늘리면 큐 대기 = 워커 수 × 생성 시간으로 커져 타임아웃만 유발한다. 그 타임아웃은
+    # 무작위가 아니라 **응답이 긴 질의부터** 골라 죽이는데, R2 에서 응답이 길다는 건 곧
+    # 원문 덤프(=공격 성공)라서 성공률이 체계적으로 과소 측정된다
+    # (2026-08-11 실측: max_workers=5 · timeout=180 에서 R2 A2 셀 실패율 6.6%).
+    default_workers = 2 if config.get("generator", {}).get("provider") == "local" else 5
+    # config 에 키가 없어도, 값이 null 로 비어 있어도 provider 기본값으로 떨어져야 한다.
+    max_workers = config.get("runner", {}).get("max_workers") or default_workers
     with quiet_execution(), Live(
         progress_panel, console=console, refresh_per_second=12, transient=False
     ):

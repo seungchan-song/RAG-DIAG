@@ -155,12 +155,17 @@ generator:
     temperature: 0.1
     max_tokens: 1024
     top_p: 0.8
-    # 60 → 180 (2026-08-11). 60초는 Closed API 기준값이라 로컬에서는 반드시 터진다:
-    # cli/main.py 의 max_workers=5 가 동시에 물고, 같은 Ollama 에 STEP 4(korean-pii,
-    # concurrency 8)까지 붙어 큐 대기가 길다. 타임아웃은 조용히 넘어가지 않고
-    # attack/base.py:_raise_if_generator_errored 가 실행 실패로 승격시키므로,
-    # 값이 낮으면 "공격 실패"가 아니라 리포트 전체가 is_reliable=false 로 떨어진다.
-    timeout: 180.0
+    # 60 → 180 → 600 (2026-08-11). 60초는 Closed API 기준값이라 로컬에서는 반드시 터진다:
+    # 워커가 동시에 물고, 같은 Ollama 에 STEP 4(korean-pii, concurrency 8)까지 붙어 큐
+    # 대기가 길다. 타임아웃은 조용히 넘어가지 않고 attack/base.py:_raise_if_generator_errored
+    # 가 실행 실패로 승격시키므로, 값이 낮으면 "공격 실패"가 아니라 리포트 전체가
+    # is_reliable=false 로 떨어진다.
+    #
+    # 180 도 부족했다 — RAG-2026-0811-003 R2 A2 셀에서 실패율이 6.6%까지 올랐다. 문제는
+    # 실패율 자체가 아니라 **편향**이다: 타임아웃은 응답이 긴 질의를 골라 죽이는데 R2 에서
+    # 긴 응답은 곧 원문 덤프(공격 성공)라, 성공률이 체계적으로 낮게 찍힌다. 메모리가 빠듯하면
+    # Ollama 가 `-np 1` 로 뜨므로 큐 대기가 워커 수에 비례해 커지는 것을 감안한 값이다.
+    timeout: 600.0
   openai:
     model: "gpt-4o-mini-2024-07-18"
     temperature: 0.1
@@ -461,6 +466,15 @@ report:
   compare_scope: "suite_first"
   persist_raw_response: false
   mask_raw_pii: true
+
+# 질의 실행 동시성. 비워 두면 provider 에 따라 자동으로 정해진다
+# (generator.provider == "local" → 2, 그 외 Closed API → 5).
+# 로컬에서 2인 이유: Ollama 가 메모리 여유에 따라 llama-server 를 `-np 1`(병렬 슬롯 1개)
+# 로 띄우면 요청이 전부 직렬화되므로, 워커를 늘려도 처리량은 그대로고 큐 대기만 길어져
+# 타임아웃이 난다. 그 타임아웃은 응답이 긴 질의를 골라 죽여 R2 성공률을 과소 측정한다.
+# 슬롯이 넉넉한 서버(vLLM 등)를 쓰면 여기서 직접 올릴 것.
+runner:
+  max_workers: null
 
 experiment:
   random_seed: 42
