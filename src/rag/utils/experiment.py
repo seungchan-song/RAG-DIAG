@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
 from copy import deepcopy
 from datetime import datetime
@@ -90,8 +91,16 @@ class ExperimentManager:
   def create_run(self, prefix: str = "RAG") -> str:
     """Create a new run directory and return its run id."""
     today = datetime.now().strftime("%Y-%m%d")
-    existing_runs = list(self.results_dir.glob(f"{prefix}-{today}-*"))
-    run_id = f"{prefix}-{today}-{len(existing_runs) + 1:03d}"
+    # 일련번호는 **개수**가 아니라 기존 **최대 번호 + 1** 로 뽑는다. 개수로 세면 중간 런을
+    # 하나라도 지웠을 때 살아 있는 런 ID 를 다시 발급해 그 디렉터리를 덮어쓴다
+    # (2026-08-11 실제 사고: RAG-2026-0811-001 을 지운 상태에서 suite 가 데모 런
+    #  RAG-2026-0811-002 위에 얹혀 전 셀이 "scenario_scope 불일치"로 실패했다).
+    used = {
+      int(match.group(1))
+      for path in self.results_dir.glob(f"{prefix}-{today}-*")
+      if (match := re.fullmatch(rf"{re.escape(prefix)}-{today}-(\d+)", path.name))
+    }
+    run_id = f"{prefix}-{today}-{max(used, default=0) + 1:03d}"
     self._ensure_run_dir(run_id)
     logger.info("Created run {} at {}", run_id, self._run_dir(run_id))
     return run_id

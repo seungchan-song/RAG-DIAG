@@ -4045,11 +4045,17 @@ def _validate_resume_request(
         mismatches.append("environment_type")
     if checkpoint.get("profile_name") != profile_name:
         mismatches.append("profile_name")
-    if checkpoint.get("scenario_scope") not in (None, "", scenario.upper(), "base"):
-        # Older checkpoints may not store scenario_scope, and clean runs resolve to base.
-        expected_scope = "base" if env == "clean" else scenario.upper()
-        if checkpoint.get("scenario_scope") != expected_scope:
-            mismatches.append("scenario_scope")
+    saved_scope = checkpoint.get("scenario_scope")
+    # 허용값에 "all" 이 반드시 들어가야 한다. 체크포인트의 scenario_scope 는 인덱스
+    # 매니페스트에서 그대로 복사되는데(`_execute_single_run`), PersistentIndexManager 는
+    # 환경별 인덱스가 그 환경 문서를 전부 담으므로 이 값을 **항상 "all"** 로 적는다
+    # (index/manager.py:57). 예전 기대값("base" / 시나리오명)은 그래서 절대 일치하지
+    # 못했고, `rag run --resume` 이 모든 셀에서 "scenario_scope 불일치"로 죽었다
+    # (2026-08-11 실측). 전 시나리오를 담은 인덱스는 어느 시나리오로 재개하든 안전한
+    # 상위집합이므로 허용하고, 좁게 빌드된 인덱스만 정확히 대조한다.
+    allowed_scopes = {None, "", "all", _resolve_cli_scenario_scope(env, scenario)}
+    if saved_scope not in allowed_scopes:
+        mismatches.append("scenario_scope")
 
     snapshot_profile = snapshot.get("config", {}).get("profile_name")
     if snapshot_profile and snapshot_profile != profile_name:
