@@ -1056,6 +1056,75 @@ def run(
         _run_auto_report(outcome.run_id, base_config)
 
 
+def _preflight_local_generator(config: dict[str, Any]) -> str:
+    """provider=local 일 때 로컬 LLM 서버가 실제로 응답하는지 미리 확인한다.
+
+    `generator.provider` 를 "local" 로 고정하면서 생긴 함정을 막는다 — 서버가 안 떠
+    있어도 생성기 **생성**은 성공하고, 실패는 질의 시점에야 드러난다. 공격 경로에서는
+    `attack/base.py:_raise_if_generator_errored` 가 그걸 실행 실패로 승격시키므로
+    조용히 틀린 결과가 나오진 않지만, 대신 **전 쿼리가 실패한 리포트**가 나온다.
+    심사위원이 `rag demo` 를 처음 치는 순간 그 꼴을 보면 안 되므로 여기서 먼저 막는다.
+
+    Args:
+      config: 실험 설정 dict.
+
+    Returns:
+      배너에 표시할 생성기 안내 문구 한 줄.
+
+    Raises:
+      typer.Exit: provider=local 인데 서버가 응답하지 않거나 모델이 등록되지 않았을 때.
+    """
+    import os
+
+    from rag.generator.generator import describe_generator
+
+    described = describe_generator(config)
+    provider, model = described["provider"], described["model"]
+    if provider != "local":
+        return f"provider={provider} · 모델 {model}"
+
+    base_url = (
+        os.getenv("LOCAL_LLM_BASE_URL")
+        or ((config.get("generator") or {}).get("local") or {}).get("base_url")
+        or "http://localhost:11434/v1"
+    ).rstrip("/")
+
+    def _abort(reason: str) -> None:
+        console.print(
+            Panel(
+                (
+                    f"[bold red]로컬 LLM 을 사용할 수 없습니다[/bold red]\n{reason}\n\n"
+                    "[bold]준비 방법 (최초 1회):[/bold]\n"
+                    "  1) 별도 터미널에서  [cyan]ollama serve[/cyan]\n"
+                    f"  2) [cyan]ollama pull {model}[/cyan]\n\n"
+                    f"[dim]대상 주소: {base_url}  "
+                    "(config generator.local.base_url 또는 LOCAL_LLM_BASE_URL 로 변경)[/dim]"
+                ),
+                title="[red]사전 점검 실패[/red]",
+                border_style="red",
+                padding=(1, 2),
+            )
+        )
+        raise typer.Exit(code=1)
+
+    import requests
+
+    try:
+        response = requests.get(f"{base_url}/models", timeout=5.0)
+        response.raise_for_status()
+        available = {entry.get("id") for entry in (response.json() or {}).get("data", [])}
+    except Exception as error:  # noqa: BLE001 - 사전 점검이므로 원인을 그대로 보여준다
+        _abort(f"서버에 연결하지 못했습니다: {error}")
+        return ""  # pragma: no cover - _abort 가 항상 Exit 한다
+
+    if model not in available:
+        _abort(
+            f"서버는 응답하지만 모델 '{model}' 이 등록돼 있지 않습니다.\n"
+            f"등록된 모델: {', '.join(sorted(available)) or '(없음)'}"
+        )
+    return f"로컬 오픈웨이트 {model} 사용 · Closed API 호출 0건"
+
+
 @app.command()
 def demo(
     num_targets: int = typer.Option(
@@ -1077,15 +1146,19 @@ def demo(
 ) -> None:
     """[심사위원용] 데모 데이터셋으로 전체 파이프라인을 원커맨드로 체험합니다.
 
-    API 키 없이(오프라인)도 동작하며, 소형 데모 코퍼스(`data/documents/demo/`)를
+    Closed API 키 없이 동작하며, 소형 데모 코퍼스(`data/documents/demo/`)를
     인덱싱한 뒤 대표 시나리오(NORMAL 기준선 + R2 검색 데이터 유출)를 실행하고
     HTML 리포트를 생성/오픈합니다. 실제 `clean`/`poisoned` 인덱스는 건드리지 않고
     `data/indexes/_demo` 에 격리됩니다.
 
-    최초 실행 시에는 임베딩/NER 모델(약 1.5GB)을 Hugging Face 에서 내려받으므로
-    시간이 걸릴 수 있으나, 이후에는 캐시를 재사용해 수 분 내에 끝납니다.
+    선행 조건: `provider: "local"` 이므로 로컬 LLM 서버가 떠 있어야 합니다
+    (`ollama serve` + `ollama pull <generator.local.model>`).
+    `_preflight_local_generator` 가 시작 전에 확인하고 안내합니다.
+
+    소요 시간: 최초 실행은 임베딩/NER 모델(약 1.5GB) 다운로드가 더해지고, 이후에도
+    **약 30분**이 걸립니다(75질의 · M2/16GB 실측 2026-08-11). 병목은 생성기가 아니라
+    PII 파이프라인입니다 — NORMAL 쿼리당 13초 중 생성기 몫은 0.7~3.4초입니다.
     """
-    import os
     import tempfile
     import webbrowser
 
@@ -1119,14 +1192,12 @@ def demo(
     with open(demo_config_path, "w", encoding="utf-8") as config_file:
         yaml.safe_dump(merged_config, config_file, allow_unicode=True, sort_keys=False)
 
-    api_key_present = bool(
-        os.getenv("OPENAI_API_KEY") or os.getenv("NAVER_CLOVA_API_KEY")
-    )
-    generator_note = (
-        "API 키 감지됨 → 실제 LLM 으로 응답을 생성합니다."
-        if api_key_present
-        else "API 키 없음 → 오프라인 MockGenerator 로 동작합니다 (키 불필요)."
-    )
+    base_config = load_config(str(demo_config_path))
+    base_exp_manager = ExperimentManager(base_config)
+
+    # 생성기 사전 점검. provider=local 이면 서버가 실제로 응답하는지 여기서 확인하고,
+    # 안 되면 준비 명령을 보여주고 즉시 중단한다(전 쿼리가 실패한 리포트 방지).
+    generator_note = _preflight_local_generator(base_config)
     console.print(
         Panel(
             (
@@ -1136,16 +1207,14 @@ def demo(
                 "[cyan]R2[/cyan](검색 데이터 유출)\n"
                 "  3) 한국형 PII 탐지 + HTML 리포트 생성\n"
                 f"\n[dim]{generator_note}[/dim]\n"
-                "[dim]최초 실행 시 모델(약 1.5GB) 다운로드로 시간이 걸릴 수 있습니다.[/dim]"
+                "[dim]최초 실행 시 임베딩/NER 모델(약 1.5GB) 다운로드로 "
+                "시간이 걸릴 수 있습니다.[/dim]"
             ),
             title="[blue]RAG Demo[/blue]",
             border_style="blue",
             padding=(1, 2),
         )
     )
-
-    base_config = load_config(str(demo_config_path))
-    base_exp_manager = ExperimentManager(base_config)
 
     # 2. 데모 인덱스를 보장한다(clean 환경). 없으면 자동 빌드, --rebuild 면 재구성.
     #    준비 단계의 장황한 내부 로그는 스피너 하나로 감춘다.
@@ -2752,7 +2821,15 @@ def _execute_single_run(
         except Exception as err:
             return False, q_id, q_info, t_index, None, None, err, current_stage
 
-    max_workers = config.get("runner", {}).get("max_workers", 5)
+    # 로컬 생성기는 동시 요청을 늘려도 처리량이 늘지 않는다. Ollama 는 메모리가 빠듯하면
+    # llama-server 를 `-np 1`(병렬 슬롯 1개)로 띄우므로 요청이 전부 직렬화되고, 워커만
+    # 늘리면 큐 대기 = 워커 수 × 생성 시간으로 커져 타임아웃만 유발한다. 그 타임아웃은
+    # 무작위가 아니라 **응답이 긴 질의부터** 골라 죽이는데, R2 에서 응답이 길다는 건 곧
+    # 원문 덤프(=공격 성공)라서 성공률이 체계적으로 과소 측정된다
+    # (2026-08-11 실측: max_workers=5 · timeout=180 에서 R2 A2 셀 실패율 6.6%).
+    default_workers = 2 if config.get("generator", {}).get("provider") == "local" else 5
+    # config 에 키가 없어도, 값이 null 로 비어 있어도 provider 기본값으로 떨어져야 한다.
+    max_workers = config.get("runner", {}).get("max_workers") or default_workers
     with quiet_execution(), Live(
         progress_panel, console=console, refresh_per_second=12, transient=False
     ):
@@ -3976,11 +4053,17 @@ def _validate_resume_request(
         mismatches.append("environment_type")
     if checkpoint.get("profile_name") != profile_name:
         mismatches.append("profile_name")
-    if checkpoint.get("scenario_scope") not in (None, "", scenario.upper(), "base"):
-        # Older checkpoints may not store scenario_scope, and clean runs resolve to base.
-        expected_scope = "base" if env == "clean" else scenario.upper()
-        if checkpoint.get("scenario_scope") != expected_scope:
-            mismatches.append("scenario_scope")
+    saved_scope = checkpoint.get("scenario_scope")
+    # 허용값에 "all" 이 반드시 들어가야 한다. 체크포인트의 scenario_scope 는 인덱스
+    # 매니페스트에서 그대로 복사되는데(`_execute_single_run`), PersistentIndexManager 는
+    # 환경별 인덱스가 그 환경 문서를 전부 담으므로 이 값을 **항상 "all"** 로 적는다
+    # (index/manager.py:57). 예전 기대값("base" / 시나리오명)은 그래서 절대 일치하지
+    # 못했고, `rag run --resume` 이 모든 셀에서 "scenario_scope 불일치"로 죽었다
+    # (2026-08-11 실측). 전 시나리오를 담은 인덱스는 어느 시나리오로 재개하든 안전한
+    # 상위집합이므로 허용하고, 좁게 빌드된 인덱스만 정확히 대조한다.
+    allowed_scopes = {None, "", "all", _resolve_cli_scenario_scope(env, scenario)}
+    if saved_scope not in allowed_scopes:
+        mismatches.append("scenario_scope")
 
     snapshot_profile = snapshot.get("config", {}).get("profile_name")
     if snapshot_profile and snapshot_profile != profile_name:

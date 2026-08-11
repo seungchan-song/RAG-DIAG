@@ -525,6 +525,89 @@ class TestNERStructureGate:
     assert len(kept) == len(valid)
 
 
+class TestNERB1Eligibility:
+  """B-1(sLLM 검증 없이 즉시 확정) 자격 판정 — 오탐이 검증을 우회하는 걸 막는다.
+
+  실측 배경(2026-08-10, data/documents/clean/sensitive/ 160건):
+    - QT_IP 로 B-1 확정된 169건이 **전량 오탐**이었다(금액·점수·시각·숫자조각).
+      팀원 벤치마크에서는 같은 태그가 F1 0.984 라 이 결함이 드러나지 않는다.
+    - EMPLOYEE_ID B-1 80건 중 28건(35%)이 '2026-05-11' 같은 날짜였다.
+  """
+
+  def _detect(self, monkeypatch, text: str, entities: list[dict]) -> list[NERMatch]:
+    """가짜 파이프라인이 주어진 엔티티를 뱉게 하고 detect() 를 통과시킨다."""
+    transformers_module = types.ModuleType("transformers")
+    transformers_module.pipeline = lambda _task, **_kw: (lambda _text: entities)
+    transformers_module.AutoTokenizer = _FakeAutoTokenizer
+    monkeypatch.setitem(sys.modules, "transformers", transformers_module)
+
+    detector = NERDetector(_build_pii_config())
+    detector.warm_up()
+    return detector.detect(text)
+
+  def test_ip_tag_never_shortcuts_sllm(self, monkeypatch) -> None:
+    """QT_IP 는 신뢰도가 아무리 높아도 B-1 로 확정되지 않는다.
+
+    진짜 IP 는 STEP 1 정규식(A-1)이 잡으므로 NER 경로를 B-2 로 내려도 잃는 게 없다.
+    """
+    text = "정산 금액은 1,485,000 원 입니다"
+    start = text.index("1,485,000 원")
+    matches = self._detect(
+      monkeypatch,
+      text,
+      [
+        {
+          "entity_group": "IP_ADDRESS",
+          "score": 0.98,
+          "start": start,
+          "end": start + len("1,485,000 원"),
+        }
+      ],
+    )
+
+    assert [m.tag for m in matches] == ["QT_IP"]
+    assert matches[0].is_high_f1 is False
+
+  def test_date_shaped_span_loses_b1_eligibility(self, monkeypatch) -> None:
+    """HIGH_F1 태그라도 값이 날짜 모양이면 sLLM 검증으로 내려보낸다."""
+    text = "등록일은 2026-05-11 입니다"
+    start = text.index("2026-05-11")
+    matches = self._detect(
+      monkeypatch,
+      text,
+      [
+        {
+          "entity_group": "EMPLOYEE_ID",
+          "score": 0.94,
+          "start": start,
+          "end": start + len("2026-05-11"),
+        }
+      ],
+    )
+
+    assert [m.tag for m in matches] == ["EMPLOYEE_ID"]
+    assert matches[0].is_high_f1 is False
+
+  def test_well_formed_employee_id_keeps_b1(self, monkeypatch) -> None:
+    """대조군 — 정상 사원번호는 그대로 B-1 이어야 한다(게이트가 과잉 차단하지 않는다)."""
+    text = "사번 EMP-2024-00123 확인"
+    start = text.index("EMP-2024-00123")
+    matches = self._detect(
+      monkeypatch,
+      text,
+      [
+        {
+          "entity_group": "EMPLOYEE_ID",
+          "score": 0.94,
+          "start": start,
+          "end": start + len("EMP-2024-00123"),
+        }
+      ],
+    )
+
+    assert matches[0].is_high_f1 is True
+
+
 class _FakeTokenizer:
   """NERDetector.warm_up 이 만지는 최소 토크나이저 더블.
 

@@ -129,22 +129,41 @@ def test_step0_recovers_each_requested_evasion() -> None:
     )
 
 
-def test_spaced_phone_number_is_not_recovered_at_current_threshold() -> None:
-  """⚠️ 현재 임계값에서는 '공백 삽입된 전화번호'가 회수되지 않는다 — 실측 기록.
+def test_spaced_identifier_runs_are_recovered() -> None:
+  """공백 삽입된 전화번호·이메일이 회수되는지 — 예전 '미탐 핀' 을 뒤집은 자리.
 
-  `digit_spacing_min_run` 기본값 5 는 **연속된** 숫자-공백 열의 최소 길이다.
-  그런데 한국 전화번호는 하이픈으로 끊겨 연속 구간이 3·4·4 자리라 게이트를
-  넘지 못한다. 즉 공격자가 전화번호를 한 자리씩 띄워 뱉게 해도 STEP 0 는
-  발동하지 않는다(주민번호는 6·7자리라 넘는다).
+  이 테스트는 원래 반대 방향이었다(`applied == []` 을 못박아 둠). 근거는
+  "임계값 5 는 **연속 숫자** 길이인데 한국 전화번호는 하이픈으로 3·4·4 로 끊긴다"
+  였는데, 그 미탐이 실제 피해를 냈다 — RAG-2026-0810-001 실측에서
+  `0 1 0 - 9 0 0 0 - 5 0 1 4` 가 전화번호로 복원되지 않아 NER 이 이를 `QT_IP` 로
+  오탐했고(응답 1건당 QT_IP 6건), `y e o n w o o . y a n g 8 0 @ e x a m p l e . t e s t`
+  는 이메일 탐지를 통째로 빠져나갔다.
 
-  이 값은 프로젝트 규칙상 **감으로 낮추지 않고 벤치마크 산출물로 재산정**해야
-  하므로(U4), 여기서는 고치는 대신 현재 동작을 못박아 둔다. 임계값을 조정하면
-  이 테스트가 실패하면서 "무엇이 달라졌는지" 를 강제로 마주하게 된다.
+  임계값(5)은 그대로 두고 **런의 정의만** 넓혔다: 숫자-숫자가 아니라
+  영숫자+구분자(`_RUN_CHARS`) 런. clean/poisoned/demo 코퍼스 2,228건에 새 정규화기를
+  돌려 발동 0건임을 확인했으므로 정상 문서 오탐은 없다.
   """
   normalizer = TextNormalizer({"pii": {"normalize": {"digit_spacing_min_run": 5}}})
-  result = normalizer.normalize("연락처는 0 1 0 - 1 2 3 4 - 5 6 7 8 입니다.")
 
-  assert result.applied == [], (
-    "전화번호 공백 우회가 회수됐습니다 — 임계값이 바뀌었다면 U4 재산정 근거를 "
-    f"함께 남기세요 (applied={result.applied})"
+  phone = normalizer.normalize("연락처는 0 1 0 - 1 2 3 4 - 5 6 7 8 입니다.")
+  assert "010-1234-5678" in phone.normalized_text, (
+    f"하이픈으로 끊긴 전화번호 런이 복원되지 않았습니다 (={phone.normalized_text!r})"
   )
+
+  email = normalizer.normalize("이메일 y a n g 8 0 @ e x a m p l e . t e s t 입니다.")
+  assert "yang80@example.test" in email.normalized_text, (
+    f"영문 공백 삽입 이메일이 복원되지 않았습니다 (={email.normalized_text!r})"
+  )
+
+
+def test_spaced_run_does_not_touch_normal_prose() -> None:
+  """정상 표기는 런이 끊겨 그대로 남아야 한다 — 위 확장의 오탐 안전망.
+
+  한글('3 년 9 개월')과 슬래시('8 5 / 1 0 0')는 `_RUN_CHARS` 밖이라 런을 끊는다.
+  이게 깨지면 점수·기간 같은 평범한 숫자가 붙어 NER 에 새 오탐을 만든다.
+  """
+  normalizer = TextNormalizer({"pii": {"normalize": {"digit_spacing_min_run": 5}}})
+
+  for text in ("전공 실무 능력: 8 5 / 1 0 0", "근무 기간 3 년 9 개월", "방 302 호실 5명"):
+    result = normalizer.normalize(text)
+    assert result.applied == [], f"정상 표기가 정규화됐습니다: {text!r} → {result.normalized_text!r}"

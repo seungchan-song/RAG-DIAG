@@ -18,8 +18,10 @@ downstream 탐지기가 다시 잡을 수 있게 한다.
   2. compat    : 유니코드 호환 폴딩(NFKC) — 전각→반각 등 (１→1, －→-, ＠→@, 　→ 공백)
   3. homoglyph : 라틴/키릴/그리스 등 시각적 유사 문자 → 표준 문자
   4. jamo      : 분리된 한글 호환 자모(ㅎㅗㅇ) 를 음절(홍)로 결합
-  5. digit_sep : 숫자 '사이' 공백 제거 (0 1 0 → 010). 오탐 방지를 위해
-                 다른 변형 신호가 있거나 규칙적인 숫자 공백열이 있을 때만 동작한다.
+  5. digit_sep : 영숫자 '사이' 공백 제거 (0 1 0 → 010, y a n g @ … → yang@…).
+                 오탐 방지를 위해 규칙적인 공백열이 충분히 길 때만 동작한다.
+                 (이름은 evasion_kinds 어휘와 1:1 이라 'digit_sep' 을 유지하지만,
+                  실제 대상은 숫자에 한정되지 않는다.)
 
 보류(문서화된 한계):
   - 역순/순서변형 복원: 단조(monotonic) 오프셋 정렬이 깨지고 오탐 위험이 커,
@@ -114,9 +116,12 @@ _T_INDEX: dict[str, int] = {ch: idx for idx, ch in enumerate(_JONGSEONG) if idx 
 
 _HANGUL_BASE = 0xAC00
 
-# 숫자 사이 공백 제거 시 '구분자'로 간주할 문자(공백류만; 점은 IP/전화 구분자라 제외).
+# 글자 사이 공백 제거 시 '구분자'로 간주할 문자(공백류만).
 _INTRA_DIGIT_WS = frozenset({" ", "\t"})
-_ASCII_DIGITS = frozenset("0123456789")
+# 공백이 낀 '런'을 구성할 수 있는 문자 — 식별자(이메일·전화·카드·사번)를 이루는 영숫자와
+# 그 구분자들. 한글·괄호·슬래시는 일부러 뺐다: 이들이 런을 끊어 줘야 "3 년 9 개월",
+# "8 5 / 1 0 0" 같은 정상 표기가 붙지 않는다.
+_RUN_CHARS = frozenset("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@._+-")
 
 # 하나의 (문자, 원문시작, 원문끝) 토큰. 변환 파이프라인이 이 리스트를 순차 가공한다.
 _Token = tuple[str, int, int]
@@ -191,8 +196,8 @@ class TextNormalizer:
 
     주요 설정 키:
       - pii.runtime.enable_step0: STEP 0 활성화 여부(기본 True)
-      - pii.normalize.digit_spacing_min_run: 숫자 사이 공백 제거를 유발하는
-        규칙적 공백열의 최소 숫자 개수(기본 5, 오탐 방지용 · 벤치마크로 재산정 대상)
+      - pii.normalize.digit_spacing_min_run: 글자 사이 공백 제거를 유발하는
+        규칙적 공백열의 최소 글자 개수(기본 5, 오탐 방지용 · 벤치마크로 재산정 대상)
     """
     pii_config = config.get("pii", {}) if isinstance(config, dict) else {}
     runtime_config = pii_config.get("runtime", {}) if isinstance(pii_config, dict) else {}
@@ -242,13 +247,12 @@ class TextNormalizer:
     if changed:
       applied.append("jamo")
 
-    # 숫자 사이 공백 제거는 오탐 위험이 있어, '다른 변형 신호가 있거나' 또는
-    # '규칙적인 숫자-공백 반복열이 있을 때'만 동작하도록 보수적으로 게이팅한다.
-    evasion_signal = bool(applied) or self._has_regular_digit_spacing(tokens)
-    if evasion_signal:
-      tokens, changed = self._strip_intra_digit_ws(tokens)
-      if changed:
-        applied.append("digit_sep")
+    # 글자 사이 공백 제거는 '충분히 긴 규칙적 공백열'이라는 단일 게이트로만 발동한다.
+    # (예전에는 `bool(applied) or ...` 로 다른 변형이 하나라도 있으면 임계값을 통째로
+    #  무시했는데, 그러면 "ㅎㅗㅇ 8 0" 같은 입력에서 2자리 숫자 공백까지 붙어버렸다.)
+    tokens, changed = self._strip_spaced_run_ws(tokens)
+    if changed:
+      applied.append("digit_sep")
 
     normalized_text = "".join(token[0] for token in tokens)
     char_spans = [(token[1], token[2]) for token in tokens]
@@ -353,53 +357,45 @@ class TextNormalizer:
 
     return output, changed
 
-  def _has_regular_digit_spacing(self, tokens: list[_Token]) -> bool:
+  def _strip_spaced_run_ws(self, tokens: list[_Token]) -> tuple[list[_Token], bool]:
     """
-    '숫자 (공백 숫자)+' 형태의 규칙적 공백열이 있는지 검사한다.
+    '한 글자 (공백 한 글자)+' 형태의 극대 런에서 공백만 제거한다.
 
-    다른 변형 신호가 없어도 이 패턴이 충분히 길면(digit_spacing_min_run 이상)
-    숫자 사이 공백 제거를 허용하기 위한 게이트다.
+    런 구성 문자는 식별자를 이루는 영숫자와 구분자(_RUN_CHARS)다. 런 길이가
+    digit_spacing_min_run 이상일 때만 그 런 안의 공백을 지우므로, 일반 산문의 공백은
+    건드리지 않는다("3 년 9 개월" 은 한글이, "8 5 / 1 0 0" 은 '/' 가 런을 끊는다).
+
+    ⚠️ 예전에는 숫자-숫자 사이만 봤다. 그래서 R2 evasion 응답의
+    "y e o n w o o . y a n g 8 0 @ e x a m p l e . t e s t" 가 이메일로 복원되지 않았고,
+    "0 1 0 - 9 0 0 0 - 5 0 1 4" 도 하이픈에서 런이 끊겨 미복원 → NER 이 이를 QT_IP 로
+    오탐했다(RAG-2026-0810-001 실측: 응답 1건당 QT_IP 6건). 런 문자에 영문·구분자를
+    포함시켜 둘 다 해소한다.
     """
+    count = len(tokens)
+    dropped: set[int] = set()
     index = 0
-    count = len(tokens)
+
     while index < count:
-      if tokens[index][0] in _ASCII_DIGITS:
-        run = 1
-        cursor = index
-        while (
-          cursor + 2 < count
-          and tokens[cursor + 1][0] in _INTRA_DIGIT_WS
-          and tokens[cursor + 2][0] in _ASCII_DIGITS
-        ):
-          run += 1
-          cursor += 2
-        if run >= self.digit_spacing_min_run:
-          return True
-        index = cursor + 1
-      else:
+      if tokens[index][0] not in _RUN_CHARS:
         index += 1
-    return False
-
-  def _strip_intra_digit_ws(self, tokens: list[_Token]) -> tuple[list[_Token], bool]:
-    """
-    두 숫자 '사이'의 공백 토큰만 제거한다(0 1 0 → 010).
-
-    일반 산문 공백은 건드리지 않고, 앞뒤가 모두 숫자인 공백만 제거하므로 오탐을
-    최소화한다. 점(.)은 IP·전화 구분자라 제거 대상에서 제외한다.
-    """
-    output: list[_Token] = []
-    changed = False
-    count = len(tokens)
-    for position, token in enumerate(tokens):
-      ch = token[0]
-      is_between_digits = (
-        ch in _INTRA_DIGIT_WS
-        and 0 < position < count - 1
-        and tokens[position - 1][0] in _ASCII_DIGITS
-        and tokens[position + 1][0] in _ASCII_DIGITS
-      )
-      if is_between_digits:
-        changed = True
         continue
-      output.append(token)
-    return output, changed
+      # 극대 런 탐색: (글자 · 공백 1개 · 글자) 를 계속 이어 붙인다.
+      run_length = 1
+      cursor = index
+      space_positions: list[int] = []
+      while (
+        cursor + 2 < count
+        and tokens[cursor + 1][0] in _INTRA_DIGIT_WS
+        and tokens[cursor + 2][0] in _RUN_CHARS
+      ):
+        space_positions.append(cursor + 1)
+        run_length += 1
+        cursor += 2
+      if run_length >= self.digit_spacing_min_run:
+        dropped.update(space_positions)
+      index = cursor + 1
+
+    if not dropped:
+      return tokens, False
+    output = [token for position, token in enumerate(tokens) if position not in dropped]
+    return output, True

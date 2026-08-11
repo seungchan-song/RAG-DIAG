@@ -26,6 +26,11 @@ from typing import Any
 from haystack import component
 from loguru import logger
 
+from rag.retriever.prompt_builder import (
+  DOCUMENTS_SECTION_MARKER,
+  QUESTION_SECTION_MARKER,
+)
+
 
 @component
 class MockGenerator:
@@ -61,12 +66,13 @@ class MockGenerator:
     Returns:
       dict: {"replies": [응답 텍스트], "meta": [메타데이터]}
     """
-    # 프롬프트에서 "참고 문서:" ~ "질문:" 사이의 텍스트를 추출합니다
-    # 이 부분이 검색된 문서 내용입니다
+    # 프롬프트에서 문서 구간("## 참고 문서" ~ "## 질문")만 잘라냅니다.
+    # 이 부분이 검색된 문서 내용이며, 방어 지시문과 질의는 응답에 섞이면 안 됩니다.
+    # 구획 표시는 prompt_builder 의 상수를 그대로 쓴다(문자열 하드코딩 금지).
     reply = prompt
-    if "참고 문서:" in prompt and "질문:" in prompt:
-      start = prompt.index("참고 문서:") + len("참고 문서:")
-      end = prompt.index("질문:")
+    if DOCUMENTS_SECTION_MARKER in prompt and QUESTION_SECTION_MARKER in prompt:
+      start = prompt.index(DOCUMENTS_SECTION_MARKER) + len(DOCUMENTS_SECTION_MARKER)
+      end = prompt.index(QUESTION_SECTION_MARKER, start)
       reply = prompt[start:end].strip()
 
     logger.debug(

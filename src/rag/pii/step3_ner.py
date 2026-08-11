@@ -15,6 +15,7 @@ NER 모델(KPF-BERT-KDPII)이 출력하는 KDPII 33개 엔티티 라벨을 코�
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,6 +94,14 @@ NER_LABEL_MAP: dict[str, str] = {
 # 정형 패턴이라 NER만으로도 신뢰 가능한 단축 태그 집합 (B-1 경로).
 # 신규 5종은 고정 포맷(EMP-2024-13579 · MBR1234567 · PART-4821 · admin_7391 ·
 # 5자리 우편번호)이라 여기 둔다. CITY(→LOC)만 LOW_F1 으로 남긴다.
+#
+# ⚠️ **여기 넣기 전에 벤치마크가 아니라 실제 코퍼스에서 재보라.** QT_IP 가
+# 그래서 빠졌다(2026-08-10). 팀원 벤치마크(teammate_test.jsonl)에서는 QT_IP 가
+# precision 0.968 · recall 1.0 · F1 0.984 로 거의 완벽했는데, 같은 모델을 우리
+# 업무 문서(data/documents/clean/sensitive/ 160건)에 돌리니 B-1 로 확정된 169건이
+# **전량 오탐**이었다. 금액 '1,485,000 원'(0.880) · 점수 '85 / 100'(0.930) ·
+# 시각 '08:20:03'(0.982) · 숫자조각 '202'(0.932) 같은 것들이다. 벤치마크는 깨끗한
+# 문장 단위라 표·금액·시각이 섞인 문맥이 아예 없어서 이 오탐이 드러나지 않는다.
 HIGH_F1_TAGS = {
   "EMPLOYEE_ID",
   "MEMBER_ID",
@@ -103,7 +112,6 @@ HIGH_F1_TAGS = {
   "QT_CARD",
   "QT_CAR",
   "QT_DRIVER",
-  "QT_IP",
   "QT_MOBILE",
   "QT_PASSPORT",
   "QT_PHONE",
@@ -115,12 +123,17 @@ HIGH_F1_TAGS = {
 }
 
 # 문맥 의존적이라 sLLM 교차검증이 필요한 단축 태그 집합 (B-2 경로).
+# 이 집합은 문서용이다 — 실제 분기는 `is_high_f1`(= HIGH_F1_TAGS 소속 여부) 하나로
+# 갈리고, 어느 쪽에도 없는 태그는 B-2 로 떨어진다(split_by_route).
 LOW_F1_TAGS = {
   "DAT",
   "LOC",
   "ORG",
   "PER",
   "QT_ADDR",
+  # 진짜 IP 는 STEP 1 정규식(A-1)이 잡는다. NER 의 QT_IP 는 B-2 로 보내
+  # sLLM 이 금액·시각 오탐을 거르게 한다 — 위 HIGH_F1_TAGS 주석의 실측 참조.
+  "QT_IP",
   "QT_GRADE",
   "QT_LENGTH",
   "QT_WEIGHT",
@@ -175,6 +188,10 @@ STRUCTURE_DIGIT_RANGE: dict[str, tuple[int, int]] = {
   "QT_CAR": (6, 7),
   "ZIPCODE": (5, 5),
 }
+
+# 날짜 모양 스팬. HIGH_F1_TAGS 소속이어도 이 형태면 B-1 즉시 확정에서 제외한다
+# (사용처의 주석에 실측 근거). 구분자는 '-' './' 를 모두 받는다.
+_DATE_LIKE_SPAN = re.compile(r"^\d{4}[-./]\d{1,2}[-./]\d{1,2}$")
 
 # KPF-BERT 계열(BERT-base 구조)의 절대 입력 한계(positional embedding 크기).
 # 토크나이저의 model_max_length 가 sentinel(매우 큰 수)로 설정된 경우에도
@@ -470,20 +487,27 @@ class NERDetector:
       tag = NER_LABEL_MAP.get(raw_tag, raw_tag)
       start = int(entity.get("start", 0))
       end = int(entity.get("end", 0))
+      # entity["word"] 는 서브워드를 공백으로 이어붙인 값이라 원문과 다르다
+      # (실측: "010-1234-5678" → "010 - 1234 - 5678",
+      #        "a.b@c.com" → "a. b @ c. com"). 그대로 쓰면 이메일 마스킹이
+      # 깨지고, detector._is_recovered_by_step0 이 원문과 비교하므로 모든
+      # NER 결과가 "변형 PII 복원됨"으로 거짓 표시된다. 스팬은 정확하니
+      # 원문을 잘라 쓴다.
+      span_text = text[start:end]
       matches.append(
         NERMatch(
           tag=tag,
-          # entity["word"] 는 서브워드를 공백으로 이어붙인 값이라 원문과 다르다
-          # (실측: "010-1234-5678" → "010 - 1234 - 5678",
-          #        "a.b@c.com" → "a. b @ c. com"). 그대로 쓰면 이메일 마스킹이
-          # 깨지고, detector._is_recovered_by_step0 이 원문과 비교하므로 모든
-          # NER 결과가 "변형 PII 복원됨"으로 거짓 표시된다. 스팬은 정확하니
-          # 원문을 잘라 쓴다.
-          text=text[start:end],
+          text=span_text,
           start=start,
           end=end,
           confidence=confidence,
-          is_high_f1=tag in HIGH_F1_TAGS,
+          # 날짜 모양이면 B-1(즉시 확정) 자격을 뺏고 sLLM 으로 보낸다. HIGH_F1_TAGS
+          # 는 전부 숫자·기호 정형 태그라 YYYY-MM-DD 가 정답인 경우가 없고, 실제로
+          # 오탐만 나왔다 — 우리 코퍼스 160건에서 EMPLOYEE_ID 로 B-1 확정된 80건 중
+          # 28건(35%)이 '2026-05-11'(0.942) · '2026-03-27'(0.989) 같은 날짜였다
+          # (2026-08-10 실측). 날짜 자체가 PII 인 경우는 DAT 태그로 잡히며 그쪽은
+          # LOW_F1 이라 이 게이트를 타지 않는다.
+          is_high_f1=tag in HIGH_F1_TAGS and not _DATE_LIKE_SPAN.match(span_text),
         )
       )
 
