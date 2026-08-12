@@ -216,6 +216,49 @@ def test_builtin_adapter_build_variant_excludes_target(monkeypatch):
   del base_store
 
 
+def test_builtin_adapter_build_variant_keeps_store_backend(monkeypatch):
+  """반사실 인덱스는 원본과 **같은 backend** 로 만들어져야 한다(R4 교란 방지).
+
+  `create_document_store()` 를 인자 없이 부르면 `ingest/writer.py` 의 backend 기본값이
+  "in_memory" 라 b=0 만 InMemoryDocumentStore 가 됐다. 그러면 리트리버가 FAISS 가 아닌
+  Haystack InMemory 로 갈리고, 그 run() 에는 query 파라미터가 없어 하이브리드 부스트
+  (구조적 PII 정확일치 +2.0)를 통째로 못 탄다. R4 delta 가 "d* 유무" 대신 "하이브리드 vs
+  dense" 를 재게 된다 — RAG-2026-0811-003 실측 b=1 top-1 평균 1.882 vs b=0 0.398.
+  """
+  stored = [_FakeDoc("a", 0.9, {"doc_id": "keep"})]
+  captured: dict[str, Any] = {}
+
+  class _CapturingStore:
+    def write_documents(self, docs: list[Any]) -> None:
+      captured["written"] = list(docs)
+
+  def _fake_create_store(*args: Any, **kwargs: Any) -> Any:
+    captured["args"] = args
+    captured["kwargs"] = kwargs
+    return _CapturingStore()
+
+  monkeypatch.setattr("rag.adapters.builtin.create_document_store", _fake_create_store)
+  monkeypatch.setattr(
+    "rag.adapters.builtin.build_rag_pipeline",
+    lambda store, config, **kwargs: _make_pipeline(),
+  )
+
+  class _StoreHolder:
+    def filter_documents(self) -> list[Any]:
+      return stored
+
+  config = {"index": {"backend": "faiss"}}
+  adapter = BuiltinHaystackAdapter(_FakePipeline(stored, document_store=_StoreHolder()), config)
+  adapter.build_variant(exclude_doc_ids={"drop"})
+
+  # config 가 그대로 전달돼야 backend 가 원본과 같아진다.
+  assert captured["args"][0] is config
+  # persist=False 여야 실험 인덱스를 디스크에 덮어쓰지 않는다.
+  assert captured["kwargs"]["persist"] is False
+  # FAISS backend 는 index_dir 이 있어야 활성화된다(없으면 조용히 in_memory 로 폴백).
+  assert captured["kwargs"].get("index_dir")
+
+
 def test_builtin_adapter_write_documents_skips_embedding_when_present():
   """이미 임베딩된 문서는 임베더를 타지 않고 바로 저장돼야 한다(모델 로드 회피)."""
   written: dict[str, Any] = {}

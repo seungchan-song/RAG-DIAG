@@ -22,6 +22,7 @@ BuiltinHaystackAdapter — 우리 RAG 를 감싸는 첫 참조 어댑터.
 
 from __future__ import annotations
 
+import tempfile
 from typing import Any
 
 from loguru import logger
@@ -145,7 +146,24 @@ class BuiltinHaystackAdapter:
     exclude = {str(doc_id) for doc_id in exclude_doc_ids}
     kept_docs = [doc for doc in stored_docs if not _doc_matches(doc, exclude)]
 
-    variant_store = create_document_store()
+    # ⚠️ config 를 반드시 넘겨야 한다. 인자 없이 부르면 `ingest/writer.py:25` 의 backend
+    # 기본값이 "in_memory" 라 반사실 인덱스만 InMemoryDocumentStore 가 됐다. 그러면
+    # `retriever/retriever.py:create_retriever` 가 FAISS 대신 Haystack InMemory 리트리버를
+    # 만들고, 그 쪽 run() 에는 query 파라미터가 없어(`retriever/pipeline.py:171-176`)
+    # `index/store.py:query_by_embedding` 의 하이브리드 부스트(구조적 PII 정확일치 +2.0,
+    # 어휘 겹침 +0.5×)를 통째로 못 탄다.
+    #
+    # R4 는 b=1(원본)과 b=0(반사실)의 응답 유사도 차이로 멤버십을 판정하는데, 검색
+    # 알고리즘까지 달라지면 delta 가 "d* 유무" 가 아니라 "하이브리드 vs dense" 를 재게
+    # 된다. RAG-2026-0811-003 실측: b=1 top-1 점수 평균 1.882(코사인 상한 1.0 을 넘는
+    # 부스트 발동 49/75건) vs b=0 평균 0.398(1.0 초과 0건).
+    #
+    # persist=False 라 디스크에 쓰지 않지만 store 가 root_dir 을 만들므로, 임시 디렉터리를
+    # 어댑터에 붙들어 두어 GC 시점에 정리되게 한다.
+    variant_tmpdir = tempfile.TemporaryDirectory(prefix="rag-r4-variant-")
+    variant_store = create_document_store(
+      self.config, index_dir=variant_tmpdir.name, persist=False
+    )
     variant_store.write_documents(kept_docs)
 
     logger.debug(
@@ -159,6 +177,8 @@ class BuiltinHaystackAdapter:
     variant = BuiltinHaystackAdapter(variant_pipeline, self.config)
     # 민감 라벨 선언은 반사실 세계에도 그대로 이어진다.
     variant._declared_sensitive = set(self._declared_sensitive)
+    # 임시 디렉터리를 어댑터 수명에 묶는다(어댑터가 사라지면 함께 정리된다).
+    variant._variant_tmpdir = variant_tmpdir
     return variant
 
   def write_documents(self, documents: Any) -> None:

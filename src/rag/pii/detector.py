@@ -111,12 +111,80 @@ class PIIDetector:
     }
 
   def detect_and_mask(self, text: str) -> dict[str, Any]:
-    """Detect PII and return a masked text artifact."""
+    """
+    PII 를 탐지하고 마스킹된 텍스트를 함께 반환합니다.
+
+    ⚠️ `detect()` 가 만든 finding 의 start/end 는 **원문 좌표**인데, 이 함수가 돌려주는
+    `masked_text` 는 길이가 다른 문자열이다(예: "MBR-2024-0012"(13자) → "[회원 ID]"(8자)).
+    호출부(`pii/artifacts.py`)가 응답 본문을 마스킹본으로 교체해 저장하므로, 좌표를 그대로
+    두면 저장된 finding 이 엉뚱한 구간을 가리킨다(RAG-2026-0811-003 실측: 구조적 태그
+    스팬의 50%가 해당 태그일 수 없는 문자열이었다). 그래서 여기서 좌표를 마스킹본
+    기준으로 옮긴다.
+
+    Args:
+      text: 원문 텍스트
+
+    Returns:
+      dict: `detect()` 결과에 masked_text/masking_applied 가 추가된 것.
+        findings 의 start/end 는 **masked_text 기준 좌표**다.
+    """
     result = self.detect(text)
     masked_text = self.masker.mask_text(text, result["confirmed"])
     result["masked_text"] = masked_text
     result["masking_applied"] = True
+    result["findings"] = self._shift_findings_to_masked(
+      result["findings"], result["confirmed"]
+    )
     return result
+
+  def _shift_findings_to_masked(
+    self,
+    findings: list[dict[str, Any]],
+    confirmed: list[Any],
+  ) -> list[dict[str, Any]]:
+    """
+    finding 의 start/end 를 원문 좌표에서 마스킹본 좌표로 옮깁니다.
+
+    마스킹은 항목마다 길이를 바꾸므로, 앞에서부터 (치환 길이 - 원본 길이) 를 누적해
+    뒤쪽 항목의 좌표를 밀어 준다. 치환 문자열은 `_build_public_findings` 가 이미 계산해
+    finding["masked_text"] 에 넣어 둔 값과 같으므로 재계산하지 않는다.
+
+    findings[i] 는 confirmed[i] 와 1:1 대응한다(`_build_public_findings` 가 같은 순서로
+    만든다). 대응이 깨졌으면 좌표를 건드리지 않고 그대로 돌려준다.
+
+    Args:
+      findings: `_build_public_findings` 가 만든 공개용 finding 목록(원문 좌표)
+      confirmed: 확정 PII 목록(원문 좌표 보유)
+
+    Returns:
+      list[dict]: start/end 가 마스킹본 좌표로 갱신된 finding 목록
+    """
+    if len(findings) != len(confirmed):
+      logger.warning(
+        "finding({})과 confirmed({}) 개수가 달라 좌표 재매핑을 건너뜁니다",
+        len(findings),
+        len(confirmed),
+      )
+      return findings
+
+    # ponytail: 스팬이 겹치지 않는다는 전제(분류기가 겹침을 정리한다). 겹치면 그 항목만
+    # 원문 좌표로 남긴다 — 마스킹 자체가 겹침에서 이미 손실적이라 여기서 더 할 게 없다.
+    shifted = [dict(finding) for finding in findings]
+    order = sorted(range(len(confirmed)), key=lambda i: confirmed[i].start)
+
+    delta = 0
+    prev_end = -1
+    for i in order:
+      pii = confirmed[i]
+      if pii.start < prev_end:
+        continue
+      replacement_length = len(str(shifted[i].get("masked_text") or ""))
+      shifted[i]["start"] = pii.start + delta
+      shifted[i]["end"] = pii.start + delta + replacement_length
+      delta += replacement_length - (pii.end - pii.start)
+      prev_end = pii.end
+
+    return shifted
 
   def _remap_to_original(
     self,
