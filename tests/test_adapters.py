@@ -1061,10 +1061,56 @@ def test_rest_adapter_from_config_requires_base_url():
     RestRagAdapter.from_config({"adapter": {"type": "rest"}})
 
 
-def test_rest_adapter_write_documents_posts_each():
-  transport = _record_transport({"ok": True})
+def test_rest_adapter_query_strips_document_metadata_prefix():
+  # AnythingLLM 은 sources[].text 앞에 <document_metadata>...</document_metadata> 를
+  # 붙여 보낸다(실측 2026-08-12). R2 ROUGE 비교를 오염시키므로 파싱 시 제거해야 한다.
+  transport = _record_transport({
+    "textResponse": "답변",
+    "sources": [{
+      "text": "<document_metadata>\nsourceDocument: d1.txt\n</document_metadata>\n\n실제 내용",
+      "score": 0.5,
+    }],
+  })
   adapter = RestRagAdapter(base_url="http://x", transport=transport)
+  trace = adapter.query("질문")
+  assert trace.retrieved_documents[0]["content"] == "실제 내용"
+
+
+def test_rest_adapter_write_documents_uploads_then_embeds():
+  # 실측(2026-08-12): raw-text 업로드(1단계) → 응답의 location 을 모아
+  # update-embeddings(2단계) 로 워크스페이스에 편입시켜야 실제로 검색된다.
+  responses = {
+    "/api/v1/document/raw-text": {
+      "documents": [{"location": "custom-documents/raw-p1-uuid.json"}]
+    },
+    "/api/v1/workspace/ws/update-embeddings": {"workspace": {"id": 1}},
+  }
+  calls: list[dict[str, Any]] = []
+
+  def transport(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    calls.append({"url": url, "payload": payload})
+    for suffix, response in responses.items():
+      if url.endswith(suffix):
+        return response
+    raise AssertionError(f"unexpected url: {url}")
+
+  adapter = RestRagAdapter(base_url="http://x", workspace="ws", transport=transport)
   count = adapter.write_documents([{"content": "poison", "doc_id": "p1"}])
+
   assert count == 1
-  assert transport.calls[0]["url"].endswith("/api/v1/document/upload")
-  assert transport.calls[0]["payload"]["name"] == "p1"
+  assert calls[0]["url"].endswith("/api/v1/document/raw-text")
+  assert calls[0]["payload"] == {"textContent": "poison", "metadata": {"title": "p1.txt"}}
+  assert calls[1]["url"].endswith("/api/v1/workspace/ws/update-embeddings")
+  assert calls[1]["payload"] == {
+    "adds": ["custom-documents/raw-p1-uuid.json"],
+    "deletes": [],
+  }
+
+
+def test_rest_adapter_write_documents_skips_embed_call_when_no_location():
+  # 업로드 응답에 location 이 하나도 없으면(업로드 실패 등) 2단계를 아예 호출하지 않는다.
+  transport = _record_transport({"documents": []})
+  adapter = RestRagAdapter(base_url="http://x", workspace="ws", transport=transport)
+  count = adapter.write_documents([{"content": "poison", "doc_id": "p1"}])
+  assert count == 0
+  assert len(transport.calls) == 1

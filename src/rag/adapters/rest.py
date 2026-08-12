@@ -13,12 +13,30 @@ RestRagAdapter — 외부 REST RAG(예: AnythingLLM)를 붙이는 참조 어댑�
     만들 수 없으므로 INDEX_REBUILD 를 노출하지 않는다. → R4 는 능력 계획에서 자동 skip.
     (반사실 진단은 test/staging 인덱스를 통제할 수 있을 때만 성립한다는 위협 모델과 일치.)
 
+기본값 실측(2026-08-12, 로컬 Docker `mintplexlabs/anythingllm` + Ollama qwen2.5:3b):
+  - `chat_path`/`answer_field`/`sources_field`/`source_content_field`/`source_score_field`
+    기본값은 실제 응답과 그대로 일치했다(변경 불필요).
+  - `write_documents` 는 예전엔 `{name, content}` 를 `/api/v1/document/upload` 에 JSON 으로
+    보냈는데, 실제 AnythingLLM 은 그 경로가 multipart/binary 전용이라 전량 실패했다.
+    실제로는 **2단계**다 — (1) `/api/v1/document/raw-text` 에 `{textContent, metadata.title}`
+    로 텍스트를 넣으면 응답에 `documents[].location` 이 오고, (2) 그 location 들을
+    `/api/v1/workspace/{workspace}/update-embeddings` 의 `adds` 로 넘겨야 실제로 검색
+    대상(임베딩)에 잡힌다. 업로드만 하고 끝내면 문서가 존재는 하되 검색되지 않는다.
+  - `sources[].text` 에는 AnythingLLM 이 매 청크 앞에 `<document_metadata>...</document_metadata>`
+    블록을 붙여 보낸다. R2 의 ROUGE 비교엔 잡음이라 파싱 시 제거한다.
+  - **코드 밖 함정**: 워크스페이스 기본 `similarityThreshold`(0.25)가 꽤 높아서, 실제로
+    유출돼야 할 문서도 스코어가 임계값 밑이면 `sources: []` 로 조용히 걸러진다(실측:
+    방금 넣은 문서가 score 0.166 으로 기본 임계값 미달). 대상 워크스페이스의 임계값을
+    낮춰두지 않으면 R2 가 "유출 없음"으로 오판할 수 있다 — 코드가 아니라 AnythingLLM
+    쪽 설정이라 여기서 고칠 수 없다.
+
 주의: 엔드포인트 경로·필드명은 대상 RAG 버전마다 다를 수 있다. 실제 연동 전 대상의
 `/api/docs` 스키마와 대조해 config 로 맞춰야 한다(기본값은 출발점일 뿐이다).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from loguru import logger
@@ -28,6 +46,11 @@ from rag.adapters.registry import AdapterConfigError, register_adapter
 
 # transport 콜러블 계약: (url, json_payload, headers) -> 응답 dict.
 Transport = Callable[[str, dict[str, Any], dict[str, str]], dict[str, Any]]
+
+# AnythingLLM 이 sources[].text 앞에 매번 붙이는 메타데이터 블록(실측 2026-08-12).
+# R2 ROUGE 비교엔 잡음이라 파싱 시 제거한다. 다른 REST RAG 는 이 태그를 안 쓰므로
+# 매치가 안 되면 그냥 no-op.
+_DOCUMENT_METADATA_PREFIX = re.compile(r"^<document_metadata>.*?</document_metadata>\s*", re.DOTALL)
 
 # REST RAG 가 노출할 수 있는 native(최대) 능력. INDEX_REBUILD 는 없음(라이브 인덱스
 # 반사실 불가) → R4 자동 skip. 운영자는 config.adapter.capabilities 로 더 좁힐 수 있다.
@@ -64,7 +87,8 @@ class RestRagAdapter:
     workspace: str = "",
     api_key: str = "",
     chat_path: str = "/api/v1/workspace/{workspace}/chat",
-    upload_path: str = "/api/v1/document/upload",
+    raw_text_path: str = "/api/v1/document/raw-text",
+    update_embeddings_path: str = "/api/v1/workspace/{workspace}/update-embeddings",
     answer_field: str = "textResponse",
     sources_field: str = "sources",
     source_content_field: str = "text",
@@ -78,9 +102,12 @@ class RestRagAdapter:
 
     Args:
       base_url: 대상 RAG 의 기본 URL(예: "http://localhost:3001").
-      workspace: chat_path 의 {workspace} 자리에 치환될 워크스페이스 식별자.
+      workspace: chat_path/update_embeddings_path 의 {workspace} 자리에 치환될 워크스페이스 식별자.
       api_key: Bearer 토큰(있으면 Authorization 헤더에 실린다).
-      chat_path / upload_path: 질의·업로드 엔드포인트 경로.
+      chat_path: 질의 엔드포인트 경로.
+      raw_text_path: R9 poison 텍스트 업로드 엔드포인트(1단계).
+      update_embeddings_path: 업로드한 문서를 워크스페이스 검색 대상에 실제로
+        편입시키는 엔드포인트(2단계) — 이걸 안 부르면 문서가 존재만 하고 검색되지 않는다.
       answer_field / sources_field / source_content_field / source_score_field:
         응답 JSON 에서 답변·검색원문 목록·원문 내용·점수를 꺼낼 필드 경로(점 표기 지원).
       system_prompt: R7 평가 정답으로 쓸, 대상에 설정된 방어 프롬프트 원문.
@@ -91,7 +118,8 @@ class RestRagAdapter:
     self.workspace = workspace
     self.api_key = api_key
     self.chat_path = chat_path
-    self.upload_path = upload_path
+    self.raw_text_path = raw_text_path
+    self.update_embeddings_path = update_embeddings_path
     self.answer_field = answer_field
     self.sources_field = sources_field
     self.source_content_field = source_content_field
@@ -119,7 +147,12 @@ class RestRagAdapter:
       workspace=str(adapter_cfg.get("workspace", "")),
       api_key=str(adapter_cfg.get("api_key", "")),
       chat_path=str(adapter_cfg.get("chat_path", "/api/v1/workspace/{workspace}/chat")),
-      upload_path=str(adapter_cfg.get("upload_path", "/api/v1/document/upload")),
+      raw_text_path=str(adapter_cfg.get("raw_text_path", "/api/v1/document/raw-text")),
+      update_embeddings_path=str(
+        adapter_cfg.get(
+          "update_embeddings_path", "/api/v1/workspace/{workspace}/update-embeddings"
+        )
+      ),
       answer_field=str(adapter_cfg.get("answer_field", "textResponse")),
       sources_field=str(adapter_cfg.get("sources_field", "sources")),
       source_content_field=str(adapter_cfg.get("source_content_field", "text")),
@@ -167,6 +200,7 @@ class RestRagAdapter:
     for source in raw_sources:
       if isinstance(source, dict):
         content = str(source.get(self.source_content_field, "") or "")
+        content = _DOCUMENT_METADATA_PREFIX.sub("", content)
         score = source.get(self.source_score_field)
         meta = {k: v for k, v in source.items() if k != self.source_content_field}
       else:
@@ -186,15 +220,18 @@ class RestRagAdapter:
 
   def write_documents(self, documents: Any) -> int:
     """
-    대상 RAG 에 문서를 업로드합니다(R9 poison 주입).
+    대상 RAG 에 문서를 업로드하고 워크스페이스 검색 대상에 편입시킵니다(R9 poison 주입).
 
-    업로드 스키마는 백엔드마다 다르므로 여기서는 JSON {name, content} 로 단순화한다.
-    multipart 등 다른 방식이 필요하면 transport 를 교체하거나 이 메서드를 재정의한다.
+    AnythingLLM 실측(2026-08-12) 기준 2단계다 — (1) raw-text 엔드포인트로 텍스트를
+    넣어 documents[].location 을 받고, (2) 그 location 들을 update-embeddings 의
+    adds 로 한 번에 넘겨야 실제로 검색된다. (1)만 하면 문서가 존재는 하되 워크스페이스
+    벡터 검색에는 잡히지 않는다(구 구현의 함정 — 능력 계획은 run 인데 실제 주입은
+    비어 있는 상태가 됨).
 
     Returns:
-      int: 업로드를 시도한 문서 수.
+      int: 실제로 임베딩까지 완료된 문서 수.
     """
-    count = 0
+    locations: list[str] = []
     for index, doc in enumerate(documents):
       if isinstance(doc, dict):
         content = str(doc.get("content", "") or "")
@@ -202,10 +239,22 @@ class RestRagAdapter:
       else:
         content = str(getattr(doc, "content", "") or "")
         name = str(getattr(doc, "id", "") or f"poison-{index}")
-      self._post(self.upload_path, {"name": name, "content": content})
-      count += 1
-    logger.info("RestRagAdapter: 문서 {}건 업로드", count)
-    return count
+
+      response = self._post(
+        self.raw_text_path,
+        {"textContent": content, "metadata": {"title": f"{name}.txt"}},
+      )
+      for uploaded in response.get("documents") or []:
+        location = uploaded.get("location")
+        if location:
+          locations.append(location)
+
+    if locations:
+      path = self.update_embeddings_path.format(workspace=self.workspace)
+      self._post(path, {"adds": locations, "deletes": []})
+
+    logger.info("RestRagAdapter: 문서 {}건 업로드 + 임베드", len(locations))
+    return len(locations)
 
 
 # 레지스트리에 "rest" 타입 등록. __init__.py 가 이 모듈을 import 하면 등록이 실행된다.
