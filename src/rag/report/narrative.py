@@ -155,7 +155,7 @@ DEFENSE_ACTIONS: dict[str, list[dict[str, Any]]] = {
                 "명시하세요. 이 공격은 명령 프롬프트로 원문 출력을 강요하므로 "
                 "'원문 인용 금지'가 공격의 마지막 단계를 직접 끊습니다.",
       "bands": ("high", "some"),
-      "verify_cmd": "rag run -s R2 --all-attackers",
+      "verify_cmd": "rag run -s R2",
       "merge": "no_verbatim",
     },
     {

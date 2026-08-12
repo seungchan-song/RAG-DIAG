@@ -116,18 +116,18 @@ def _fake_child_summary(
 def test_build_suite_cells_counts(tmp_path):
   config = _base_config(tmp_path)
 
-  # 옵션 B: R2 단독 + --all-attackers → A1, A2 × 2 profiles = 4 셀
+  # R2 단독 → A2(CANONICAL) × 2 profiles = 2 셀. A1 은 2026-08-12 에 R2 매트릭스에서
+  # 빠졌다(근거: query_generator.py:SCENARIO_ATTACKER_MATRIX 주석).
   r2_cells = cli_main._build_suite_cells(
     scenario="R2",
     attacker=None,
     profile="default",
     all_profiles=True,
     all_scenarios=False,
-    all_attackers=True,
     config=config,
   )
-  # 옵션 B 전체 매트릭스 (12셀):
-  #   NORMAL(A1) ×2 + R2(A1,A2) ×2 + R4(A2,sensitive) ×2 + R7(A1) ×2 + R9(A3) ×2 = 12
+  # 전체 매트릭스 (10셀):
+  #   NORMAL(A1) ×2 + R2(A2) ×2 + R4(A2,sensitive) ×2 + R7(A1) ×2 + R9(A3) ×2 = 10
   # R4 는 항상 sensitive 모드(카테고리 분해 분석)만 돌린다. generic 모드는 컨셉상
   # sensitive 의 약화된 변종으로 폐기됐다 (대시보드 R4 패널 참고).
   full_cells = cli_main._build_suite_cells(
@@ -136,21 +136,20 @@ def test_build_suite_cells_counts(tmp_path):
     profile="default",
     all_profiles=True,
     all_scenarios=True,
-    all_attackers=True,
     config=config,
   )
 
-  assert len(r2_cells) == 4
+  assert len(r2_cells) == 2
   assert {c.environment_type for c in r2_cells} == {"clean"}
-  assert {c.attacker for c in r2_cells} == {"A1", "A2"}
+  assert {c.attacker for c in r2_cells} == {"A2"}
   # R2 는 probe_mode 분기가 의미 없으므로 모두 generic 으로 유지된다.
   assert {c.probe_mode for c in r2_cells} == {"generic"}
 
-  assert len(full_cells) == 12
+  assert len(full_cells) == 10
   cell_ids = {c.cell_id for c in full_cells}
   expected_cells = (
     {f"NORMAL__A1__{p}" for p in ("reranker_off", "reranker_on")}
-    | {f"R2__{a}__{p}" for a in ("A1", "A2") for p in ("reranker_off", "reranker_on")}
+    | {f"R2__A2__{p}" for p in ("reranker_off", "reranker_on")}
     | {f"R4__A2__{p}__sensitive" for p in ("reranker_off", "reranker_on")}
     | {f"R7__A1__{p}" for p in ("reranker_off", "reranker_on")}
     | {f"R9__A3__{p}" for p in ("reranker_off", "reranker_on")}
@@ -171,7 +170,6 @@ def test_build_suite_cells_threat_model_first(tmp_path):
     profile="default",
     all_profiles=False,
     all_scenarios=True,
-    all_attackers=False,
     config=config,
   )
   # A2 와 호환되는 시나리오는 R2, R4. R4 는 항상 sensitive 단일 셀이므로
@@ -189,7 +187,6 @@ def test_build_suite_cells_threat_model_first(tmp_path):
     profile="default",
     all_profiles=False,
     all_scenarios=True,
-    all_attackers=False,
     config=config,
   )
   assert {c.scenario for c in cells_a3} == {"R9"}
@@ -249,25 +246,27 @@ def test_ingest_rejects_sync_delete_without_incremental():
 
 def test_execute_suite_run_skips_completed_cells_on_resume(tmp_path, monkeypatch):
   base_config = _base_config(tmp_path)
+  # R2 는 A2 단독(2셀)이라 resume 분기 4가지를 한 시나리오로 못 채운다. R4 를 붙여
+  # R2(A2)×2 + R4(A2)×2 = 4셀로 만든다(둘 다 clean/A2 라 셀 순서가 결정론적).
+  base_config["experiment"]["matrix"]["scenarios"] = ["R2", "R4"]
   base_manager = ExperimentManager(base_config)
   suite_run_id = base_manager.create_run()
-  # 옵션 B: R2 단독 + --all-attackers + --all-profiles → A1/A2 × 2profile = 4셀
   cells = cli_main._build_suite_cells(
-    scenario="R2",
+    scenario=None,
     attacker=None,
     profile="default",
     all_profiles=True,
-    all_scenarios=False,
-    all_attackers=True,
+    all_scenarios=True,
     config=base_config,
   )
+  assert [cell.scenario for cell in cells] == ["R2", "R2", "R4", "R4"]
 
   base_manager.save_suite_manifest(
     suite_run_id,
     {
-      "scenario_mode": "single",
-      "attacker": "A1",
-      "scenarios": ["R2"],
+      "scenario_mode": "all",
+      "attacker": "A2",
+      "scenarios": ["R2", "R4"],
       "environments": ["clean", "poisoned"],
       "profiles": ["reranker_off", "reranker_on"],
       "planned_cells": [cell.to_dict() for cell in cells],
@@ -291,7 +290,7 @@ def test_execute_suite_run_skips_completed_cells_on_resume(tmp_path, monkeypatch
     cells[1].cell_id,
     {
       "scenario": "R2",
-      "attacker": "A1",
+      "attacker": "A2",
       "environment_type": cells[1].environment_type,
       "profile_name": cells[1].profile_name,
       "completed_query_ids": [],
@@ -378,30 +377,31 @@ def test_execute_suite_run_skips_completed_cells_on_resume(tmp_path, monkeypatch
     base_config=base_config,
     base_exp_manager=base_manager,
     scenario=None,
-    attacker="A1",
+    attacker="A2",
     profile="default",
     all_profiles=False,
     all_scenarios=False,
-    all_attackers=False,
     resume=suite_run_id,
     config_path=None,
     single_run_executor=fake_executor,
   )
 
-  # 옵션 B 4셀 (A1/A2 × 2 profile) 중 cells[0]=완료(스킵), cells[1]=실패(재시도) →
-  # cells[2], cells[3] 은 매니페스트엔 있지만 checkpoint 의 completed_cells/failed_cells
-  # 에 없으므로 신규 실행 대상이다. 총 3건 실행.
+  # 4셀 중 cells[0]=완료(스킵), cells[1]=실패(재시도) → cells[2], cells[3] 은
+  # 매니페스트엔 있지만 checkpoint 의 completed_cells/failed_cells 에 없으므로
+  # 신규 실행 대상이다. 총 3건 실행.
   assert resumed_run_id == suite_run_id
   assert len(executed_cells) == 3
   assert cells[0].cell_id not in [cell_id for cell_id, _ in executed_cells]
   assert (cells[1].cell_id, True) in executed_cells
 
-  with open(base_manager.run_dir(suite_run_id) / "R2_result.json", "r", encoding="utf-8") as file:
-    parent_summary = json.load(file)
-  # cells[0] 은 completed_cells 에만 등록되고 사전 저장된 결과 파일이 없으므로 합산 제외.
-  # cells[1]/cells[2]/cells[3] 은 신규/재시도로 결과를 저장 → 부모 합산 3건.
-  assert parent_summary["total"] == 3
-  assert all(result["suite_run_id"] == suite_run_id for result in parent_summary["results"])
+  # cells[0](R2/reranker_off) 은 completed_cells 에만 등록되고 사전 저장된 결과
+  # 파일이 없으므로 합산 제외 → R2 는 재시도한 cells[1] 1건, R4 는 신규 2건.
+  for scenario_name, expected_total in (("R2", 1), ("R4", 2)):
+    result_path = base_manager.run_dir(suite_run_id) / f"{scenario_name}_result.json"
+    with open(result_path, "r", encoding="utf-8") as file:
+      parent_summary = json.load(file)
+    assert parent_summary["total"] == expected_total
+    assert all(result["suite_run_id"] == suite_run_id for result in parent_summary["results"])
 
 
 def test_refresh_suite_results_aggregates_child_failures(tmp_path):

@@ -533,8 +533,8 @@ def _show_banner() -> None:
     )
     quick_start.add_row(
         "3단계",
-        "rag run --all-scenarios --all-attackers --all-profiles --auto-report",
-        "전체 매트릭스(12셀) 실행 + 리포트 자동 생성",
+        "rag run --all-scenarios --all-profiles --auto-report",
+        "전체 매트릭스(10셀) 실행 + 리포트 자동 생성",
     )
     quick_start.add_row(
         "4단계",
@@ -552,14 +552,14 @@ def _show_banner() -> None:
     )
 
     # ── 팁 & 힌트 ─────────────────────────────────────────
-    # 컴팩트 유지를 위해 핵심 3개만 남긴다 (--help 안내 + resume + A1↔A2 비교).
+    # 컴팩트 유지를 위해 핵심 3개만 남긴다 (--help 안내 + resume + 단일 시나리오).
     tips = Table(show_header=False, box=None, padding=(0, 1))
     tips.add_column("tip", style="white")
     tips.add_row(
         "[bold]--resume <run_id>[/bold]  중간에 끊긴 실험을 이어서 실행합니다."
     )
     tips.add_row(
-        "[bold]rag run -s R2 --all-attackers --auto-report[/bold]  R2 시나리오의 A1↔A2 비교 실행."
+        "[bold]rag run -s R2 --auto-report[/bold]  단일 시나리오만 실행합니다."
     )
     tips.add_row(
         "[bold]rag [italic]<명령어>[/italic] --help[/bold]  각 명령어의 전체 옵션을 확인합니다."
@@ -887,16 +887,6 @@ def run(
         "--all-scenarios",
         help="Run NORMAL, R2, R4, R7, and R9 in one suite",
     ),
-    all_attackers: bool = typer.Option(
-        False,
-        "--all-attackers",
-        help=(
-            "시나리오별로 SCENARIO_ATTACKER_MATRIX 에 정의된 호환 공격자를 "
-            "모두 실행합니다 (R2/R4→A1+A2 비교, R7→A1, R9→A3). 단독 시나리오 "
-            "(--scenario R2 --all-attackers) 와 전체 매트릭스(--all-scenarios "
-            "--all-attackers) 둘 다 지원합니다."
-        ),
-    ),
     probe_mode: str = typer.Option(
         "sensitive",
         "--probe-mode",
@@ -949,7 +939,7 @@ def run(
     is_suite_resume = bool(
         resume and base_exp_manager.suite_manifest_path(resume).exists()
     )
-    is_suite_run = is_suite_resume or all_profiles or all_scenarios or all_attackers
+    is_suite_run = is_suite_resume or all_profiles or all_scenarios
 
     if is_suite_run:
         _show_suite_run_info(
@@ -958,7 +948,6 @@ def run(
             profile=profile,
             all_profiles=all_profiles,
             all_scenarios=all_scenarios,
-            all_attackers=all_attackers,
             resume=resume,
         )
         try:
@@ -970,7 +959,6 @@ def run(
                 profile=profile,
                 all_profiles=all_profiles,
                 all_scenarios=all_scenarios,
-                all_attackers=all_attackers,
                 resume=resume,
                 config_path=config_path,
                 num_targets=num_targets,
@@ -1249,7 +1237,6 @@ def demo(
             profile="reranker_off",
             all_profiles=False,
             all_scenarios=True,
-            all_attackers=False,
             resume=None,
             config_path=str(demo_config_path),
             num_targets=num_targets,
@@ -3089,7 +3076,6 @@ def _execute_suite_run(
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
-    all_attackers: bool = False,
     resume: str | None,
     config_path: str | None,
     single_run_executor: Callable[..., SingleRunOutcome] = _execute_single_run,
@@ -3098,9 +3084,8 @@ def _execute_suite_run(
     """Run or resume a suite matrix under one parent run id.
 
     각 SuiteCell 은 (scenario, attacker, profile) 을 가지며 attacker 는
-    셀 자체에 결정론적으로 저장된다(_build_suite_cells 에서 결정).
-    - all_attackers=True  : 시나리오별 SCENARIO_ATTACKER_MATRIX 전체 순회
-    - all_attackers=False : 시나리오별 attacker(명시값 또는 CANONICAL) 1개
+    셀 자체에 결정론적으로 저장된다(_build_suite_cells 에서 결정) — 시나리오별
+    attacker 는 명시값이 있으면 그것, 없으면 CANONICAL_ATTACKER 1개다.
     """
     if resume:
         suite_run_id = resume
@@ -3117,13 +3102,12 @@ def _execute_suite_run(
             profile=profile,
             all_profiles=all_profiles,
             all_scenarios=all_scenarios,
-            all_attackers=all_attackers,
             config=base_config,
         )
         suite_run_id = base_exp_manager.create_run()
         suite_manifest = {
             "scenario_mode": "all" if all_scenarios else "single",
-            "attacker_mode": "all" if all_attackers else (attacker.upper() if attacker else "auto"),
+            "attacker_mode": attacker.upper() if attacker else "auto",
             "scenarios": sorted({cell.scenario for cell in planned_cells}),
             "attackers": sorted({cell.attacker for cell in planned_cells}),
             "environments": sorted({cell.environment_type for cell in planned_cells}),
@@ -3263,7 +3247,6 @@ def _build_suite_cells(
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
-    all_attackers: bool = False,
     config: dict[str, Any],
 ) -> list[SuiteCell]:
     """Resolve the requested matrix axes into concrete suite cells.
@@ -3271,10 +3254,9 @@ def _build_suite_cells(
     축: scenario × attacker × profile
     - environment 는 SCENARIO_FIXED_ENV 로 결정되므로 별도 축이 아니다.
     - attacker 결정 규칙:
-        all_attackers=True  → SCENARIO_ATTACKER_MATRIX 에서 호환 attacker 전체
-        all_attackers=False, attacker 명시 → 그 attacker 가 호환되는 시나리오만 셀 생성
-                                              (호환 안되는 시나리오는 스킵)
-        all_attackers=False, attacker 미명시 → 시나리오별 CANONICAL_ATTACKER 단일
+        attacker 명시   → 그 attacker 가 SCENARIO_ATTACKER_MATRIX 상 호환되는
+                          시나리오만 셀 생성(호환 안되는 시나리오는 스킵)
+        attacker 미명시 → 시나리오별 CANONICAL_ATTACKER 단일
     """
     from rag.attack.query_generator import AttackQueryGenerator
 
@@ -3304,10 +3286,7 @@ def _build_suite_cells(
         )
         canonical = AttackQueryGenerator.CANONICAL_ATTACKER.get(scenario_upper, "A1")
 
-        if all_attackers:
-            # 시나리오별 호환 attacker 전체 순회 (정렬해 결정론적 순서 보장)
-            attackers_for_scenario = sorted(allowed_attackers) if allowed_attackers else [canonical]
-        elif requested_attacker is not None:
+        if requested_attacker is not None:
             # 위협 모델 우선 선택 UX: 사용자가 attacker 를 명시했다면
             # 그 공격자와 호환되는 시나리오만 셀 생성. 호환 안되면 스킵.
             if requested_attacker in allowed_attackers:
@@ -4568,7 +4547,6 @@ def _show_suite_run_info(
     profile: str,
     all_profiles: bool,
     all_scenarios: bool,
-    all_attackers: bool = False,
     resume: str | None,
 ) -> None:
     """Render suite-mode configuration before execution starts."""
@@ -4576,12 +4554,9 @@ def _show_suite_run_info(
     table.add_column("Field", style="cyan", width=18)
     table.add_column("Value", style="green")
     table.add_row("Scenario", "ALL" if all_scenarios else (scenario or "N/A"))
-    if all_attackers:
-        attacker_label = "ALL (시나리오별 호환 매트릭스)"
-    elif attacker:
-        attacker_label = str(attacker).upper()
-    else:
-        attacker_label = "시나리오별 자동 (CANONICAL)"
+    attacker_label = (
+        str(attacker).upper() if attacker else "시나리오별 자동 (CANONICAL)"
+    )
     table.add_row("Attacker", attacker_label)
     table.add_row("Environment", "시나리오별 자동 (SCENARIO_FIXED_ENV)")
     table.add_row("Profile", "ALL" if all_profiles else profile)

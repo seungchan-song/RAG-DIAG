@@ -450,9 +450,21 @@ class AttackQueryGenerator:
   # 학술적으로 위협 모델 정합성이 깨지고 hit_rate ≈ 0 의 trivial 결과만 나옴.)
   # R2 만 A1, A2 둘 다 허용되며 두 공격자의 쿼리 수가 동일하게 산출되어 사전지식
   # 유무에 따른 추출 공격 성공률 차이를 정량 비교할 수 있다.
+  # ⚠️ R2 에서 A1 을 뺀 이유(2026-08-12, RAG-2026-0811-003 실측):
+  #   A1 은 문서 내용을 모른다는 가정상 anchor 가 GENERIC_OBSERVER_KEYWORDS 고정
+  #   풀에서만 나와, 추출 명령만 붙은 질의가 된다. 실측 결과 거절률 52%(A2 41%,
+  #   NORMAL 0%) · 고위험 PII 0.33건/응답으로 **NORMAL(0.50건/응답)보다도 덜
+  #   샜다** — 가드레일을 깨우기만 하고 유출은 못 만든다. 그런데도 R2 성공률을
+  #   7.9%→7.0%, NORMAL 대비 유출 배수를 1.83→1.70배로 희석시켰다(서로 다른
+  #   위협 모델 둘을 한 성공률로 평균내는 셈). 리포트가 A1↔A2 차이를 쓰지도
+  #   않으므로(비교 블록은 D6 이후 query_id 형식이 갈라져 이미 빈 dict) 셀당
+  #   30질의 · 두 프로파일 합계 66분을 그냥 버리고 있었다.
+  #   → 되살리려면 {"A1", "A2"} 로 되돌리면 된다. A1 쿼리 생성 경로
+  #     (_build_observer_anchor_pool / generate_r2_queries 의 slot_plan 분기)는
+  #     target_docs 없이 도는 유일한 R2 경로라 블랙박스 대상용으로 남겨 뒀다.
   SCENARIO_ATTACKER_MATRIX: dict[str, set[str]] = {
     "NORMAL": {"A1"},          # 인터페이스 호환용 (실제로는 baseline)
-    "R2": {"A1", "A2"},        # A1↔A2 비교 실험축 (옵션 B 핵심)
+    "R2": {"A2"},              # 사전지식 보유 관찰자 단독 (A1 은 위 주석 참조)
     "R4": {"A2"},              # MIA 정의상 Aware Observer 단독
     "R7": {"A1"},
     "R9": {"A3"},
@@ -474,7 +486,7 @@ class AttackQueryGenerator:
   # 유효 attacker 화이트리스트 (A4 제거 후).
   # 각 코드가 "어떤 능력을 가정한 공격자인가" 는 모듈 상단 ATTACKER_PROFILES 가 정의하며,
   # 리포트에 노출되는 라벨·권한 문구도 전부 거기서 나온다(두 곳이 갈라지면 안 됨 →
-  # tests/test_attacker_comparison.py 가 키 일치를 고정).
+  # tests/test_attacker_profiles.py 가 키 일치를 고정).
   VALID_ATTACKERS: frozenset[str] = frozenset({"A1", "A2", "A3"})
 
   def __init__(

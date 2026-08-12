@@ -69,7 +69,6 @@ class ReportGenerator:
         suite_manifest = self._load_suite_manifest(run_dir)
         env_comparison = self._build_env_comparison(run_id, scenario_results)
         reranker_comparison = self._build_reranker_comparison(run_id, scenario_results)
-        attacker_comparison = self._build_attacker_comparison(run_id, scenario_results)
         # NORMAL baseline 과 각 공격 시나리오의 PII 탐지량 비교.
         # NORMAL 결과가 같은 suite 안에 있어야 의미가 있으며, 없으면 빈 dict 가 된다.
         normal_attack_comparison = self._build_normal_attack_pii_comparison(
@@ -83,7 +82,6 @@ class ReportGenerator:
             env_comparison,
             reranker_comparison,
             normal_attack_comparison,
-            attacker_comparison,
         )
 
         generated_files: dict[str, Path] = {}
@@ -146,7 +144,6 @@ class ReportGenerator:
         env_comparison: dict[str, Any],
         reranker_comparison: dict[str, Any],
         normal_attack_comparison: dict[str, Any] | None = None,
-        attacker_comparison: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         scenario_summaries: dict[str, dict[str, Any]] = {}
 
@@ -380,7 +377,6 @@ class ReportGenerator:
             "detection_quality": self._build_detection_quality(pii_leakage_profile),
             "clean_vs_poisoned_comparison": env_comparison,
             "reranker_on_off_comparison": reranker_comparison,
-            "attacker_comparison": attacker_comparison or {},
             "normal_vs_attack_pii_comparison": normal_attack_comparison or {},
             # R9 는 트리거 마커 출력이 본질이므로 응답 PII 와 별도의 잠재 노출량 지표를 둔다.
             # 보완 1(NORMAL 컨텍스트 baseline)과 보완 2(by_trigger 분해)도 함께 포함된다.
@@ -1704,17 +1700,6 @@ class ReportGenerator:
         profiles = [describe_attacker(code) for code in sorted(codes) if code]
         return [p for p in profiles if p]
 
-    def _normalize_query_id(self, query_id: str, scenario: str) -> str:
-        """A1↔A2 페어링을 위해 query_id 를 정규화합니다.
-
-        R4 에서 probe_mode=sensitive 결과는 query_id 가 'R4S:' prefix 를 갖는다.
-        그러나 옵션 B 비교 실행에서는 A1/A2 모두 generic(prefix 'R4:') 을 사용하므로
-        만약 양쪽이 섞여 들어와도 정규화로 'R4:' 로 통일해 둔다.
-        """
-        if scenario.upper() == "R4" and query_id.startswith("R4S:"):
-            return "R4:" + query_id[4:]
-        return query_id
-
     def _get_profile_name(
         self,
         result: dict[str, Any],
@@ -1982,7 +1967,7 @@ class ReportGenerator:
                 # R4 는 MIA 페어 단위로 success 가 결정되고 b=1/b=0 두 응답이
                 # 동일한 success 를 공유한다. 응답별로 페어링하면 한 MIA 페어가
                 # b=1 비교 1건 + b=0 비교 1건으로 두 번 카운트되므로
-                # b=1 응답만 비교 단위로 사용한다 (_build_attacker_comparison 동일 규약).
+                # b=1 응답만 비교 단위로 사용한다 (환경/리랭커 비교 공통 규약).
                 if (
                     scenario.upper() == "R4"
                     and (result.get("metadata") or {}).get("ground_truth_b") == 0
@@ -2047,7 +2032,7 @@ class ReportGenerator:
                 # R4 는 MIA 페어 단위로 success 가 결정되고 b=1/b=0 두 응답이
                 # 동일한 success 를 공유한다. 응답별로 페어링하면 한 MIA 페어가
                 # b=1 비교 1건 + b=0 비교 1건으로 두 번 카운트되므로
-                # b=1 응답만 비교 단위로 사용한다 (_build_attacker_comparison 동일 규약).
+                # b=1 응답만 비교 단위로 사용한다 (환경/리랭커 비교 공통 규약).
                 if (
                     scenario.upper() == "R4"
                     and (result.get("metadata") or {}).get("ground_truth_b") == 0
@@ -2079,165 +2064,6 @@ class ReportGenerator:
                 )
 
         return comparison
-
-    # === 공격자 유형(A1↔A2) 비교 ===
-    # 같은 query_id 의 두 공격자 결과를 페어링해 사전지식 유무에 따른 성공률 차이를 정량화한다.
-    # 옵션 B 매트릭스: R2 에 한해 A1↔A2 비교 가능.
-    # R4 는 MIA 정의상 공격자가 d* 를 알고 있다는 가정이라 A2 단독 운영 — 비교 대상 아님.
-    ATTACKER_PAIRS: dict[str, tuple[str, str]] = {
-        "R2": ("A1", "A2"),
-    }
-
-    def _build_attacker_index(
-        self,
-        scenario_results: dict[str, dict[str, Any]],
-    ) -> dict[tuple[str, str, str, str, str], dict[str, Any]]:
-        """(scenario, environment, attacker, reranker_state, normalized_query_id) 인덱스."""
-        index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-
-        for scenario, data in scenario_results.items():
-            for result in data.get("results", []):
-                environment = self._get_environment(result)
-                attacker = self._get_attacker(result)
-                query_id = self._get_query_id(result)
-                if not attacker or not query_id:
-                    continue
-
-                reranker_state = self._get_reranker_state(result, data)
-                normalized_query_id = self._normalize_query_id(query_id, scenario)
-                key = (scenario, environment, attacker, reranker_state, normalized_query_id)
-                index.setdefault(key, result)
-
-        return index
-
-    def _build_attacker_comparison(
-        self,
-        run_id: str,
-        scenario_results: dict[str, dict[str, Any]],
-    ) -> dict[str, Any]:
-        """A1↔A2 공격자 비교 데이터를 생성합니다.
-
-        동일한 query_id + 동일한 reranker + 동일한 environment 조건에서
-        ATTACKER_PAIRS 에 정의된 base↔paired attacker 결과를 페어로 매칭한다.
-        R4 는 멤버십 추론 결과 중 b=1(타깃 문서 포함) 쪽만 비교 페어로 사용한다
-        (b=0 은 member 와 자동 보완 관계라 hit_rate 가 강제 0.5 가 되기 때문).
-        """
-        attacker_index = self._build_attacker_index(scenario_results)
-        comparison: dict[str, Any] = {}
-
-        for scenario, data in scenario_results.items():
-            pair_def = self.ATTACKER_PAIRS.get(scenario.upper())
-            if not pair_def:
-                continue
-            base_attacker, paired_attacker = pair_def
-
-            pairs: list[dict[str, Any]] = []
-            seen_pairs: set[tuple[str, str, str]] = set()
-
-            for result in data.get("results", []):
-                attacker = self._get_attacker(result)
-                query_id = self._get_query_id(result)
-                environment = self._get_environment(result)
-                if not attacker or not query_id or not environment:
-                    continue
-
-                # base → paired 단방향만 집계해 이중 계산 방지
-                if attacker.upper() != base_attacker:
-                    continue
-
-                # R4 의 b=0(미포함) 결과는 페어 대상에서 제외
-                if (
-                    scenario.upper() == "R4"
-                    and (result.get("metadata") or {}).get("ground_truth_b") == 0
-                ):
-                    continue
-
-                reranker_state = self._get_reranker_state(result, data)
-                normalized_query_id = self._normalize_query_id(query_id, scenario)
-                dedup_key = (normalized_query_id, reranker_state, environment)
-                if dedup_key in seen_pairs:
-                    continue
-
-                counterpart = attacker_index.get(
-                    (
-                        scenario,
-                        environment,
-                        paired_attacker,
-                        reranker_state,
-                        normalized_query_id,
-                    )
-                )
-                if counterpart is None:
-                    continue
-
-                seen_pairs.add(dedup_key)
-                pairs.append(
-                    self._build_attacker_comparison_entry(
-                        scenario,
-                        result,
-                        counterpart,
-                        base_attacker=base_attacker,
-                        paired_attacker=paired_attacker,
-                        reranker_state=reranker_state,
-                    )
-                )
-
-            if pairs:
-                comparison[scenario] = self._build_comparison_summary(
-                    pairs,
-                    fixed_field="base_attacker",
-                    paired_field="paired_attacker",
-                )
-
-        return comparison
-
-    def _build_attacker_comparison_entry(
-        self,
-        scenario: str,
-        base_result: dict[str, Any],
-        paired_result: dict[str, Any],
-        base_attacker: str,
-        paired_attacker: str,
-        reranker_state: str,
-    ) -> dict[str, Any]:
-        """A1↔A2 비교 entry 1개를 생성합니다.
-
-        대시보드 buildTable JS 가 base_env/paired_env 키를 함께 참조하는 경우가 있어
-        하위 호환을 위해 attacker 값을 그 키에도 동일하게 넣어준다.
-        _build_comparison_summary 가 참조하는 response_changed / rank_change_score
-        도 함께 채워 환경/리랭커 비교와 동일한 집계 경로를 사용한다.
-        """
-        base_pii_summary = self._get_pii_summary(base_result)
-        paired_pii_summary = self._get_pii_summary(paired_result)
-        base_pii = int(base_pii_summary.get("total", 0))
-        paired_pii = int(paired_pii_summary.get("total", 0))
-
-        return {
-            "scenario": scenario,
-            "query_id": self._get_query_id(base_result),
-            "base_attacker": base_attacker,
-            "paired_attacker": paired_attacker,
-            "base_env": base_attacker,
-            "paired_env": paired_attacker,
-            "base_reranker_state": reranker_state,
-            "paired_reranker_state": reranker_state,
-            "base_success": bool(base_result.get("success", False)),
-            "paired_success": bool(paired_result.get("success", False)),
-            "base_pii_count": base_pii,
-            "paired_pii_count": paired_pii,
-            "base_has_high_risk": bool(base_pii_summary.get("has_high_risk", False)),
-            "paired_has_high_risk": bool(paired_pii_summary.get("has_high_risk", False)),
-            "base_score": float(base_result.get("score", 0.0)),
-            "paired_score": float(paired_result.get("score", 0.0)),
-            "response_changed": (
-                self._get_response_text(base_result)
-                != self._get_response_text(paired_result)
-            ),
-            "rank_change_score": self._compute_rank_change_score(
-                base_result,
-                paired_result,
-            ),
-        }
 
     # === NORMAL vs 공격 시나리오 PII 비교 ===
     # NORMAL baseline 과 R2/R4/R7/R9 각 공격 시나리오의 PII 탐지량을 같은 척도로 비교한다.
@@ -2941,10 +2767,7 @@ class ReportGenerator:
 
         view = dict(summary)
         # HTML 미사용 고아 비교 블록 제거(계산 결과는 JSON 에만 남는다).
-        # attacker_comparison(A1→A2)은 대시보드에서 뺐다 — 실제 비교축은 대상 RAG 의
-        # 어댑터 능력 계층이며 그건 '진단 대상 · 능력 계층' 블록이 맡는다.
         view.pop("clean_vs_poisoned_comparison", None)
-        view.pop("attacker_comparison", None)
         # 비교 블록의 무거운 페어 리스트 제거(집계 필드만 유지).
         if "reranker_on_off_comparison" in view:
             view["reranker_on_off_comparison"] = _strip_pairs(
