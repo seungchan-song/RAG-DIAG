@@ -564,6 +564,49 @@ def test_r9_inject_poison_skipped_without_index_write():
   assert attack.inject_poison(_NoWriteTarget(), ["기밀자료"]) == 0
 
 
+def test_r9_skips_when_poison_cannot_reach_an_external_target():
+  """외부 대상에 주입을 못 하면 R9 는 실행이 아니라 skip 이어야 한다.
+
+  R9 의 정의는 D' = D ∪ D_poi 다. 문서가 대상에 안 들어가면 공격이 성립하지 않으므로,
+  질의를 던져 0건을 얻고 "방어됨" 으로 적으면 거짓 안심이다. 실측(RAG-2026-0812-008):
+  inject_poison=false 인 채 60질의가 나갔고 전건이 blocked_at_retrieval 로 집계됐다.
+  """
+  from rag.cli.main import _r9_injection_blocked_reason
+
+  external_off = {"adapter": {"type": "rest", "base_url": "http://x", "inject_poison": False}}
+  assert _r9_injection_blocked_reason(external_off), "주입 불가인데 실행하면 안 된다"
+
+  external_on = {"adapter": {"type": "rest", "base_url": "http://x", "inject_poison": True}}
+  assert _r9_injection_blocked_reason(external_on) == ""
+
+  # 우리 builtin RAG 는 파일 기반 poisoned 인덱스로 주입하므로 영향이 없어야 한다.
+  assert _r9_injection_blocked_reason({"adapter": {"type": "builtin"}}) == ""
+  assert _r9_injection_blocked_reason({}) == ""
+
+
+def test_r9_marks_delivery_state_on_each_result():
+  """각 시행에 '이때 poison 이 대상에 있었나'를 남긴다(평가기가 읽는 근거)."""
+  from rag.attack.r9_injection import R9InjectionAttack
+
+  class _WriteTarget:
+    capabilities = {Capability.QUERY, Capability.INDEX_WRITE}
+
+    def query(self, query: str) -> RagTrace:
+      return RagTrace(answer="")
+
+    def write_documents(self, docs: Any) -> None:
+      return None
+
+  # 외부 대상 + 주입 전 = 아직 배달 안 됨.
+  attack = R9InjectionAttack({}, target=_WriteTarget())
+  assert attack.poison_injected is False
+  attack.inject_poison(attack.target, ["기밀자료"])
+  assert attack.poison_injected is True
+
+  # builtin(파일 기반 사전 주입)은 처음부터 배달돼 있다.
+  assert R9InjectionAttack({}).poison_injected is True
+
+
 def test_r9_resolve_trigger_keywords_ignores_bystander_docs():
   """트리거 키워드는 attack 문서에서만 나와야 한다.
 
@@ -1047,6 +1090,119 @@ def test_rest_adapter_query_parses_answer_and_sources():
   assert transport.calls[0]["url"].endswith("/api/v1/workspace/ws/chat")
   assert transport.calls[0]["payload"]["message"] == "질문"
   assert transport.calls[0]["headers"]["Authorization"] == "Bearer k"
+
+
+def _prompt_transport_get(payload: dict[str, Any]) -> Any:
+  """RestRagAdapter 테스트용: 워크스페이스 조회(GET)에 고정 응답을 돌려주는 콜러블."""
+
+  calls: list[str] = []
+
+  def transport_get(url: str, headers: dict[str, str]) -> dict[str, Any]:
+    calls.append(url)
+    return payload
+
+  transport_get.calls = calls  # type: ignore[attr-defined]
+  return transport_get
+
+
+def test_rest_adapter_reads_system_prompt_from_target_workspace():
+  """R7 정답은 대상 워크스페이스에 실제로 걸린 프롬프트여야 한다.
+
+  예전에는 이 조회가 없어서 `config.generator.system_prompt`(우리 내장 RAG 의 프롬프트)로
+  폴백했고, AnythingLLM 응답을 우리 규칙과 대조해 "방어규칙 3/4개 복원" 이라는 값을 냈다
+  (RAG-2026-0812-008). 정작 대상에 걸려 있던 건 방어 규칙이 없는 기본 프롬프트였다.
+  """
+  transport_get = _prompt_transport_get(
+    {"workspace": [{"slug": "ws", "openAiPrompt": "대상에 실제로 걸린 프롬프트"}]}
+  )
+  adapter = RestRagAdapter(
+    base_url="http://x", workspace="ws", transport=_record_transport({}),
+    transport_get=transport_get,
+  )
+  assert adapter.system_prompt == "대상에 실제로 걸린 프롬프트"
+  assert Capability.SYSTEM_PROMPT in adapter.capabilities
+  assert transport_get.calls[0].endswith("/api/v1/workspace/ws")
+
+
+def test_rest_adapter_without_system_prompt_degrades_r7():
+  """정답 프롬프트를 못 구하면 SYSTEM_PROMPT 능력을 선언하지 않아 R7 이 축소된다.
+
+  능력만 선언하고 값이 없으면 계획은 "완전판"인데 평가는 무의미해진다 — 그 조합이
+  리포트에 "전 시나리오 완전판" 으로 찍혔던 원인이다.
+  """
+  adapter = RestRagAdapter(
+    base_url="http://x", workspace="ws", transport=_record_transport({}),
+    transport_get=_prompt_transport_get({}),
+  )
+  assert adapter.system_prompt is None
+  assert Capability.SYSTEM_PROMPT not in adapter.capabilities
+  assert plan_scenario_execution(adapter, "R7").decision == DECISION_DEGRADE
+
+
+def test_rest_adapter_pushes_then_reads_back_system_prompt():
+  """밀어넣기를 켜면 대상에 설정한 뒤 **되읽은** 값을 정답으로 쓴다.
+
+  설정 요청만 보내고 끝내면 실패를 조용히 넘겨 다시 "우리가 의도한 프롬프트"와
+  채점하게 된다. 되읽기가 계약의 일부다.
+  """
+  post = _record_transport({})
+  transport_get = _prompt_transport_get(
+    {"workspace": [{"openAiPrompt": "밀어넣어 실제로 걸린 프롬프트"}]}
+  )
+  adapter = RestRagAdapter(
+    base_url="http://x", workspace="ws",
+    push_system_prompt="우리 방어 프롬프트",
+    transport=post, transport_get=transport_get,
+  )
+  assert post.calls[0]["url"].endswith("/api/v1/workspace/ws/update")
+  assert post.calls[0]["payload"]["openAiPrompt"] == "우리 방어 프롬프트"
+  assert adapter.system_prompt == "밀어넣어 실제로 걸린 프롬프트"
+
+
+def test_rest_adapter_cleans_only_its_own_stale_poison():
+  """지난 실행이 남긴 poison 만 검색 대상에서 뺀다(대조군 오염 차단).
+
+  외부 RAG 는 워크스페이스가 하나뿐이라 poison 이 남으면 **다음 실행의 NORMAL(대조군)**
+  이 그걸 검색한다. 이 정리가 있어야 adapter.inject_poison 을 켤 수 있다
+  (SOTA 어댑터가 commit 8f4efbb 에서 같은 문제를 같은 방식으로 풀었다).
+  """
+  post = _record_transport({})
+  transport_get = _prompt_transport_get({
+    "workspace": [{
+      "documents": [
+        {"docpath": "custom-documents/raw-poison-abc-standard-000-uuid.json"},
+        {"docpath": "custom-documents/raw-normal_0001-uuid.json"},
+        {"docpath": "custom-documents/raw-poison-def-many_shot-001-uuid.json"},
+      ],
+    }],
+  })
+  adapter = RestRagAdapter(
+    base_url="http://x", workspace="ws", transport=post, transport_get=transport_get,
+  )
+  post.calls.clear()
+
+  assert adapter.cleanup_stale_poison() == 2
+  deletes = post.calls[0]["payload"]["deletes"]
+  assert len(deletes) == 2
+  assert all("raw-poison-" in path for path in deletes), "남의 문서를 지우면 안 된다"
+
+
+def test_rest_adapter_from_config_cleans_poison_on_construction():
+  """from_config 가 어댑터를 만들고 **정리까지 마친 뒤** 돌려주는지 고정한다.
+
+  런당 정확히 한 번 도는 지점이 여기뿐이라, 이 호출이 빠지면 지난 실행의 poison 이
+  다음 실행의 대조군을 오염시킨다(SOTA 어댑터도 같은 자리에 같은 호출을 둔다).
+  """
+  calls: list[str] = []
+
+  class _Spy(RestRagAdapter):
+    def cleanup_stale_poison(self) -> int:
+      calls.append("cleaned")
+      return 0
+
+  adapter = _Spy.from_config({"adapter": {"type": "rest", "base_url": "http://x"}})
+  assert isinstance(adapter, _Spy), "from_config 가 인스턴스를 돌려줘야 한다"
+  assert calls == ["cleaned"]
 
 
 def test_rest_adapter_lacks_index_rebuild_so_r4_skips():

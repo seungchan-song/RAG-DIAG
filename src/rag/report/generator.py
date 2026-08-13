@@ -818,6 +818,9 @@ class ReportGenerator:
                 # BYO-RAG 어댑터 능력 계획(run/degrade/skip + 사유). skip/degrade 셀은
                 # 대시보드에서 배지·사유로 노출해 "왜 안 돌았나/왜 축소됐나" 를 밝힌다.
                 "capability_plan": data.get("capability_plan"),
+                # 진단 대상 스택(외부 어댑터 한정) — 부록 '실험 설정'이 우리 모델과
+                # 대상 모델을 나눠 그리는 근거.
+                "target_description": data.get("target_description"),
                 # 이 시나리오에서 공격자에게 준다고 가정한 권한. capability_plan(대상이
                 # 열어준 것) 과 같은 능력 어휘로 서술해 대시보드에서 위아래로 대조된다.
                 "attacker_profiles": self._attacker_profiles(data.get("results", [])),
@@ -2109,11 +2112,17 @@ class ReportGenerator:
             total_pii = int(
                 pii_summary.get("total_excluding_echo", pii_summary.get("total", 0))
             )
-            by_tag = (
-                pii_summary.get("by_tag_excluding_echo")
-                or pii_summary.get("by_tag")
-                or {}
-            )
+            # ⚠️ `or` 로 폴백하면 안 된다. echo 제외 결과가 **빈 dict**(= 탐지된 PII 가 전부
+            # 질의 에코)일 때 falsy 라서 에코 포함 `by_tag` 로 넘어가고, 등급별 합계만
+            # 부풀려진다(바로 위 total_pii 는 0 으로 제대로 세므로 총계와 등급합이 어긋난다).
+            # 실측(RAG-2026-0812-008): R2 116건 중 50건이 이 경로 → 등급합 166 → 244,
+            # 고유식별 초과분이 +21(×9.5)에서 +51(×21.9)로 2.3배 뻥튀기됐다.
+            # 필드가 아예 없는 구버전 결과만 기존 by_tag 로 폴백한다.
+            by_tag_excluding_echo = pii_summary.get("by_tag_excluding_echo")
+            if by_tag_excluding_echo is None:
+                by_tag = pii_summary.get("by_tag") or {}
+            else:
+                by_tag = by_tag_excluding_echo
             total_pii_count += total_pii
             if total_pii > 0:
                 responses_with_pii += 1
@@ -2891,7 +2900,12 @@ class ReportGenerator:
                             "adapter": (snapshot or {})
                             .get("config", {})
                             .get("adapter", {}),
-                        }
+                        },
+                        # 실제로 쓰인 모델 이름들(임베딩·생성기·리랭커·PII NER·PII sLLM)은
+                        # 여기에만 있다. 예전에는 이 블록을 안 실어서 템플릿의 1순위 분기
+                        # (prov.generator_model)가 한 번도 타지 않았고, config.generator 의
+                        # provider 값이 폴백으로 찍혀 "진단 대상 생성 모델: local" 이 됐다.
+                        "provenance": (snapshot or {}).get("provenance", {}),
                     }
                 ),
                 ensure_ascii=False,

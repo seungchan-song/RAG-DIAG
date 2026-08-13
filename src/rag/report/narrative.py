@@ -759,7 +759,11 @@ def build_headline_metrics(
   # ① 가장 위험한 공격 — 종합 위험도(0.5×성공률 + 0.5×강도)의 최댓값.
   # 판정 바로 아래 첫 칸인데 '뚫렸는지'가 없으면 유출 건수만 덩그러니 남는다.
   # 위험도 한 숫자에 성공률까지 붙여 "무엇이 얼마나 뚫렸나"를 한 칸으로 답한다.
-  attacks = [f for f in findings if f["scenario"] != "NORMAL"]
+  # 미실시 시나리오는 위험도 0 이라 "최고 위험도" 후보가 될 수 없어야 한다 — 전부
+  # 건너뛴 실행에서 "0점"이 최고 위험도로 찍히면 안 잰 걸 안전으로 읽게 된다.
+  attacks = [
+    f for f in findings if f["scenario"] != "NORMAL" and f.get("severity") != "skipped"
+  ]
   if attacks:
     top = max(attacks, key=lambda f: float(f.get("risk_score") or 0))
     rate = float((results.get(top["scenario"]) or {}).get("success_rate", 0) or 0)
@@ -789,30 +793,57 @@ def build_headline_metrics(
   # ③ 그중 '공격이 추가로 만들어낸' 몫 — 이 리포트의 핵심 논지와 같은 숫자를 쓴다.
   # 배수·초과분은 반드시 **응답 수를 맞춘** 값(pii_rate_ratio / pii_excess_count)을 쓴다.
   # 원시 총계 비율은 질의를 더 많이 쏜 시나리오를 실제보다 위험해 보이게 만든다.
+  #
+  # ⚠️ 고르는 축은 **고유식별·금융 등급의 초과분**이다(총량이 아니다). 총량은 이름·직업
+  # 같은 신원 문맥이 대부분을 차지해서, 공격이 주민번호·계좌를 새로 뽑아냈어도 총량은
+  # 오히려 줄어들 수 있다 — 실제로 RAG-2026-0812-008 이 그랬다(총량 −161건인데 고유식별
+  # 은 +21건 ×9.5). 예전에는 `pii_rate_ratio` 최대값으로 골라 놓고 라벨에 "초과 유출"을
+  # 붙여서, 배수 0.5배(= 대조군보다 적게 샌) 시나리오에 "+−161건"이 찍혔다.
   comparison = summary.get("normal_vs_attack_pii_comparison") or {}
   best_scen, best_ratio, best_delta = "", 0.0, 0.0
-  best_id_delta = 0
+  best_id_delta, best_id_ratio = 0, 0.0
   for scen, entry in comparison.items():
     if not isinstance(entry, dict):
       continue
-    ratio = float(entry.get("pii_rate_ratio", 0) or 0)
-    if ratio > best_ratio:
-      best_scen, best_ratio = str(scen).upper(), ratio
-      best_delta = float(entry.get("pii_excess_count", 0) or 0)
-      # 총량 차분만 크게 쓰면 "이름 300건"과 "주민번호 300건"이 같아 보인다.
-      by_risk = entry.get("pii_delta_by_risk") or {}
-      best_id_delta = int((by_risk.get("identifier") or {}).get("excess", 0) or 0)
+    # 총량 차분만 크게 쓰면 "이름 300건"과 "주민번호 300건"이 같아 보인다.
+    identifier = (entry.get("pii_delta_by_risk") or {}).get("identifier") or {}
+    id_excess = int(identifier.get("excess", 0) or 0)
+    total_excess = float(entry.get("pii_excess_count", 0) or 0)
+    # 고유식별 초과분 우선, 같으면 총량 초과분으로 가른다.
+    if best_scen and (id_excess, total_excess) <= (best_id_delta, best_delta):
+      continue
+    best_scen = str(scen).upper()
+    best_ratio = float(entry.get("pii_rate_ratio", 0) or 0)
+    best_delta = total_excess
+    best_id_delta = id_excess
+    best_id_ratio = float(identifier.get("rate_ratio", 0) or 0)
   if best_scen:
     # 값은 '가장 심한 한 시나리오'의 몫이다. 라벨에 시나리오를 안 적으면 전체 합계로 읽힌다.
-    sub = f"응답 수를 맞춘 비교 · 일반 질의의 {_fmt_ratio(best_ratio)}"
+    name = _SCENARIO_NAMES.get(best_scen, best_scen)
     if best_id_delta > 0:
-      # 좁은 KPI 칸에서 '고유식별'과 수치가 갈라지지 않도록 사이를 nbsp 로 묶는다.
-      sub += f" · 고유식별 +{best_id_delta:,}건"
-    out.append({
-      "label": f"대조군 대비 초과 유출 — {_SCENARIO_NAMES.get(best_scen, best_scen)}",
-      "value": f"+{int(best_delta):,}건",
-      "sub": sub,
-    })
+      # 고유식별·금융이 샜으면 그게 헤드라인이다. 총량은 보조로 내린다.
+      out.append({
+        "label": f"대조군 대비 초과 유출 (고유식별·금융) — {name}",
+        "value": f"{_fmt_signed(best_id_delta)}건",
+        "sub": (
+          f"응답 수를 맞춘 비교 · 일반 질의의 {_fmt_ratio(best_id_ratio)}"
+          f" · 전체 합계는 {_fmt_ratio(best_ratio)}"
+        ),
+      })
+    else:
+      # 고유식별 초과가 없으면 총량으로 답하되, 음수를 "초과"라고 부르지 않는다.
+      sub = f"응답 수를 맞춘 비교 · 일반 질의의 {_fmt_ratio(best_ratio)}"
+      if best_delta <= 0:
+        sub += " · 공격이 대조군보다 적게 노출"
+      out.append({
+        "label": (
+          f"대조군 대비 초과 유출 — {name}"
+          if best_delta > 0
+          else f"대조군 대비 유출량 — {name}"
+        ),
+        "value": f"{_fmt_signed(best_delta)}건",
+        "sub": sub,
+      })
 
   # 네 번째 칸(고유식별·금융 총량)은 뺐다 — 바로 아래 1장의 '위험 등급별 유출'이
   # 같은 수치를 대조군과 나란히 놓고 더 자세히 말한다. 첫 화면은 세 칸이면 충분하다.
@@ -822,6 +853,79 @@ def build_headline_metrics(
 # ==========================================================================
 # 4. 위험 구간 판정 헬퍼
 # ==========================================================================
+
+def _is_skipped(scenario_summary: dict[str, Any]) -> bool:
+  """대상 능력 부족으로 실행 자체를 건너뛴 시나리오인지 판정한다.
+
+  `status` 는 CLI 가 `capability_plan.decision == "skip"` 일 때 박는 값이고
+  (`cli/main.py:_execute_single_run`), `capability_plan` 은 스위트 병합이 옮겨 준다
+  (`cli/main.py:summarize_suite_results`). 둘 중 하나만 봐도 되지만, 구버전 결과에는
+  `capability_plan` 이 없고 아주 옛 결과에는 `status` 도 없으므로 둘 다 본다.
+
+  Args:
+    scenario_summary: 시나리오 요약 dict.
+
+  Returns:
+    bool: 건너뛴 시나리오면 True.
+  """
+  if str(scenario_summary.get("status", "")).lower() == "skipped":
+    return True
+  plan = scenario_summary.get("capability_plan")
+  if isinstance(plan, dict) and str(plan.get("decision", "")).lower() == "skip":
+    return True
+  # R9 전용: 질의는 나갔지만 악성 문서가 대상에 하나도 안 들어간 실행. 성공률 0% 는
+  # 방어 성공이 아니라 공격 미성립이다(`evaluator/r9_evaluator.py:not_delivered_count`).
+  # 보통은 `_r9_injection_blocked_reason` 이 실행 전에 걸러 내지만, 주입을 켰는데
+  # 런타임에 업로드가 실패한 경우가 여기로 온다.
+  total = int(scenario_summary.get("total", 0) or 0)
+  not_delivered = int(scenario_summary.get("not_delivered_count", 0) or 0)
+  return bool(total) and not_delivered >= total
+
+
+def _skipped_finding(scenario_upper: str, scenario_summary: dict[str, Any]) -> dict[str, Any]:
+  """건너뛴 시나리오의 finding 을 만든다 — 판정도 조치도 없이 '왜 못 쟀는지'만 남긴다.
+
+  성공률·위험도·PII 를 채우면 화면이 "0% · 양호" 로 그려서 **측정하지 않은 것을
+  안전하다고 말하게 된다.** `actions` 를 비워 두면 `build_action_plan` 이 이 시나리오를
+  자동으로 권고 목록에서 뺀다(조치 루프가 finding.actions 만 순회하므로).
+
+  Args:
+    scenario_upper: 대문자 시나리오 코드.
+    scenario_summary: 시나리오 요약 dict(`capability_plan.reason` 사용).
+
+  Returns:
+    dict: severity="skipped" 인 finding.
+  """
+  meta = SCENARIO_META.get(scenario_upper, {})
+  plan = scenario_summary.get("capability_plan")
+  reason = ""
+  if isinstance(plan, dict):
+    reason = str(plan.get("reason", "") or "")
+  if not reason and int(scenario_summary.get("not_delivered_count", 0) or 0):
+    reason = (
+      f"악성 문서가 진단 대상에 주입되지 않아 질의 "
+      f"{int(scenario_summary.get('total', 0) or 0)}건이 모두 공격으로 성립하지 않았습니다"
+    )
+  name = _SCENARIO_NAMES.get(scenario_upper, scenario_upper)
+  return {
+    "scenario": scenario_upper,
+    "severity": "skipped",
+    "risk_score": 0.0,
+    "headline": f"{name} 미실시 — 이 진단은 수행하지 못했습니다",
+    "what": meta.get("what", ""),
+    "target": meta.get("target", ""),
+    "signal": meta.get("signal", ""),
+    "interpretation": (
+      f"진단 대상이 이 공격을 재는 데 필요한 능력을 제공하지 않아 실행하지 않았습니다"
+      f"{' — ' + reason if reason else ''}. "
+      "이 시나리오에 대해서는 안전하다고도 취약하다고도 말할 수 없습니다."
+    ),
+    "evidence": [reason] if reason else [],
+    "actions": [],
+    "remediation": [],
+    "readouts": {},
+  }
+
 
 def success_band(success_rate: float) -> str:
   """공격 성공률을 high/some/none 구간으로 변환한다.
@@ -1037,6 +1141,27 @@ def _fmt_ratio(value: Any) -> str:
   return f"{float(value or 0):.1f}배"
 
 
+def _fmt_signed(value: Any) -> str:
+  """부호를 포함한 정수 문자열을 만든다(예: 51 → '+51', -161 → '−161', 0 → '±0').
+
+  차분·초과분을 찍는 자리에서 `f"+{value}"` 처럼 부호를 손으로 덧붙이면 음수에
+  '+−161' 이 나온다(RAG-2026-0812-008 판정 블록 실측). 음수 기호는 하이픈이 아니라
+  U+2212(−) 를 쓴다 — 대시보드의 등급별 차분 표기(`deltaTxt`)와 같은 글자여야 한다.
+
+  Args:
+    value: 부호 있는 수치(float/int/None).
+
+  Returns:
+    str: '+51' / '−161' / '±0' 형태의 문자열.
+  """
+  number = int(round(float(value or 0)))
+  if number > 0:
+    return f"+{number:,}"
+  if number < 0:
+    return f"−{abs(number):,}"
+  return "±0"
+
+
 def _metric_readouts(scenario_upper: str, s: dict[str, Any]) -> dict[str, str]:
   """시나리오 요약에서 대표 지표별 '이 숫자는 ~라는 뜻' 문장을 만든다.
 
@@ -1233,6 +1358,13 @@ def build_report_narrative(summary: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(s, dict):
       continue
     scen_upper = str(scen_upper).upper()
+
+    # 대상 능력 부족으로 아예 돌지 않은 시나리오는 판정할 게 없다. 예전에는 이 분기가
+    # 없어서 "질의 0건 → 성공률 0% → 양호" 로 흘러갔고, 재지 않은 것에 "현재 설정을
+    # 유지하세요" 라는 권고까지 붙었다(RAG-2026-0812-008 의 R4). 안 잰 건 안 잼이라고 쓴다.
+    if _is_skipped(s):
+      findings.append(_skipped_finding(scen_upper, s))
+      continue
 
     if scen_upper == "NORMAL":
       band = normal_band(s)

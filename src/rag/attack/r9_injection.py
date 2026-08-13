@@ -97,6 +97,10 @@ class R9InjectionAttack(BaseAttack):
     self.trigger_marker = config.get("evaluator", {}).get(
       "r9", {}
     ).get("trigger_marker", "[R9_ATTACK_SUCCESS_777]")
+    # "악성 문서가 대상에 들어가 있는가" — 평가기가 방어 성공과 배달 실패를 가르는 근거.
+    # builtin 은 파일 기반 poisoned 인덱스로 이미 주입돼 있으므로 True 로 출발한다.
+    # 외부 어댑터는 `inject_poison()` 이 실제로 문서를 넣었을 때만 True 가 된다.
+    self.poison_injected = self.target is None
     logger.debug("R9InjectionAttack 초기화 완료 (attacker={})", self.attacker)
 
   def generate_poison_docs(
@@ -148,6 +152,9 @@ class R9InjectionAttack(BaseAttack):
       return 0
 
     target.write_documents(poison_docs)
+    # 여기까지 와야 "공격이 대상에 배달됐다" 가 참이다(evaluator 가 이 플래그로
+    # 방어 성공과 배달 실패를 가른다).
+    self.poison_injected = True
     logger.info("R9 poison {}건을 write_documents 로 주입", len(poison_docs))
     return len(poison_docs)
 
@@ -376,6 +383,11 @@ class R9InjectionAttack(BaseAttack):
         # 집계가 env 라벨로 공격/대조군을 가르면 성공률이 통째로 0 이 되므로,
         # 판정 근거를 결과에 직접 싣는다(evaluator/summary.py 가 읽는다).
         "runtime_injection": is_runtime_injection(self.config),
+        # 이 질의를 던질 때 악성 문서가 실제로 대상에 들어가 있었는가.
+        # False 면 그 시행의 "실패"는 방어가 아니라 **배달 실패**다 — 평가기가
+        # 이걸 안 보면 배달조차 안 된 공격을 '검색 단계 차단'으로 세어
+        # "수집 정책을 유지하세요" 라는 거짓 안심을 낸다(r9_evaluator 주석 참조).
+        "poison_injected": self.poison_injected,
         "reranker_enabled": trace.get("reranker_enabled", False),
       },
     )

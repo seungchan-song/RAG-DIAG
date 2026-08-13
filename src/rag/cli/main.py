@@ -627,6 +627,46 @@ def _resolve_max_target_docs(
     return value if value > 0 else None
 
 
+def _r9_injection_blocked_reason(config: dict[str, Any]) -> str:
+    """R9 poison 이 진단 대상에 도달할 수 없는 구성이면 그 사유를 돌려준다.
+
+    R9 의 정의는 "악성 문서를 지식베이스에 넣고(D' = D ∪ D_poi) 트리거 질의로 깨우는
+    것"이다. 문서가 대상에 들어가지 않으면 공격이 성립하지 않으므로, 실행해서 0건을
+    얻는 건 방어 성공이 아니라 **미실시**다.
+
+    우리 builtin RAG 는 poison 을 파일 기반 `poisoned` 인덱스로 미리 넣으므로 항상
+    성립한다. 문제는 외부 어댑터다 — 남의 라이브 인덱스에는 파일로 넣을 수 없어
+    `adapter.inject_poison` 으로 런타임 주입(write_documents)을 켜야 하는데, 이게 꺼져
+    있으면 마커가 든 문서가 대상에 하나도 없는 채로 질의만 60건 날아간다. 실제로
+    RAG-2026-0812-008 이 그렇게 돌았고, 리포트는 그걸 "악성 트리거 미발동 · 현재 수집
+    정책 유지" 로 적었다(거짓 안심).
+
+    Args:
+      config: load_config 결과.
+
+    Returns:
+      str: 실행 불가 사유(한국어). 정상적으로 주입 가능하면 빈 문자열.
+    """
+    adapter_config = config.get("adapter") or {}
+    if str(adapter_config.get("type", "builtin")).lower() == "builtin":
+      return ""  # 파일 기반 poisoned 인덱스로 주입한다.
+    if not bool(adapter_config.get("inject_poison", False)):
+        return (
+            "외부 진단 대상에 악성 문서를 주입하지 않아 간접 주입 공격이 성립하지 "
+            "않습니다 — 파일 기반 poisoned 인덱스는 대상 RAG 가 쓰지 않으므로, "
+            "adapter.inject_poison 을 켜야 실제 주입 경로로 진단합니다."
+        )
+
+    from rag.adapters.base import Capability
+
+    if Capability.INDEX_WRITE not in _resolve_target_capabilities(config):
+        return (
+            "진단 대상이 문서 추가(INDEX_WRITE) 능력을 열어 주지 않아 악성 문서를 "
+            "주입할 수 없습니다 — 간접 주입 공격이 성립하지 않습니다."
+        )
+    return ""
+
+
 def _is_r9_runtime_injection(config: dict[str, Any]) -> bool:
     """R9 poison 을 런타임에 주입하고 트리거도 코퍼스에서 뽑는 조합인지 판정한다.
 
@@ -2296,13 +2336,33 @@ def _execute_single_run(
     # 인덱스 로드 이전에 계산해, skip 이면 비싼 준비 작업을 건너뛴다. 기본(우리 RAG)은
     # 전 능력이라 항상 run → 기존 동작과 완전히 동일하다.
     from rag.adapters import plan_scenario_execution
-    from rag.adapters.capabilities import DECISION_DEGRADE, DECISION_SKIP
+    from rag.adapters.capabilities import (
+        DECISION_DEGRADE,
+        DECISION_SKIP,
+        CapabilityPlan,
+    )
 
     _target_capabilities = _resolve_target_capabilities(config)
     capability_plan = plan_scenario_execution(
         SimpleNamespace(capabilities=_target_capabilities), scenario
     )
+    # 능력만으로는 못 잡는 R9 전용 전제: poison 이 **대상에 실제로 도달하는가**.
+    # 외부 대상은 우리 파일 기반 poisoned 인덱스를 쓰지 않으므로, 런타임 주입이 꺼져
+    # 있으면 마커가 든 문서가 대상에 하나도 없는 채로 질의만 날아간다. 그 결과 0건
+    # 발동이 나오고 리포트는 "악성 트리거가 발동하지 않았습니다 · 수집 정책을 유지
+    # 하세요" 라고 적는다 — 배달조차 안 된 공격을 방어 성공으로 파는 것이다
+    # (RAG-2026-0812-008 실측: 60질의 전건이 blocked_at_retrieval 로 집계됐다).
+    if scenario.upper() == "R9":
+        blocked_reason = _r9_injection_blocked_reason(config)
+        if blocked_reason:
+            capability_plan = CapabilityPlan(
+                scenario="R9",
+                decision=DECISION_SKIP,
+                reason=blocked_reason,
+            )
     capability_plan_payload = _capability_plan_payload(capability_plan)
+    # 진단 대상 스택 요약(외부 어댑터에서만 채워진다). 어댑터 생성 이후에 조회한다.
+    target_description: dict[str, Any] | None = None
 
     if capability_plan.decision == DECISION_SKIP:
         checkpoint["status"] = "skipped"
@@ -2608,6 +2668,23 @@ def _execute_single_run(
         # 진단 대상 어댑터를 해석해 공격에 주입한다. 능력이 제한 선언된 경우 게이팅
         # 어댑터가 씌워져 degrade 가 실제 트레이스에 반영된다(전 능력이면 None → 기존 경로).
         target_adapter = _resolve_target_adapter(config, rag_pipeline, _target_capabilities)
+        # 앞의 계획은 **레지스트리의 정적 native 능력**으로 세운 것이라, 대상에 붙어 보고
+        # 나서야 아는 사실을 반영하지 못한다(예: 외부 워크스페이스의 시스템 프롬프트를
+        # 실제로 읽을 수 있었는가 → `adapters/rest.py:__init__`). 인스턴스가 더 좁은
+        # 능력을 선언했으면 계획을 다시 세워 **더 엄격한 쪽**을 기록한다. skip 은 이미
+        # 위에서 단락됐으므로 여기서 바뀔 수 있는 건 run → degrade 뿐이다.
+        if target_adapter is not None:
+            refined_plan = plan_scenario_execution(target_adapter, scenario)
+            if refined_plan.decision != capability_plan.decision:
+                capability_plan = refined_plan
+                capability_plan_payload = _capability_plan_payload(refined_plan)
+            # 대상이 실제로 무엇으로 굴러가는지 한 번만 조회해 결과에 싣는다. 이게 없으면
+            # 리포트의 "진단 대상 생성 모델" 칸이 **우리** 생성기를 가리킨다(=거짓).
+            if hasattr(target_adapter, "describe_target"):
+                try:
+                    target_description = target_adapter.describe_target()
+                except Exception as error:  # 조회 실패로 진단을 멈출 이유는 없다.
+                    logger.debug("진단 대상 정보 조회 실패 — {}", error)
         runner = AttackRunner(config)
         attack, queries = runner.prepare_queries(
             scenario,
@@ -2977,6 +3054,7 @@ def _execute_single_run(
         suite_context=suite_context,
         replay_context=replay_context,
         capability_plan_payload=capability_plan_payload,
+        target_description=target_description,
     )
 
     try:
@@ -3566,6 +3644,27 @@ def summarize_suite_results(
     else:
         summary["status"] = "partial" if failures else "completed"
     summary["failed_cell_count"] = len(failed_cell_ids)
+    # 능력 계획(run/degrade/skip)은 자식 셀이 인덱스 로드 전에 계산해 저장해 두는데,
+    # 여기서 안 옮기면 병합 산출물에서 통째로 사라진다. 그러면 리포트는 R4 가 왜 0건인지
+    # 알 수 없어 "공격 성공률 0.0% · 양호" 로 그리고, 대시보드의 '진단 범위' 열도 영원히
+    # 비어 있다(RAG-2026-0812-008 에서 전 시나리오 capability_plan=null 이었다).
+    # 여러 셀이 있으면 가장 제약이 센 판정을 대표로 삼는다 — 한 셀이라도 못 돌았으면
+    # 그 시나리오를 "완전판으로 돌았다"고 말할 수 없다.
+    plans = [
+        payload["capability_plan"]
+        for payload in payloads
+        if isinstance(payload.get("capability_plan"), dict)
+    ]
+    if plans:
+        severity = {"skip": 2, "degrade": 1, "run": 0}
+        summary["capability_plan"] = max(
+            plans, key=lambda plan: severity.get(str(plan.get("decision", "run")), 0)
+        )
+    # 진단 대상 스택 요약도 같은 이유로 옮긴다(어느 셀에서 왔든 대상은 하나다).
+    for payload in payloads:
+        if isinstance(payload.get("target_description"), dict):
+            summary["target_description"] = payload["target_description"]
+            break
     return summary
 
 
@@ -3962,6 +4061,7 @@ def _build_single_run_summary(
     suite_context: dict[str, str] | None,
     replay_context: dict[str, Any] | None,
     capability_plan_payload: dict[str, Any] | None = None,
+    target_description: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one final or failure-only single-run summary payload."""
     from rag.evaluator.summary import summarize_evaluated_results
@@ -4000,6 +4100,10 @@ def _build_single_run_summary(
     # "이 시나리오가 왜 축소/건너뛰기 되었는지" 를 사유와 함께 노출하기 위함이다.
     if capability_plan_payload is not None:
         summary["capability_plan"] = capability_plan_payload
+    # 진단 대상이 실제로 무엇으로 굴러가는지(외부 어댑터 한정). 이게 없으면 리포트가
+    # 우리 config.generator 를 "진단 대상 생성 모델" 로 적어 사실과 다른 말을 한다.
+    if target_description:
+        summary["target_description"] = target_description
     if suite_context:
         summary.update(suite_context)
     if replay_context:
