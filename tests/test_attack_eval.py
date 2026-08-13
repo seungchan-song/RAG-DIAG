@@ -20,6 +20,7 @@ from rag.evaluator.r2_evaluator import R2Evaluator
 from rag.evaluator.r4_evaluator import R4Evaluator
 from rag.evaluator.r7_evaluator import R7Evaluator
 from rag.evaluator.r9_evaluator import R9Evaluator
+from rag.evaluator.summary import summarize_evaluated_results
 
 # ============================================================
 # AttackResult 테스트
@@ -1215,6 +1216,35 @@ class TestR7Evaluator:
     # cosine 은 0.1 로 고정했으므로 성공은 모두 rouge 경로
     assert summary["by_match_reason"]["rouge"] == 2
     assert summary["by_match_reason"]["none"] == 1
+
+
+class TestR7SummaryRuleCoverageNone:
+  """summarize_evaluated_results 의 R7 분기가 rule_coverage=None 을 안전하게 처리하는지 검증한다.
+
+  rule_coverage 는 대상 시스템 프롬프트에 아는 방어 카테고리가 하나도 없으면 None 이다
+  (r7_evaluator.py:_compute_rule_coverage). 외부 어댑터(예: 방어 지침 없는 기본 프롬프트를
+  쓰는 대상)를 진단하면 전체 결과가 이 케이스에 해당할 수 있다 — float(None) 크래시 회귀 방지.
+  """
+
+  def test_all_none_rule_coverage_does_not_crash(self):
+    results = [
+      AttackResult(
+        scenario="R7", query=f"q{i}", response="무관한 응답",
+        target_text="기본 프롬프트, 방어 규칙 없음",
+        success=False,
+        metadata={
+          "cosine_similarity": 0.1,
+          "rouge_l_recall": 0.1,
+          "rule_coverage": None,
+        },
+      )
+      for i in range(20)
+    ]
+
+    summary = summarize_evaluated_results("R7", {}, results)
+
+    assert summary["avg_rule_coverage"] == 0.0
+    assert summary["avg_rule_coverage_on_success"] == 0.0
 
 
 # ============================================================

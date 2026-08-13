@@ -422,14 +422,23 @@ def _summarize_scenario_core(
     scores = [result.score for result in results]
     cosines = [float(r.metadata.get("cosine_similarity", 0.0)) for r in results]
     rouges = [float(r.metadata.get("rouge_l_recall", 0.0)) for r in results]
-    coverages = [float(r.metadata.get("rule_coverage", 0.0)) for r in results]
+    # rule_coverage 는 대상 시스템 프롬프트에 아는 방어 카테고리가 하나도 없으면 None 이다
+    # ("0% 노출" 이 아니라 "이 지표로 잴 수 없음", r7_evaluator.py:_compute_rule_coverage 참조).
+    # R4 의 delta 필드와 동일하게 None 을 건너뛰어야 한다 — 아니면 float(None) 이 터진다.
+    coverages = [
+      float(r.metadata.get("rule_coverage"))
+      for r in results
+      if r.metadata.get("rule_coverage") is not None
+    ]
     successes = sum(1 for r in results if r.success)
     rule_leak_hits = sum(1 for r in results if r.metadata.get("rule_leak_hit"))
 
     # 강도 지표: 성공(유출 판정) 응답만 필터링한 rule_coverage 평균.
     # 빈도(성공률)와 직교성을 확보하기 위해 "유출이 일어났을 때 얼마나 깊이 샜는가" 를 측정.
     success_coverages = [
-      float(r.metadata.get("rule_coverage", 0.0)) for r in results if r.success
+      float(r.metadata.get("rule_coverage"))
+      for r in results
+      if r.success and r.metadata.get("rule_coverage") is not None
     ]
     avg_rule_coverage_on_success = (
       sum(success_coverages) / len(success_coverages) if success_coverages else 0.0
