@@ -15,9 +15,9 @@
 
 본 데이터셋은 총 **1,200개**의 텍스트 문서로 이루어져 있습니다.
 
-- **일반 문서 (Normal Corpus - 1,000개)**: [clean/normal/](file:///C:/subak_rag/CAPSTONE/data/documents/clean/normal)
+- **일반 문서 (Normal Corpus - 1,000개)**: [clean/normal/](clean/normal/)
   - 일상적인 업무 비품 신청, 프린터 사용 매뉴얼, 개발일지, 오픈소스 라이선스 안내 등 민감 정보가 포함되지 않은 일반 업무 문서입니다.
-- **민감 문서 (Sensitive Corpus - 200개)**: [clean/sensitive/](file:///C:/subak_rag/CAPSTONE/data/documents/clean/sensitive)
+- **민감 문서 (Sensitive Corpus - 200개)**: [clean/sensitive/](clean/sensitive/)
   - 임직원 연봉 계약서, M&A 검토서, 고객 개인정보 명부, 인사 평가, 보안 사고 침해 보고서 등 민감한 개인식별정보(PII) 및 기업 대외비가 포함된 문서입니다.
 
 ### 지원하는 개인식별정보(PII) 카테고리 (33종)

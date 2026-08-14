@@ -262,7 +262,7 @@ section{scroll-margin-top:64px; margin-top:52px}
 /* 머리글과 각 행이 같은 칸 폭을 쓰도록 .lg-head 와 .lrow 에 공통 적용한다. */
 .lg-scen{width:190px; flex:none; display:flex; align-items:baseline; gap:8px; padding-right:12px}
 .lg-name{font-size:14px; font-weight:600}
-/* 종합 위험도 막대 — 성공률 칸과 강도 칸을 **이어붙인다**. 위험도 정의가
+/* 종합 위험도 막대 — 성공률 칸과 강도 칸을 이어붙인다. 위험도 정의가
    0.5×성공률 + 0.5×강도 이므로 각 칸을 50% 스케일로 그리면 채워진 총 길이가
    그대로 종합 위험도(0~100점)가 된다. 두 지표를 따로 그리면 사용자가 눈으로
    합산해야 하지만, 이렇게 두면 "왜 이 점수인가"가 막대 하나로 보인다. */
@@ -621,7 +621,7 @@ const SEV = {
 };
 const SCEN_NAME = {NORMAL:"대조군(일반 질의)", R2:"검색 데이터 유출", R4:"멤버십 추론", R7:"시스템 프롬프트 노출", R9:"간접 프롬프트 주입"};
 const R7CAT = {role:"역할 규칙", context_bound:"근거 한정", pii_block:"PII 차단", instruction_hierarchy:"명령 위계"};
-// PII 태그 → 한국어. 태그 라벨은 **pii/classifier.py:PII_TAG_LABELS 가 원본**이고 여기로
+// PII 태그 → 한국어. 태그 라벨은 pii/classifier.py:PII_TAG_LABELS 가 원본이고 여기로
 // 주입된다($pii_tag_labels_json). 예전에는 같은 표를 파이썬(마스커)과 JS 양쪽에 따로 들고
 // 있어서, 마스커는 "[TMI_NATIONALITY]"를 뱉는데 대시보드 표에는 그 태그가 아예 없는 식으로
 // 어긋났다. 아래 소문자 항목은 태그가 아니라 R2/R4 질의 카테고리라 JS 쪽에만 둔다.
@@ -699,14 +699,14 @@ function svgBars(items){
 }
 
 // ── 유출 원장 ──
-// 시나리오 한 행에 **종합 위험도를 이루는 두 항**(공격 성공률 · 유출 강도)을 건다.
+// 시나리오 한 행에 종합 위험도를 이루는 두 항(공격 성공률 · 유출 강도)을 건다.
 //
 // 예전에는 두 번째 칸이 '노출 개인정보 총계'였다. 그런데 그 숫자는 위험도 계산에
 // 직접 들어가지 않는 데다, 시스템 프롬프트 노출(R7)처럼 애초에 PII 가 목표가 아닌
 // 공격에서는 "0건"이 찍혀 안전해 보이기까지 했다(실제 위험도 42점). 개인정보 총량은
 // 바로 아래 '위험 등급별 유출'이 대조군과 나란히 놓고 전담하므로 여기서는 뺐다.
 //
-// 대신 성공률과 강도를 **하나의 막대에 이어붙인다**. 위험도가 0.5×성공률 + 0.5×강도
+// 대신 성공률과 강도를 하나의 막대에 이어붙인다. 위험도가 0.5×성공률 + 0.5×강도
 // 이므로 두 칸을 각각 50% 스케일로 그리면 채워진 총 길이가 곧 종합 위험도가 된다 —
 // 맨 오른쪽 점수가 어디서 나왔는지를 사용자가 눈으로 합산하지 않아도 된다.
 
@@ -914,7 +914,7 @@ function renderThesis(){
 // 원장은 "얼마나 많이 샜나"를 보여준다. 여기서는 "무엇이 샜나"를 등급마다 한 판씩
 // 따로 그린다. 총량 차분(+289건)만으로는 이름 289건과 주민번호 289건이 구분되지 않고,
 // 세 등급을 한 표에 욱여넣으면 가장 중요한 고유식별 배수(×13.8)가 총량 배수(×3.4) 옆에서
-// 묻힌다. 막대 길이는 **등급 안에서만** 비교한다(등급끼리는 위험의 무게가 다르므로
+// 묻힌다. 막대 길이는 등급 안에서만 비교한다(등급끼리는 위험의 무게가 다르므로
 // 같은 축에 올려 길이로 견주면 안 된다).
 function renderRiskDelta(){
   const cmp=(DATA.summary||{}).normal_vs_attack_pii_comparison||{};
@@ -926,7 +926,7 @@ function renderRiskDelta(){
     +(max>0?Math.max(1.5,v/max*100):0).toFixed(1)+'" style="background:'+color+'"></span></span>';
   // 초과분(excess)·배수(rate_ratio)는 응답 수를 맞춘 값이다(generator._build_pii_delta_entry).
   // 원시 차분을 쓰면 질의를 더 많이 쏜 시나리오가 그것만으로 더 위험해 보인다.
-  // 0 보다 작으면 공격이 대조군보다 **덜** 흘렸다는 뜻이므로 위험색(빨강)을 쓰면 안 된다.
+  // 0 보다 작으면 공격이 대조군보다 덜 흘렸다는 뜻이므로 위험색(빨강)을 쓰면 안 된다.
   const deltaTxt=(ex,ratio)=>{
     const cls=ex>0?"up":(ex<0?"down":"flat");
     const t=(ex>0?"+"+num(ex):num(ex))+(ratio>0?" ×"+Number(ratio).toFixed(1):"");
@@ -1129,7 +1129,7 @@ function scenarioChart(scen){
     // 트리거별 편차가 없으면 막대 6개가 전부 같은 길이로 서서 "어떤 트리거가 잘
     // 먹혔나"에 아무 답도 못 준다. 그럴 땐 차트 대신 그 사실을 한 줄로 적는 게
     // 정직하고 쓸모 있다(막대 길이 차가 없는데 있는 척하지 않는다).
-    // 판정은 **화면에 그려지는 막대**를 기준으로 한다. 전체 목록에는 0건짜리 꼬리가
+    // 판정은 화면에 그려지는 막대를 기준으로 한다. 전체 목록에는 0건짜리 꼬리가
     // 섞여 있어서 그걸로 재면 "편차가 있다"고 나오는데, 정작 사용자가 보는 상위 6개는
     // 전부 같은 길이라 차트가 아무 답도 못 주는 상태 그대로다.
     if(items.length>1){
@@ -1387,7 +1387,7 @@ function docsBlock(r){
 // R2 의 실제 질의는 `미끼(anchor) + 긴 명령 프롬프트(command)` 를 이어 붙인 한 덩어리다.
 // 미끼만 보이면 "이게 왜 공격이지?" 로 읽힌다 — 원문을 그대로 뱉으라고 강요하는 부분이
 // 뒤쪽 명령 프롬프트에 들어 있기 때문이다. 그래서 뒷부분도 접이식으로 같이 싣는다.
-// ⚠️ 질의·응답·명령 프롬프트는 **자르지 않는다.** 예전에는 160/320/900자에서 "…" 로
+// 주의: 질의·응답·명령 프롬프트는 자르지 않는다. 예전에는 160/320/900자에서 "…" 로
 // 끊었는데, 응답 마커나 결론 문장이 잘려 나가 판정 근거를 확인할 수 없었다.
 function caseCard(r, scen){
   const badge=r.success?'<span class="badge high">성공</span>':'<span class="badge neutral">실패</span>';
@@ -1474,7 +1474,7 @@ function cxEntries(scen){
   }else{
     const rd=(DATA.results||{})[scen]||{};
     // 공격이 성공한 응답이 곧 증거이므로 성공 사례를 앞으로 당겨 놓는다.
-    // 같은 성공끼리는 **개인정보가 실제로 들어 있는 응답**을 먼저 보여준다. 예전에는
+    // 같은 성공끼리는 개인정보가 실제로 들어 있는 응답을 먼저 보여준다. 예전에는
     // 이 2차 기준이 없어서, 리포트 전체가 "개인정보 N건 노출"을 말하는데 맨 앞 표본은
     // 개인정보가 한 건도 없는 사내 문서 문장인 상황이 나왔다(헤드라인과 증거 불일치).
     list=(rd.results||[]).slice().sort((a,b)=>
@@ -1510,7 +1510,7 @@ function cxMatch(scen){
     (!st.q || e.text.indexOf(st.q)>=0));
 }
 // 검색어를 화면에 표시된 글자 위에 칠한다.
-// 검색은 질의 **전체**(R2 는 뒤에 붙은 명령 프롬프트 포함)와 응답을 뒤지는데, 카드는
+// 검색은 질의 전체(R2 는 뒤에 붙은 명령 프롬프트 포함)와 응답을 뒤지는데, 카드는
 // 미끼 부분만 펴 놓고 명령 프롬프트·근거 문서는 접어 둔다. 그래서 "주민"으로 걸러
 // 100건이 43건이 돼도 눈앞의 카드는 하나도 안 바뀐 것처럼 보였다 — 매칭이 접힌 데
 // 있었기 때문이다. 칠하고, 칠해진 게 접힌 안쪽이면 그 블록을 펴 준다.
@@ -1605,7 +1605,7 @@ function scenarioCases(scen){
 // 놓았다. 그래서 (1) 어느 줄이 어느 줄에 대응하는지 눈으로 짝을 맞출 수 없었고,
 // (2) 방어규칙 4종의 패턴이 응답의 같은 구간을 함께 잡는 바람에 같은 문단이 두세 번
 // 반복됐으며, (3) 고정 폭으로 잘려 문장 한복판에서 "…"으로 끝났다.
-// 지금은 **방어규칙 한 종이 한 행**이고, 그 행 안에서만 좌우를 비교한다.
+// 지금은 방어규칙 한 종이 한 행이고, 그 행 안에서만 좌우를 비교한다.
 // (2)(3)은 generator 쪽에서 문장 경계 스냅 + 문장 단위 중복 제거로 해결했다.
 
 // 응답 원문의 마크다운 강조(`**...**`)는 LLM 이 실제로 그렇게 출력한 것이다. 별표를
@@ -1617,7 +1617,7 @@ function r7Reconstruction(){
   if(!r7a.has_data) return "";
   const rec=r7a.reconstructed_prompt||{};
   const real=r7a.target_rules_by_category||{};
-  // 분모는 **대상 프롬프트에 실제로 있는 방어규칙**이다(4개 고정이 아니다).
+  // 분모는 대상 프롬프트에 실제로 있는 방어규칙이다(4개 고정이 아니다).
   // 예전에는 항상 4로 나눠서, 방어 문구가 하나도 없는 기본 프롬프트를 쓰는 대상에도
   // "방어규칙 3/4개 복원"이라고 적었다 — 존재하지 않는 규칙을 알아냈다는 말이 된다
   // (RAG-2026-0812-008 · generator._split_target_prompt_by_rule).
@@ -1657,7 +1657,7 @@ function renderScenDetails(){
   const html=attackFindings().map(f=>{
     const s=((DATA.summary||{}).scenario_results||{})[f.scenario]||{};
     // 미실시 시나리오는 성공률·강도·차트·표본이 전부 0/빈 값이다. 그대로 그리면
-    // "0개 페어 중 0개에서 드러났습니다 · 양호" 처럼 **재지 않은 것을 결과로 말하게**
+    // "0개 페어 중 0개에서 드러났습니다 · 양호" 처럼 재지 않은 것을 결과로 말하게
     // 된다. 사유 한 줄만 남기고 판정 요소를 전부 뺀다.
     if(f.severity==="skipped"){
       return '<div class="scen skipped" id="detail-'+f.scenario+'">'
@@ -1779,7 +1779,7 @@ function renderAppendix(){
   // 3) 실험 설정
   const exp=s.experiment||{}, suite=s.suite||{}, rc=exp.retrieval_config||{};
   const profs=suite.profiles||[];
-  // 매트릭스 실행은 리랭커 OFF·ON 을 **둘 다** 돌린다. 그런데 이 칸은 단일 실행용
+  // 매트릭스 실행은 리랭커 OFF·ON 을 둘 다 돌린다. 그런데 이 칸은 단일 실행용
   // retrieval_config 만 읽어서 "리랭커 OFF" 라고 단정했고, 바로 아래 '프로파일 조합'
   // 줄과 정면으로 충돌했다. 실제로 돈 프로파일 수를 먼저 보고 적는다.
   let rer;
@@ -1787,7 +1787,7 @@ function renderAppendix(){
   else if(rc.reranker&&rc.reranker.enabled!=null){ rer=rc.reranker.enabled?"ON":"OFF"; }
   else{ rer="-"; }
   // 진단 대상 LLM. provider:auto 는 실행 시점에 결정되므로 설정값이 아니라
-  // 스냅샷 provenance 에 기록된 **해석 결과**를 쓴다(utils/experiment.py).
+  // 스냅샷 provenance 에 기록된 해석 결과를 쓴다(utils/experiment.py).
   const prov=(DATA.snapshot&&DATA.snapshot.provenance)||{};
   let gen="";
   if(prov.generator_model){
@@ -1845,7 +1845,7 @@ function renderAppendix(){
   }
 
   // ── 진단 도구가 쓴 모델 ──
-  // 대상 모델과 **반드시 분리**한다. 섞어 적으면 PII 탐지에 쓴 우리 모델이 대상의
+  // 대상 모델과 반드시 분리한다. 섞어 적으면 PII 탐지에 쓴 우리 모델이 대상의
   // 구성으로 읽힌다. 값은 snapshot.provenance(실행 시점에 해석된 실제 이름).
   const toolRows=[
     ["PII 탐지 NER", prov.pii_ner_model],

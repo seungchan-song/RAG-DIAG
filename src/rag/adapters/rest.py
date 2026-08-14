@@ -5,11 +5,11 @@ RestRagAdapter — 외부 REST RAG(예: AnythingLLM)를 붙이는 참조 어댑�
 구현체다. HTTP 로 질의를 던지고 응답(answer + 검색 원문 sources)을 RagTrace 로 옮긴다.
 
 설계 포인트:
-  - **transport 주입** — 실제 HTTP 클라이언트(requests) 대신 콜러블을 주입할 수 있어,
+  - transport 주입 — 실제 HTTP 클라이언트(requests) 대신 콜러블을 주입할 수 있어,
     서버 없이 요청 구성·응답 파싱을 단위 테스트할 수 있다(기본은 requests 지연 임포트).
-  - **필드 매핑 설정** — 응답 스키마가 RAG 마다 다르므로 answer/sources 필드 경로를
+  - 필드 매핑 설정 — 응답 스키마가 RAG 마다 다르므로 answer/sources 필드 경로를
     설정으로 받는다. 기본값은 AnythingLLM 개발자 API 스키마에 맞춰 뒀다.
-  - **build_variant 미지원** — 남의 라이브 인덱스에서 특정 문서만 뺀 반사실 세계를
+  - build_variant 미지원 — 남의 라이브 인덱스에서 특정 문서만 뺀 반사실 세계를
     만들 수 없으므로 INDEX_REBUILD 를 노출하지 않는다. → R4 는 능력 계획에서 자동 skip.
     (반사실 진단은 test/staging 인덱스를 통제할 수 있을 때만 성립한다는 위협 모델과 일치.)
 
@@ -18,13 +18,13 @@ RestRagAdapter — 외부 REST RAG(예: AnythingLLM)를 붙이는 참조 어댑�
     기본값은 실제 응답과 그대로 일치했다(변경 불필요).
   - `write_documents` 는 예전엔 `{name, content}` 를 `/api/v1/document/upload` 에 JSON 으로
     보냈는데, 실제 AnythingLLM 은 그 경로가 multipart/binary 전용이라 전량 실패했다.
-    실제로는 **2단계**다 — (1) `/api/v1/document/raw-text` 에 `{textContent, metadata.title}`
+    실제로는 2단계다 — (1) `/api/v1/document/raw-text` 에 `{textContent, metadata.title}`
     로 텍스트를 넣으면 응답에 `documents[].location` 이 오고, (2) 그 location 들을
     `/api/v1/workspace/{workspace}/update-embeddings` 의 `adds` 로 넘겨야 실제로 검색
     대상(임베딩)에 잡힌다. 업로드만 하고 끝내면 문서가 존재는 하되 검색되지 않는다.
   - `sources[].text` 에는 AnythingLLM 이 매 청크 앞에 `<document_metadata>...</document_metadata>`
     블록을 붙여 보낸다. R2 의 ROUGE 비교엔 잡음이라 파싱 시 제거한다.
-  - **코드 밖 함정**: 워크스페이스 기본 `similarityThreshold`(0.25)가 꽤 높아서, 실제로
+  - 코드 밖 함정: 워크스페이스 기본 `similarityThreshold`(0.25)가 꽤 높아서, 실제로
     유출돼야 할 문서도 스코어가 임계값 밑이면 `sources: []` 로 조용히 걸러진다(실측:
     방금 넣은 문서가 score 0.166 으로 기본 임계값 미달). 대상 워크스페이스의 임계값을
     낮춰두지 않으면 R2 가 "유출 없음"으로 오판할 수 있다 — 코드가 아니라 AnythingLLM
@@ -55,7 +55,7 @@ _DOCUMENT_METADATA_PREFIX = re.compile(r"^<document_metadata>.*?</document_metad
 # REST RAG 가 노출할 수 있는 native(최대) 능력. INDEX_REBUILD 는 없음(라이브 인덱스
 # 반사실 불가) → R4 자동 skip. 운영자는 config.adapter.capabilities 로 더 좁힐 수 있다.
 #
-# ⚠️ SYSTEM_PROMPT 는 **여기 있다고 항상 노출되는 게 아니다.** 인스턴스는 정답 프롬프트를
+# 주의: SYSTEM_PROMPT 는 여기 있다고 항상 노출되는 게 아니다. 인스턴스는 정답 프롬프트를
 # 실제로 확보했을 때만 이 능력을 선언한다(`__init__` 의 self.capabilities 참조). 예전에는
 # 값이 None 이어도 무조건 선언해서, R7 이 "완전판(run)" 으로 돌면서 우리 내장 RAG 의
 # 프롬프트를 정답 삼아 남의 RAG 응답을 채점했다(RAG-2026-0812-008).
@@ -85,11 +85,8 @@ def _resolve_push_prompt(config: dict[str, Any]) -> str | None:
   """`adapter.push_system_prompt` 설정을 실제로 밀어넣을 문구로 해석합니다.
 
   `true` 면 우리 `generator.system_prompt` 를 그대로 쓴다 — 외부 대상을 내장 RAG 와
-  **같은 방어 조건**에 놓아야 두 결과를 나란히 비교할 수 있기 때문이다. 문자열을 적으면
+  같은 방어 조건에 놓아야 두 결과를 나란히 비교할 수 있기 때문이다. 문자열을 적으면
   그 문구를 쓴다. 비우거나 false 면 대상을 건드리지 않는다(기본값).
-
-  Args:
-    config: load_config 결과.
 
   Returns:
     str | None: 밀어넣을 프롬프트, 없으면 None.
@@ -158,7 +155,7 @@ class RestRagAdapter:
         응답 JSON 에서 답변·검색원문 목록·원문 내용·점수를 꺼낼 필드 경로(점 표기 지원).
       system_prompt: R7 평가 정답으로 쓸, 대상에 설정된 방어 프롬프트 원문(명시 지정).
         비워 두면 대상 워크스페이스에서 실제 걸린 값을 조회한다.
-      push_system_prompt: 지정하면 이 문구를 **대상에 설정한 뒤** 되읽는다. 진단 전에
+      push_system_prompt: 지정하면 이 문구를 대상에 설정한 뒤 되읽는다. 진단 전에
         방어 조건을 통제하고 싶을 때만 쓴다(기본 None = 남의 RAG 를 건드리지 않는다).
       transport: (url, payload, headers) -> dict 콜러블(POST 용). None 이면 requests 사용.
       transport_get: (url, headers) -> dict 콜러블(GET 용). None 이고 transport 가
@@ -183,9 +180,9 @@ class RestRagAdapter:
     self.timeout = timeout
     self._declared_sensitive: set[str] = set()
 
-    # === R7 정답 프롬프트 해석 ===
+    # R7 정답 프롬프트 해석
     # 순서는 (1) 밀어넣기 요청이 있으면 설정 → (2) 명시 지정 → (3) 대상에서 되읽기.
-    # 밀어넣은 경우에도 **반드시 되읽어** 실제로 걸린 값을 쓴다 — 설정 실패를 조용히
+    # 밀어넣은 경우에도 반드시 되읽어 실제로 걸린 값을 쓴다 — 설정 실패를 조용히
     # 넘기면 다시 "우리가 의도한 프롬프트"와 채점하게 되어 같은 사고가 반복된다.
     if push_system_prompt:
       self.push_system_prompt(push_system_prompt)
@@ -290,7 +287,7 @@ class RestRagAdapter:
       return {}
 
   def fetch_system_prompt(self) -> str | None:
-    """대상 워크스페이스에 **실제로 걸려 있는** 시스템 프롬프트를 조회합니다.
+    """대상 워크스페이스에 실제로 걸려 있는 시스템 프롬프트를 조회합니다.
 
     R7 은 응답과 시스템 프롬프트의 코사인·ROUGE 로 채점하므로 정답이 틀리면 판정 전체가
     무의미해진다. 예전에는 여기가 없어서 `config.generator.system_prompt`(= 우리 내장
@@ -298,7 +295,7 @@ class RestRagAdapter:
     복원" 같은 값을 냈다(RAG-2026-0812-008).
 
     AnythingLLM 실측(2026-08-13): `GET /api/v1/workspace/{slug}` 의 `workspace[0].openAiPrompt`.
-    당시 대상은 **기본 프롬프트 그대로**여서 PII 차단·근거 한정 규칙이 하나도 없었다 —
+    당시 대상은 기본 프롬프트 그대로여서 PII 차단·근거 한정 규칙이 하나도 없었다 —
     즉 "방어 없는 대상"의 유출률을 재고 있었다는 사실 자체가 리포트에 실려야 한다.
 
     Returns:
@@ -374,7 +371,7 @@ class RestRagAdapter:
   def push_system_prompt(self, prompt: str) -> bool:
     """대상 워크스페이스에 시스템 프롬프트를 설정합니다(선택 기능).
 
-    "내 시스템을 내가 감사한다" 는 전제에서는 방어 프롬프트를 **통제 변수**로 두는 편이
+    "내 시스템을 내가 감사한다" 는 전제에서는 방어 프롬프트를 통제 변수로 두는 편이
     맞다. 그래야 내장 RAG 와 같은 방어 조건에서 비교가 서고, R2/R9 숫자도 "방어가 걸린
     상태"의 값이 된다. 다만 남의 RAG 를 말없이 바꾸면 안 되므로 기본은 꺼져 있고
     `adapter.push_system_prompt` 를 명시했을 때만 호출된다.
@@ -404,9 +401,6 @@ class RestRagAdapter:
   def query(self, query: str) -> RagTrace:
     """
     대상 RAG 에 질의하고 응답을 표준 트레이스로 변환합니다.
-
-    Args:
-      query: 질의 문자열.
 
     Returns:
       RagTrace: 답변 + (있으면) 검색 원문 목록을 담은 트레이스.
@@ -479,7 +473,7 @@ class RestRagAdapter:
   def cleanup_stale_poison(self) -> int:
     """이전 실행이 남긴 R9 poison 문서를 워크스페이스 검색 대상에서 제거합니다.
 
-    `write_documents()` 는 poison 을 대상 워크스페이스에 **영구히** 넣는다. 그걸 지우는
+    `write_documents()` 는 poison 을 대상 워크스페이스에 영구히 넣는다. 그걸 지우는
     주체가 없으면 다음 실행의 NORMAL(대조군)이 지난 회차 poison 을 검색하게 되고,
     "공격이 대조군보다 PII 를 얼마나 더 노출했나" 라는 이 프로젝트의 핵심 비교가 깨진다.
     외부 RAG 는 워크스페이스가 하나뿐이라 시나리오별로 코퍼스를 분리할 수 없어서
@@ -491,7 +485,7 @@ class RestRagAdapter:
     generate_r9_payloads` 가 항상 `poison-` 접두사로 만들고, 업로드 시 그 이름이 그대로
     파일명에 실린다. 같은 워크스페이스의 다른 문서는 건드리지 않는다.
 
-    ponytail: 워크스페이스 임베딩에서만 뺀다(= 더 이상 검색되지 않는다). AnythingLLM
+    한계: 워크스페이스 임베딩에서만 뺀다(= 더 이상 검색되지 않는다). AnythingLLM
     저장소의 원본 파일은 남을 수 있는데, 삭제 엔드포인트가 DELETE 바디를 요구해
     현재 POST 전용 transport 계약과 맞지 않기 때문이다. 오염의 원인은 '검색 가능성'
     이므로 비교 정합성에는 영향이 없다. transport 가 DELETE 를 지원하게 되면

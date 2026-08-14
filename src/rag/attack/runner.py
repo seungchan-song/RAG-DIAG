@@ -44,7 +44,7 @@ class AttackRunner:
     """Instantiate the concrete attack implementation for one scenario.
 
     attacker 는 시나리오별 query_generator 동작 분기에 사용됩니다
-    (요구사항분석서 §2.4 [표 13] A1~A3 매트릭스 참조; A4 는 제거됨).
+    (요구사항분석서 §2.4 [표 13] A1~A3 매트릭스 참조).
     env 는 R2에서 쿼리 타입을 결정합니다.
     probe_mode 는 R4 전용 옵션: "generic"(일반 키워드) / "sensitive"(PII 식별자).
     target 은 진단 대상 어댑터(BYO-RAG). None 이면 각 시나리오가 execute() 에 전달된
@@ -194,24 +194,3 @@ class AttackRunner:
       sum(1 for item in results if item.success),
     )
     return results
-
-  def run_all_scenarios(
-    self,
-    rag_pipeline: Pipeline,
-    target_docs: list[dict[str, Any]],
-    scenarios: list[str] | None = None,
-    attacker: str = "A1",
-    env: str = "poisoned",
-  ) -> dict[str, list[AttackResult]]:
-    """Run multiple scenarios and return the grouped results."""
-    selected_scenarios = scenarios or list(SCENARIO_MAP.keys())
-    return {
-      scenario: self.run(
-        scenario=scenario,
-        rag_pipeline=rag_pipeline,
-        target_docs=target_docs,
-        attacker=attacker,
-        env=env,
-      )
-      for scenario in selected_scenarios
-    }

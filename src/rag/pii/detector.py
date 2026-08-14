@@ -114,19 +114,16 @@ class PIIDetector:
     """
     PII 를 탐지하고 마스킹된 텍스트를 함께 반환합니다.
 
-    ⚠️ `detect()` 가 만든 finding 의 start/end 는 **원문 좌표**인데, 이 함수가 돌려주는
+    `detect()` 가 만든 finding 의 start/end 는 원문 좌표인데, 이 함수가 돌려주는
     `masked_text` 는 길이가 다른 문자열이다(예: "MBR-2024-0012"(13자) → "[회원 ID]"(8자)).
     호출부(`pii/artifacts.py`)가 응답 본문을 마스킹본으로 교체해 저장하므로, 좌표를 그대로
     두면 저장된 finding 이 엉뚱한 구간을 가리킨다(RAG-2026-0811-003 실측: 구조적 태그
     스팬의 50%가 해당 태그일 수 없는 문자열이었다). 그래서 여기서 좌표를 마스킹본
     기준으로 옮긴다.
 
-    Args:
-      text: 원문 텍스트
-
     Returns:
       dict: `detect()` 결과에 masked_text/masking_applied 가 추가된 것.
-        findings 의 start/end 는 **masked_text 기준 좌표**다.
+        findings 의 start/end 는 masked_text 기준 좌표다.
     """
     result = self.detect(text)
     masked_text = self.masker.mask_text(text, result["confirmed"])
@@ -167,7 +164,7 @@ class PIIDetector:
       )
       return findings
 
-    # ponytail: 스팬이 겹치지 않는다는 전제(분류기가 겹침을 정리한다). 겹치면 그 항목만
+    # 한계: 스팬이 겹치지 않는다는 전제(분류기가 겹침을 정리한다). 겹치면 그 항목만
     # 원문 좌표로 남긴다 — 마스킹 자체가 겹침에서 이미 손실적이라 여기서 더 할 게 없다.
     shifted = [dict(finding) for finding in findings]
     order = sorted(range(len(confirmed)), key=lambda i: confirmed[i].start)

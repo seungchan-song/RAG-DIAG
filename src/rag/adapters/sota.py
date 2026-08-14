@@ -202,9 +202,6 @@ class SotaRagAdapter:
     """
     SOTA_RAG 에 질의하고 응답을 표준 트레이스로 변환합니다.
 
-    Args:
-      query: 질의 문자열.
-
     Returns:
       RagTrace: 답변 + 검색 원문(doc_role 라벨 포함) + 가드레일 판정을 담은 트레이스.
     """
@@ -362,7 +359,7 @@ class SotaRagAdapter:
     `attack/query_generator.py:generate_r9_payloads` 가 항상 `poison-` 접두사로
     만든다. 사용자가 같은 폴더에 둔 다른 문서는 건드리지 않는다.
 
-    ponytail: 파일만 지운다. SOTA 인덱스에 이미 들어간 임베딩은 재인제스트 전까지
+    한계: 파일만 지운다. SOTA 인덱스에 이미 들어간 임베딩은 재인제스트 전까지
     남는다(SOTA_RAG 에 문서 삭제 API 가 없다 — `/api/v1/query` 와 `/api/v1/ingest`
     뿐). 대상에 delete 엔드포인트가 생기면 여기서 함께 호출할 것.
 

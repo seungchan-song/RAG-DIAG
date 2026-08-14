@@ -68,13 +68,10 @@ _BANNER = r"""
 """
 
 
-# =============================================================================
 # 사용자 친화적 출력용 상수 / 헬퍼
-# -----------------------------------------------------------------------------
 # 공격 실행 시 콘솔에 표시되는 시나리오 부제, 쿼리 의미 한국어 라벨, 평가
 # 결과 테이블 위젯 등을 모아둔다. 데이터(요약 dict 키, JSON 스키마)는
 # 변경하지 않고 출력층에서만 사용한다.
-# =============================================================================
 
 # 시나리오별 한국어 부제 + 한 줄 의미 (attack 모듈 docstring 출처)
 _SCENARIO_LABELS: dict[str, dict[str, str]] = {
@@ -396,13 +393,13 @@ def _warn_if_detection_degraded(results: list[Any]) -> None:
   """PII 탐지기가 빠진 응답이 있으면 셀이 끝날 때 크게 경고한다.
 
   왜 실행 실패와 따로 봐야 하나 — 실측(`RAG-2026-0806-001`, 2026-08-06):
-  **응답 1,468건 중 611건(41.6%)이 NER 없이 채점됐는데 실행 실패는 0건**이었다.
+  응답 1,468건 중 611건(41.6%)이 NER 없이 채점됐는데 실행 실패는 0건이었다.
   화면상으로는 완벽한 런이고 리포트에는 유출만 적게 찍힌다. 그래서 이 신호는
   실행 통계와 별개로, 결과를 신뢰하기 전에 반드시 보이는 자리에 있어야 한다.
 
   원인(스레드 경쟁)은 `pii/step3_ner.py` 락으로 닫았지만 탐지기가 죽는 길은
   그것 말고도 있으므로(모델 다운로드 실패·캐시 손상·OOM·마스킹 예외),
-  원인이 아니라 **결과를 센다**.
+  원인이 아니라 결과를 센다.
 
   Args:
     results: 이 셀에서 평가가 끝난 AttackResult 목록.
@@ -477,7 +474,7 @@ def _show_banner() -> None:
     )
     cmd_table.add_row(
         "ingest",
-        "TXT/PDF 문서를 벡터 DB(FAISS)에 등록",
+        "PDF/TXT/MD 문서를 벡터 DB(FAISS)에 등록",
         "rag ingest --env clean",
     )
     cmd_table.add_row(
@@ -492,8 +489,8 @@ def _show_banner() -> None:
     )
     cmd_table.add_row(
         "pii-eval",
-        "PII 탐지 4단계 파이프라인 성능 벤치마크",
-        "rag pii-eval --dataset-path kdpii.jsonl",
+        "PII 탐지 파이프라인(STEP 0~4) 성능 벤치마크",
+        "rag pii-eval --dataset-path <33종_라벨셋>.jsonl",
     )
     cmd_table.add_row(
         "replay",
@@ -603,7 +600,6 @@ def _resolve_max_target_docs(
       3. 둘 다 없거나 0 이하면 None (= 무제한)
 
     Args:
-      scenario: 시나리오 이름 (대소문자 무관).
       config: load_config() 결과 딕셔너리.
       num_targets_override: CLI 옵션 값. 미지정 시 None.
 
@@ -632,7 +628,7 @@ def _r9_injection_blocked_reason(config: dict[str, Any]) -> str:
 
     R9 의 정의는 "악성 문서를 지식베이스에 넣고(D' = D ∪ D_poi) 트리거 질의로 깨우는
     것"이다. 문서가 대상에 들어가지 않으면 공격이 성립하지 않으므로, 실행해서 0건을
-    얻는 건 방어 성공이 아니라 **미실시**다.
+    얻는 건 방어 성공이 아니라 미실시다.
 
     우리 builtin RAG 는 poison 을 파일 기반 `poisoned` 인덱스로 미리 넣으므로 항상
     성립한다. 문제는 외부 어댑터다 — 남의 라이브 인덱스에는 파일로 넣을 수 없어
@@ -640,9 +636,6 @@ def _r9_injection_blocked_reason(config: dict[str, Any]) -> str:
     있으면 마커가 든 문서가 대상에 하나도 없는 채로 질의만 60건 날아간다. 실제로
     RAG-2026-0812-008 이 그렇게 돌았고, 리포트는 그걸 "악성 트리거 미발동 · 현재 수집
     정책 유지" 로 적었다(거짓 안심).
-
-    Args:
-      config: load_config 결과.
 
     Returns:
       str: 실행 불가 사유(한국어). 정상적으로 주입 가능하면 빈 문자열.
@@ -675,14 +668,11 @@ def _is_r9_runtime_injection(config: dict[str, Any]) -> bool:
     write_documents 로 대상에 직접 주입되고, 트리거 키워드는 대상이 실제 색인한
     코퍼스에서 나온다. 따라서 poisoned 인덱스를 만들 이유가 없다.
 
-    두 조건을 **모두** 만족해야 한다:
+    두 조건을 모두 만족해야 한다:
       - adapter.inject_poison: 런타임 주입 경로를 쓴다(외부 Tier-2 어댑터).
       - attack.r9.trigger_source == "corpus": 트리거를 attack 문서가 아니라
         코퍼스에서 뽑는다.
     한쪽만 켜면 여전히 attack 문서가 필요하므로 poisoned 를 유지해야 한다.
-
-    Args:
-      config: load_config 결과.
 
     Returns:
       bool: 위 조합이면 True.
@@ -695,13 +685,10 @@ def _is_r9_runtime_injection(config: dict[str, Any]) -> bool:
 def _resolve_r9_trigger_role(config: dict[str, Any]) -> str:
     """R9 트리거 키워드가 실제로 뽑히는 doc_role 을 config 에서 해석한다.
 
-    `R9InjectionAttack.resolve_trigger_keywords` 와 **같은 규칙**이어야 한다.
+    `R9InjectionAttack.resolve_trigger_keywords` 와 같은 규칙이어야 한다.
     이 값은 `_apply_target_docs_cap` 의 cap 대상 선택에 쓰이는데, 둘이 어긋나면
     cap 이 트리거가 아닌 그룹에 걸려 트리거 수가 코퍼스 크기에 비례해 늘어나고
     poison 문서가 폭주한다(트리거당 num_poison_docs 개씩 생성되므로).
-
-    Args:
-      config: load_config 결과.
 
     Returns:
       str: cap 을 적용할 doc_role. attack_docs 모드면 "attack",
@@ -723,7 +710,7 @@ def _apply_target_docs_cap(
 
     정책:
       - R7: target_docs 와 무관하게 system_prompt 가 타깃이므로 입력을 그대로 반환.
-      - R9: **트리거 키워드 소스가 되는 역할의 문서에만** cap 을 적용하고 나머지는
+      - R9: 트리거 키워드 소스가 되는 역할의 문서에만 cap 을 적용하고 나머지는
             그대로 둔다. 그 역할이 무엇인지는 `attack.r9.trigger_source` 에 따라
             달라지므로 호출자가 `r9_trigger_role` 로 알려준다(attack_docs 모드면
             "attack", corpus 모드면 trigger_corpus_role 값). cap 대상을 틀리면
@@ -742,7 +729,6 @@ def _apply_target_docs_cap(
 
     Args:
       target_docs: CLI 가 빌드한 공격 대상 문서 리스트.
-      scenario: 시나리오 이름 (대소문자 무관).
       max_n: 상한값. None = 무제한.
       random_seed: 그룹 내 셔플에 사용할 seed. 보통 config.experiment.random_seed.
       r9_trigger_role: R9 에서 cap 을 적용할 doc_role. 트리거 키워드가 실제로
@@ -907,8 +893,7 @@ def run(
         help=(
             "공격자(위협 모델) 유형 (A1/A2/A3). "
             "미지정 시 시나리오별 권장 공격자 자동 선택 "
-            "(NORMAL→A1, R2/R4→A2, R7→A1, R9→A3). "
-            "옵션 B 매트릭스에서 A4는 제거되었습니다."
+            "(NORMAL→A1, R2/R4→A2, R7→A1, R9→A3)."
         ),
     ),
     profile: str = typer.Option(
@@ -1088,9 +1073,9 @@ def _preflight_local_generator(config: dict[str, Any]) -> str:
     """provider=local 일 때 로컬 LLM 서버가 실제로 응답하는지 미리 확인한다.
 
     `generator.provider` 를 "local" 로 고정하면서 생긴 함정을 막는다 — 서버가 안 떠
-    있어도 생성기 **생성**은 성공하고, 실패는 질의 시점에야 드러난다. 공격 경로에서는
+    있어도 생성기 생성은 성공하고, 실패는 질의 시점에야 드러난다. 공격 경로에서는
     `attack/base.py:_raise_if_generator_errored` 가 그걸 실행 실패로 승격시키므로
-    조용히 틀린 결과가 나오진 않지만, 대신 **전 쿼리가 실패한 리포트**가 나온다.
+    조용히 틀린 결과가 나오진 않지만, 대신 전 쿼리가 실패한 리포트가 나온다.
     심사위원이 `rag demo` 를 처음 치는 순간 그 꼴을 보면 안 되므로 여기서 먼저 막는다.
 
     Args:
@@ -1184,7 +1169,7 @@ def demo(
     `_preflight_local_generator` 가 시작 전에 확인하고 안내합니다.
 
     소요 시간: 최초 실행은 임베딩/NER 모델(약 1.5GB) 다운로드가 더해지고, 이후에도
-    **약 30분**이 걸립니다(75질의 · M2/16GB 실측 2026-08-11). 병목은 생성기가 아니라
+    약 30분이 걸립니다(75질의 · M2/16GB 실측 2026-08-11). 병목은 생성기가 아니라
     PII 파이프라인입니다 — NORMAL 쿼리당 13초 중 생성기 몫은 0.7~3.4초입니다.
     """
     import tempfile
@@ -2150,15 +2135,14 @@ def _resolve_target_adapter(
     진단 대상 어댑터를 해석해 runner 에 주입할 인스턴스를 만듭니다.
 
     - `adapter.type` 이 builtin(기본)일 때:
-        · 능력이 전 능력이면 **None** 을 돌려준다 → 각 시나리오가 파이프라인을 즉석
-          래핑하는 기존 경로를 타므로 **완전 비파괴**.
+        · 능력이 전 능력이면 None 을 돌려준다 → 각 시나리오가 파이프라인을 즉석
+          래핑하는 기존 경로를 타므로 완전 비파괴.
         · 능력이 제한 선언되면 참조 어댑터를 `CapabilityGatedAdapter` 로 감싸 검색 원문·
-          system_prompt 등 능력 밖 정보를 차단한다 → **degrade 가 truthful**.
+          system_prompt 등 능력 밖 정보를 차단한다 → degrade 가 truthful.
     - `adapter.type` 이 외부 타입(예: "rest")일 때: 레지스트리 팩토리로 그 어댑터를 만든다
       (선언 능력이 native 보다 좁으면 레지스트리가 게이팅까지 처리).
 
     Args:
-      config: 실험 설정.
       pipeline: 우리 RAG 파이프라인(builtin 어댑터로 감쌀 대상).
       capabilities: `_resolve_target_capabilities` 가 해석한 대상 능력 집합(builtin 게이팅에 사용).
 
@@ -2330,7 +2314,7 @@ def _execute_single_run(
     checkpoint["status"] = "running"
     exp_manager.save_checkpoint(actual_run_id, checkpoint)
 
-    # === 능력 기반 실행 계획 (BYO-RAG 어댑터 skip/degrade) ===
+    # 능력 기반 실행 계획 (BYO-RAG 어댑터 skip/degrade)
     # 진단 대상 어댑터가 노출한 능력을 근거로 이 시나리오를 완전판(run)/축소(degrade)/
     # 건너뜀(skip) 중 무엇으로 돌릴지 결정한다. 능력 판정은 인덱스·파이프라인이 필요 없어
     # 인덱스 로드 이전에 계산해, skip 이면 비싼 준비 작업을 건너뛴다. 기본(우리 RAG)은
@@ -2346,7 +2330,7 @@ def _execute_single_run(
     capability_plan = plan_scenario_execution(
         SimpleNamespace(capabilities=_target_capabilities), scenario
     )
-    # 능력만으로는 못 잡는 R9 전용 전제: poison 이 **대상에 실제로 도달하는가**.
+    # 능력만으로는 못 잡는 R9 전용 전제: poison 이 대상에 실제로 도달하는가.
     # 외부 대상은 우리 파일 기반 poisoned 인덱스를 쓰지 않으므로, 런타임 주입이 꺼져
     # 있으면 마커가 든 문서가 대상에 하나도 없는 채로 질의만 날아간다. 그 결과 0건
     # 발동이 나오고 리포트는 "악성 트리거가 발동하지 않았습니다 · 수집 정책을 유지
@@ -2668,10 +2652,10 @@ def _execute_single_run(
         # 진단 대상 어댑터를 해석해 공격에 주입한다. 능력이 제한 선언된 경우 게이팅
         # 어댑터가 씌워져 degrade 가 실제 트레이스에 반영된다(전 능력이면 None → 기존 경로).
         target_adapter = _resolve_target_adapter(config, rag_pipeline, _target_capabilities)
-        # 앞의 계획은 **레지스트리의 정적 native 능력**으로 세운 것이라, 대상에 붙어 보고
+        # 앞의 계획은 레지스트리의 정적 native 능력으로 세운 것이라, 대상에 붙어 보고
         # 나서야 아는 사실을 반영하지 못한다(예: 외부 워크스페이스의 시스템 프롬프트를
         # 실제로 읽을 수 있었는가 → `adapters/rest.py:__init__`). 인스턴스가 더 좁은
-        # 능력을 선언했으면 계획을 다시 세워 **더 엄격한 쪽**을 기록한다. skip 은 이미
+        # 능력을 선언했으면 계획을 다시 세워 더 엄격한 쪽을 기록한다. skip 은 이미
         # 위에서 단락됐으므로 여기서 바뀔 수 있는 건 run → degrade 뿐이다.
         if target_adapter is not None:
             refined_plan = plan_scenario_execution(target_adapter, scenario)
@@ -2679,7 +2663,7 @@ def _execute_single_run(
                 capability_plan = refined_plan
                 capability_plan_payload = _capability_plan_payload(refined_plan)
             # 대상이 실제로 무엇으로 굴러가는지 한 번만 조회해 결과에 싣는다. 이게 없으면
-            # 리포트의 "진단 대상 생성 모델" 칸이 **우리** 생성기를 가리킨다(=거짓).
+            # 리포트의 "진단 대상 생성 모델" 칸이 우리 생성기를 가리킨다(=거짓).
             if hasattr(target_adapter, "describe_target"):
                 try:
                     target_description = target_adapter.describe_target()
@@ -2888,7 +2872,7 @@ def _execute_single_run(
     # 로컬 생성기는 동시 요청을 늘려도 처리량이 늘지 않는다. Ollama 는 메모리가 빠듯하면
     # llama-server 를 `-np 1`(병렬 슬롯 1개)로 띄우므로 요청이 전부 직렬화되고, 워커만
     # 늘리면 큐 대기 = 워커 수 × 생성 시간으로 커져 타임아웃만 유발한다. 그 타임아웃은
-    # 무작위가 아니라 **응답이 긴 질의부터** 골라 죽이는데, R2 에서 응답이 길다는 건 곧
+    # 무작위가 아니라 응답이 긴 질의부터 골라 죽이는데, R2 에서 응답이 길다는 건 곧
     # 원문 덤프(=공격 성공)라서 성공률이 체계적으로 과소 측정된다
     # (2026-08-11 실측: max_workers=5 · timeout=180 에서 R2 A2 셀 실패율 6.6%).
     default_workers = 2 if config.get("generator", {}).get("provider") == "local" else 5
@@ -2937,7 +2921,7 @@ def _execute_single_run(
 
                     # 결과 한 건만 덧붙인다. 예전에는 누적분 전체를 매번 다시 써서
                     # 총 쓰기량이 O(n²)(전체 매트릭스 런 1회 9.14GB)였다.
-                    # 체크포인트 저장보다 **먼저** 써야 크래시 시 유실된 줄의 질의가
+                    # 체크포인트 저장보다 먼저 써야 크래시 시 유실된 줄의 질의가
                     # 완료 목록에 남지 않아 다음 실행에서 재시도된다.
                     exp_manager.append_partial_result(
                         actual_run_id,
@@ -4139,7 +4123,7 @@ def _validate_resume_request(
     saved_scope = checkpoint.get("scenario_scope")
     # 허용값에 "all" 이 반드시 들어가야 한다. 체크포인트의 scenario_scope 는 인덱스
     # 매니페스트에서 그대로 복사되는데(`_execute_single_run`), PersistentIndexManager 는
-    # 환경별 인덱스가 그 환경 문서를 전부 담으므로 이 값을 **항상 "all"** 로 적는다
+    # 환경별 인덱스가 그 환경 문서를 전부 담으므로 이 값을 항상 "all" 로 적는다
     # (index/manager.py:57). 예전 기대값("base" / 시나리오명)은 그래서 절대 일치하지
     # 못했고, `rag run --resume` 이 모든 셀에서 "scenario_scope 불일치"로 죽었다
     # (2026-08-11 실측). 전 시나리오를 담은 인덱스는 어느 시나리오로 재개하든 안전한
@@ -4218,15 +4202,6 @@ def _resolve_env_for_scenario(scenario: str, config: dict[str, Any]) -> str:
     return SCENARIO_FIXED_ENV.get(scenario_upper, "clean")
 
 
-def _require_scenario_for_poisoned(env: str, scenario: str | None) -> None:
-    """Enforce explicit poisoned scenario selection at the CLI layer."""
-    if str(env).lower() == "poisoned" and not scenario:
-        raise ValueError(
-            "`--scenario R9` is required when `--env poisoned` is used. "
-            "(현재 정책: poisoned DB 는 R9 만 허용)"
-        )
-
-
 def _check_scenario_env_constraint(
     env: str, scenario: str, config: dict[str, Any]
 ) -> None:
@@ -4242,7 +4217,6 @@ def _check_scenario_env_constraint(
     Args:
       env: 실행 환경 ("clean" 또는 "poisoned")
       scenario: 시나리오 ("NORMAL", "R2", "R4", "R7", "R9")
-      config: YAML에서 로드한 설정 딕셔너리
     """
     scenario_upper = str(scenario).upper()
     if scenario_upper == "R9" and _is_r9_runtime_injection(config):

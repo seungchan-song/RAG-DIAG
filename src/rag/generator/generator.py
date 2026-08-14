@@ -99,9 +99,6 @@ def create_generator(config: dict[str, Any]) -> Any:
   config["generator"]["system_prompt"] 가 설정되어 있으면
   각 생성기에 페르소나/방어 지시문으로 전달됩니다.
 
-  Args:
-    config: YAML에서 로드한 설정 딕셔너리
-
   Returns:
     Generator 컴포넌트
   """
@@ -134,14 +131,11 @@ _LOCAL_PROVIDER_ALIASES = {"local", "ollama", "vllm", "local_openai", "openai_co
 
 
 def _resolve_provider(config: dict[str, Any]) -> tuple[str, str]:
-  """설정과 환경변수를 보고 **실제로 쓰일** provider 를 하나로 확정한다.
+  """설정과 환경변수를 보고 실제로 쓰일 provider 를 하나로 확정한다.
 
   `create_generator` 와 `describe_generator` 가 이 함수 하나를 공유한다. 예전에는 결정
   로직이 `create_generator` 안에만 있어서, 리포트는 설정값("auto")밖에 적을 수 없었다.
   그래서 "이 진단이 어떤 모델을 상대로 한 것인가"에 리포트가 답을 못 했다.
-
-  Args:
-    config: 전체 설정 dict.
 
   Returns:
     (provider, warning) 튜플. provider 는 local/clova/openai/mock 중 하나이고,
@@ -188,9 +182,6 @@ def describe_generator(config: dict[str, Any]) -> dict[str, str]:
   `provider: auto` 설정만 적어 두면 그 답이 사라지므로, 실행 시점의 해석 결과를
   스냅샷 provenance 에 남긴다(`utils/experiment.py:build_snapshot_provenance`).
 
-  Args:
-    config: 전체 설정 dict.
-
   Returns:
     {"provider": 실제 provider, "model": 모델 이름, "configured": 설정 원문값}.
     Mock 폴백이면 model 은 "mock" 이다.
@@ -218,7 +209,6 @@ def create_openai_generator(
   (.env 파일에서 자동 로드됩니다)
 
   Args:
-    config: YAML에서 로드한 설정 딕셔너리.
             config["generator"]["openai"] 아래의 설정을 사용합니다.
     system_prompt: LLM의 system role 메시지로 전달할 페르소나/방어 지시문.
                    None이면 system 메시지 없이 동작합니다.

@@ -6,15 +6,15 @@
 갈아 끼울 수 있다. 팀원이 새 어댑터를 붙이는 표준 진입점이다.
 
 두 개의 공개 함수가 CLI 실행 루프와 맞물린다:
-  - resolve_target_capabilities(config): 인덱스 로드 **이전**에 대상이 노출하는 능력을
+  - resolve_target_capabilities(config): 인덱스 로드 이전에 대상이 노출하는 능력을
     구해 시나리오 skip/degrade 계획을 세운다. (파이프라인 불필요)
   - create_target_adapter(config, pipeline): 실제 대상 어댑터 인스턴스를 만든다.
     builtin + 전 능력이면 None 을 돌려주어 기존 경로(각 시나리오가 파이프라인을 즉석
     래핑)를 그대로 타게 한다 → 완전 비파괴.
 
 능력 모델(중요):
-  레지스트리는 어댑터 타입별 **native(최대) 능력**을 정적으로 보관한다. 운영자는
-  `config.adapter.capabilities` 로 그보다 **좁게** 선언할 수 있고(그 대상 RAG 가 실제로
+  레지스트리는 어댑터 타입별 native(최대) 능력을 정적으로 보관한다. 운영자는
+  `config.adapter.capabilities` 로 그보다 좁게 선언할 수 있고(그 대상 RAG 가 실제로
   덜 노출하는 경우), 그러면 CapabilityGatedAdapter 로 감싸 좁힌 능력만 노출한다.
   선언이 없으면 native 를 그대로 쓴다.
 """
@@ -131,7 +131,7 @@ def create_target_adapter(config: dict[str, Any], pipeline: Any) -> Any | None:
   config 에 맞는 진단 대상 어댑터 인스턴스를 만듭니다.
 
   Returns:
-    - builtin + 전 능력: **None** (기존 경로 유지 → 완전 비파괴).
+    - builtin + 전 능력: None (기존 경로 유지 → 완전 비파괴).
     - 그 외: 어댑터 인스턴스. 선언 능력이 native 보다 좁으면 CapabilityGatedAdapter 로 감싼다.
 
   Raises:

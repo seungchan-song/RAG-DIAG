@@ -38,15 +38,10 @@ class KoreanTokenizer(tokenizers.Tokenizer):
     소문자 변환 후 공백으로 분할하고,
     빈 토큰은 제거합니다.
 
-    Args:
-      text: 토크나이즈할 텍스트
-
     Returns:
       list[str]: 토큰 리스트
     """
-    # 소문자 변환 (영문 혼용 시 대소문자 통일)
     text = text.lower()
-    # 공백 기준 분할, 빈 토큰 제거
     tokens = [t for t in text.split() if t.strip()]
     return tokens
 

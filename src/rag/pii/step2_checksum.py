@@ -7,20 +7,20 @@ STEP 1에서 정규식으로 탐지된 PII 중, 추가 검증이 필요한 항�
 검증 대상:
   1. 주민등록번호(QT_RRN): 가중치 합산 mod 11 체크섬
   2. 신용카드번호(QT_CARD): Luhn 알고리즘
-  3. 외국인등록번호(QT_ARN): **검증하지 않는다** (아래 참조)
+  3. 외국인등록번호(QT_ARN): 검증하지 않는다 (아래 참조)
 
 외국인등록번호에 체크섬을 걸지 않는 이유 (2026-08-03 실측으로 확정):
-  - 구 외국인등록번호(2020-10 이전)는 주민등록번호와 **다른** 검증식을 쓴다
+  - 구 외국인등록번호(2020-10 이전)는 주민등록번호와 다른 검증식을 쓴다
     (mod 11 결과에 +2 후 mod 10). 예전 이 모듈은 "RRN 과 동일"로 처리했는데
     그건 틀린 가정이었다.
-  - 2020-10 부터 신규 외국인등록번호는 뒷자리가 임의번호로 바뀌어 **검증번호
-    체계 자체가 폐지**됐다. 즉 어떤 공식으로도 검증할 수 없는 번호가 존재한다.
+  - 2020-10 부터 신규 외국인등록번호는 뒷자리가 임의번호로 바뀌어 검증번호 체계
+    자체가 폐지됐다. 즉 어떤 공식으로도 검증할 수 없는 번호가 존재한다.
   - 실측: 자체 데이터셋의 외국인등록번호 996건을 두 공식으로 각각 돌린 결과
     주민번호 공식 10.5% / 구 외국인등록번호 공식 10.1% — 둘 다 무작위 수준.
   → 검증하면 진짜 유출을 대량으로 탈락시켜 미탐이 된다. 자릿수·성별코드(5~8)
     구조는 STEP 1 정규식이 이미 강제하므로 그것으로 충분하다고 본다(경로 A-1).
 
-⚠️ 주민등록번호도 2020-10 부터 임의번호화돼 검증번호가 없다. 이 모듈의 mod 11
+주의: 주민등록번호도 2020-10 부터 임의번호화돼 검증번호가 없다. 이 모듈의 mod 11
    은 그 이후 발급 번호를 탈락시킨다. 다만 탈락분은 버려지지 않고 rejection
    채널에 "구조 일치·검증 탈락"으로 남아 리포트에 보이므로, 오탐 제거 효과와
    맞바꿔 현행 유지한다. 실제 최신 번호가 섞인 코퍼스로 재측정할 것.
@@ -99,23 +99,17 @@ class ChecksumValidator:
     Returns:
       bool: 체크섬이 유효하면 True, 아니면 False
     """
-    # 하이픈, 공백, 점 등 구분자를 제거하여 순수 13자리 숫자만 남깁니다
     digits = re.sub(r"[-.\s]", "", text)
 
-    # 13자리가 아니면 유효하지 않음
     if len(digits) != 13 or not digits.isdigit():
       return False
 
-    # 가중치 배열: 앞 12자리에 순서대로 곱할 값
     weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5]
 
-    # 각 자릿수 × 가중치를 합산합니다
     total = sum(int(digits[i]) * weights[i] for i in range(12))
 
-    # 체크디짓 계산: (11 - (합계 mod 11)) mod 10
     check_digit = (11 - (total % 11)) % 10
 
-    # 마지막 자리(13번째)와 체크디짓이 일치하면 유효
     is_valid = int(digits[12]) == check_digit
 
     if is_valid:
@@ -145,28 +139,22 @@ class ChecksumValidator:
     Returns:
       bool: Luhn 체크가 유효하면 True, 아니면 False
     """
-    # 구분자 제거
     digits = re.sub(r"[-.\s]", "", text)
 
-    # 16자리가 아니거나 숫자가 아니면 유효하지 않음
     if len(digits) != 16 or not digits.isdigit():
       return False
 
-    # Luhn 알고리즘 적용
     total = 0
     for i, digit_char in enumerate(reversed(digits)):
       digit = int(digit_char)
 
-      # 오른쪽부터 짝수 번째 자리(인덱스 1, 3, 5...)를 2배 합니다
       if i % 2 == 1:
         digit *= 2
-        # 2배 한 결과가 9보다 크면 9를 뺍니다 (또는 각 자릿수 합)
         if digit > 9:
           digit -= 9
 
       total += digit
 
-    # 합계가 10의 배수이면 유효
     is_valid = total % 10 == 0
 
     if is_valid:
@@ -232,9 +220,6 @@ class ChecksumValidator:
         - 통과 → 유효 목록에 포함 (경로 A-2)
         - 실패 → 탈락 목록에 RejectedPII 로 기록 (버리지 않음)
 
-    Args:
-      matches: STEP 1에서 탐지된 PIIMatch 목록
-
     Returns:
       tuple[list[PIIMatch], list[RejectedPII]]:
         (검증을 통과한 유효 매치, 체크섬 탈락 항목) 두 목록의 튜플
@@ -279,9 +264,6 @@ class ChecksumValidator:
     내부적으로 partition_valid 를 호출하며, 탈락 항목은 버립니다.
     기존 호출자와의 호환을 위한 얇은 래퍼입니다. 탈락 항목까지 함께
     받으려면 partition_valid 를 사용하세요.
-
-    Args:
-      matches: STEP 1에서 탐지된 PIIMatch 목록
 
     Returns:
       list[PIIMatch]: 체크섬 검증을 통과한 유효한 PIIMatch 목록

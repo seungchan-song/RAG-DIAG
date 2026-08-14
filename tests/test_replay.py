@@ -38,7 +38,7 @@ def _base_config(results_dir: Path) -> dict:
     "experiment": {"random_seed": 42},
     "pii": {
       "runtime": {"enable_step3": False, "enable_step4": False},
-      "ner": {"model_path": "townboy/kpfbert-kdpii"},
+      "ner": {"model_path": "townboy/kpfbert-ner"},
       "sllm": {"model": "gpt-4o-mini"},
       "eval": {"label_schema_version": "kdpii-33-v1", "error_context_chars": 12},
     },

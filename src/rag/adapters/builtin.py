@@ -146,7 +146,7 @@ class BuiltinHaystackAdapter:
     exclude = {str(doc_id) for doc_id in exclude_doc_ids}
     kept_docs = [doc for doc in stored_docs if not _doc_matches(doc, exclude)]
 
-    # ⚠️ config 를 반드시 넘겨야 한다. 인자 없이 부르면 `ingest/writer.py:25` 의 backend
+    # 주의: config 를 반드시 넘겨야 한다. 인자 없이 부르면 `ingest/writer.py:25` 의 backend
     # 기본값이 "in_memory" 라 반사실 인덱스만 InMemoryDocumentStore 가 됐다. 그러면
     # `retriever/retriever.py:create_retriever` 가 FAISS 대신 Haystack InMemory 리트리버를
     # 만들고, 그 쪽 run() 에는 query 파라미터가 없어(`retriever/pipeline.py:171-176`)

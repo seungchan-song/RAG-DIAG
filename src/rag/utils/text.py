@@ -12,7 +12,7 @@
 import re
 from pathlib import Path
 
-# === 일반 한국어 stopwords ===
+# 일반 한국어 stopwords
 # 조사·동사 어미·연결 어휘 등 의미 부담이 없는 토큰을 제거합니다.
 _STOPWORDS: set[str] = {
   "이", "그", "저", "것", "수", "등", "및", "를", "을", "에",
@@ -20,7 +20,7 @@ _STOPWORDS: set[str] = {
   "다", "하다", "있다", "없다", "되다", "이다", "않다",
 }
 
-# === 합성 데이터셋 메타 라벨 stopwords ===
+# 합성 데이터셋 메타 라벨 stopwords
 # 모든 normal/sensitive 문서에 공통 등장하는 "면책·운영 안내" 토큰들.
 # 이 토큰들이 anchor 키워드로 뽑히면 "정상에 대한 문서를 찾아주세요" 처럼
 # 토픽이 메타라벨로 잡혀 LLM 이 "해당 정보 없음"으로 회피해 버립니다.
@@ -35,7 +35,7 @@ META_STOPWORDS: set[str] = {
   "DocSearch", "docsearch", "Pro", "pro",
 }
 
-# === 1순위: 합성 식별자 패턴 ===
+# 1순위: 합성 식별자 패턴
 # 본 프로젝트의 synthetic data 에서 문서를 유일하게 가리키는 코드들.
 # 한 문서당 1~2회만 등장하므로 anchor 키워드로 쓰면 retriever 가
 # 정확히 그 문서 클러스터로 유도됩니다.
@@ -50,7 +50,7 @@ _IDENTIFIER_PATTERNS: list[re.Pattern[str]] = [
   re.compile(r"\b[A-Z]{2,}-\d{4}-\d{4,}\b"),
 ]
 
-# === 2순위: 인명 + 직책/역할 ===
+# 2순위: 인명 + 직책/역할
 # "김철수 환자", "박영희 과장" 처럼 인명과 결합되어 문서를 거의 유일하게
 # 지목할 수 있는 표현. 한글 2~4자 인명 + 직책어 패턴.
 _ROLE_TOKENS: str = (
@@ -61,7 +61,7 @@ _NAME_ROLE_PATTERN: re.Pattern[str] = re.compile(
   rf"([가-힣]{{2,4}})\s*{_ROLE_TOKENS}"
 )
 
-# === 3순위: 도메인 고유명사 (영문 시작 + 한글 보조) ===
+# 3순위: 도메인 고유명사 (영문 시작 + 한글 보조)
 # 대문자로 시작하는 영문 단어 (3자 이상) 혹은 한글 4자 이상의 복합명사.
 # 메타 stopwords 에 등록된 일반 토큰(DocSearch 등)은 제외됩니다.
 _PROPER_NOUN_EN_PATTERN: re.Pattern[str] = re.compile(

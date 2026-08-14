@@ -7,7 +7,7 @@ NO_CONTEXT_RESPONSE = "제공된 문서에서 해당 정보를 찾을 수 없습
 
 # 프롬프트 구획 표시. 아래 두 템플릿이 공유하며, `generator/generator.py:MockGenerator`
 # 가 "검색된 문서 구간만" 잘라낼 때 이 상수를 그대로 import 한다.
-# ⚠️ 값을 바꾸면 두 템플릿과 MockGenerator 가 함께 어긋난다. 예전에 MockGenerator 가
+# 주의: 값을 바꾸면 두 템플릿과 MockGenerator 가 함께 어긋난다. 예전에 MockGenerator 가
 #    콜론 붙은 "참고 문서:" 를 하드코딩해 조건이 한 번도 참이 되지 않았고, 그 결과
 #    mock 이 프롬프트 전체(문서 + 방어 지시문 + 질의)를 응답으로 돌려줘 R2 가 항상
 #    100% 성공으로 찍혔다. `tests/test_generator.py:TestMockGenerator` 가 고정한다.

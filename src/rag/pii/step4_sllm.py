@@ -1,16 +1,12 @@
-"""Step 4 sLLM verification for ambiguous NER findings.
+"""Step 4 sLLM 교차검증 (B-2 경로 NER 후보 대상).
 
-Step 3 NER이 추출한 후보 중 F1 신뢰도가 낮은 항목(B-2 경로)을
-GPT-4o-mini 등 외부 sLLM에 문맥과 함께 보내 PII 여부를 최종 판정한다.
+Step 3 NER 후보 중 태그만으로 확정할 수 없는 항목을 sLLM 에 문맥과 함께 보내 PII 여부를
+최종 판정한다. 기본 대상은 로컬 Ollama 이며(``pii.sllm.base_url``), 이 값을 비우면
+OpenAI GPT-4o-mini 로 되돌아간다.
 
-성능 고려사항:
-  - 각 NER 후보당 1번의 API 호출이 필요해 동기 순차 호출 시
-    "후보 수 × 평균 응답시간"만큼의 시간이 누적된다.
-  - 동기 인터페이스(verify_batch)는 그대로 유지하면서 내부에서만
-    asyncio + AsyncOpenAI 로 병렬 호출하여 wall-clock 시간을
-    대폭 단축한다.
-  - 동시 호출 수는 ``pii.sllm.concurrency`` 설정으로 제어하며,
-    rate-limit 초과를 막기 위해 asyncio.Semaphore 로 상한을 둔다.
+후보 하나당 호출 1번이라 순차 처리하면 "후보 수 × 응답시간"이 그대로 누적된다. 동기
+인터페이스(verify_batch)는 유지한 채 내부에서만 asyncio 로 병렬 호출하며, 동시 호출
+상한은 ``pii.sllm.concurrency`` 가 Semaphore 로 건다.
 """
 
 from __future__ import annotations
@@ -25,7 +21,7 @@ from loguru import logger
 
 from rag.pii.step3_ner import NER_LABEL_MAP, NERMatch
 
-# === 내부 태그 → 33종 원본 라벨 역번역표 =================================
+# 내부 태그 → 33종 원본 라벨 역번역표
 # STEP 3 은 모델 라벨(NAME·WORKPLACE…)을 내부 태그(PER·ORG…)로 접어서 넘긴다.
 # 로컬 sLLM 어댑터는 33종 원본 라벨로 학습됐으므로 되돌려서 보내야 한다.
 # NER_LABEL_MAP 을 뒤집되(먼저 선언된 라벨이 이김) 아래 예외만 손으로 잡는다.
@@ -129,9 +125,7 @@ Reply with exactly one token:
     else:
       self.mode = "api"
 
-  # ---------------------------------------------------------------------
   # 클라이언트 · 프롬프트 구성 (OpenAI / 로컬 sLLM 공통 경로)
-  # ---------------------------------------------------------------------
 
   def _client_kwargs(self) -> dict[str, str]:
     """OpenAI/AsyncOpenAI 생성자에 넘길 인자를 만든다.
@@ -158,7 +152,6 @@ Reply with exactly one token:
     """prompt_format 에 맞는 chat messages 를 만든다.
 
     Args:
-      entity_text: 검증할 개체 문자열
       tag: 내부 단축 태그(PER·ORG 등)
       context: 개체 주변 문맥
 
@@ -181,7 +174,7 @@ Reply with exactly one token:
         },
       ]
 
-    # ponytail: 문맥 내 첫 출현 위치로 오프셋을 잡는다. 같은 값이 문맥에 두 번
+    # 한계: 문맥 내 첫 출현 위치로 오프셋을 잡는다. 같은 값이 문맥에 두 번
     # 나오면 앞쪽을 가리키지만, 어댑터는 text/tag 위주로 판단하므로 실익이 없다.
     # 정확한 오프셋이 필요해지면 NERMatch 좌표를 여기까지 내려보내면 된다.
     offset = context.find(entity_text)
@@ -203,15 +196,12 @@ Reply with exactly one token:
       {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
     ]
 
-  # ---------------------------------------------------------------------
   # 외부 동기 인터페이스 (기존 호출자와의 호환을 보장한다)
-  # ---------------------------------------------------------------------
 
   def verify(self, entity_text: str, tag: str, context: str) -> bool:
     """단일 NER 후보 1건을 동기적으로 검증한다.
 
     Args:
-      entity_text: 검증할 개체 문자열
       tag: NER 태그(PER, LOC 등)
       context: 개체 주변 문맥(앞뒤 약 100자)
 
@@ -269,9 +259,7 @@ Reply with exactly one token:
       )
       return self._verify_batch_sync_fallback(matches, full_text)
 
-  # ---------------------------------------------------------------------
   # 내부 async 구현
-  # ---------------------------------------------------------------------
 
   async def _verify_batch_async(
     self,
@@ -394,9 +382,7 @@ Reply with exactly one token:
     finally:
       await client.close()
 
-  # ---------------------------------------------------------------------
   # 동기 폴백 (asyncio.run 사용 불가 환경 대비)
-  # ---------------------------------------------------------------------
 
   def _verify_batch_sync_fallback(
     self,
@@ -468,9 +454,7 @@ Reply with exactly one token:
     )
     return True
 
-  # ---------------------------------------------------------------------
   # 런타임 상태 보고
-  # ---------------------------------------------------------------------
 
   def get_runtime_status(
     self,

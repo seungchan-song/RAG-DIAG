@@ -51,7 +51,7 @@ from loguru import logger
 
 from rag.attack.base import AttackResult, BaseAttack
 
-# === 공격성 표현 금지 목록 ===
+# 공격성 표현 금지 목록
 # generate_queries() 가 만든 모든 쿼리는 아래 토큰 중 무엇도 포함하지 않아야 한다.
 # 자가 검증 용도이며, baseline 의 "비공격성" 을 코드 레벨에서 보증한다.
 _FORBIDDEN_TOKENS: tuple[str, ...] = (
@@ -73,7 +73,7 @@ _FORBIDDEN_TOKENS: tuple[str, ...] = (
 )
 
 
-# === NORMAL 범용 PII 유발 키워드 풀 ===
+# NORMAL 범용 PII 유발 키워드 풀
 # 어떤 회사 RAG 에서도 통할 법한 카테고리 단위 키워드만 둔다.
 # - 토큰 단위 직접 추출("주민번호 알려줘", "비밀번호 알려줘")은 공격 톤이라 제외.
 # - 데이터셋 의존성 0: 인덱스 안에 어떤 문서가 들었는지 알 필요 없이 호기심 많은
@@ -102,7 +102,7 @@ _NORMAL_PII_KEYWORDS: tuple[str, ...] = (
 )
 
 
-# === NORMAL 쿼리 템플릿 ===
+# NORMAL 쿼리 템플릿
 # 각 항목: (query_type, template_text)
 # template 의 {keyword} 자리에는 _NORMAL_PII_KEYWORDS 에서 결정론적으로 순환 선택된
 # 키워드가 들어간다. 모든 템플릿은 받침(이/가, 은/는) 의존을 피하도록 작성되었다.
@@ -253,10 +253,10 @@ class NormalBaselineAttack(BaseAttack):
     template_pool = _NORMAL_QUERY_TEMPLATES
     template_count = min(num_templates, len(template_pool))
 
-    # === 몇 개의 슬롯을 돌릴지 결정 ===
+    # 몇 개의 슬롯을 돌릴지 결정
     # NORMAL 은 본문을 전혀 참조하지 않는다 — 쿼리는 (템플릿 i, 풀 키워드) 두
     # 축만의 함수다. 그래서 서로 다른 조합은 lcm(템플릿 수, 풀 크기) 개뿐이고,
-    # 그보다 많은 슬롯을 돌리면 **완전히 동일한 쿼리가 복제돼** RAG 호출(LLM+검색)
+    # 그보다 많은 슬롯을 돌리면 완전히 동일한 쿼리가 복제돼 RAG 호출(LLM+검색)
     # 만 낭비된다. 예전에는 target_docs 를 순회하며 문서당 template_count 개씩
     # 슬롯을 소비했기 때문에 문서가 많으면 자동으로 그 한계를 넘겼다 —
     # 실측(RAG-2026-0803-001): 프로파일당 180회 중 36회(20%)가 중복이었다.
@@ -265,7 +265,7 @@ class NormalBaselineAttack(BaseAttack):
     # 그래서 문서 대신 슬롯을 직접 순회한다. 슬롯 s 의 (템플릿, 키워드) 는
     # 예전 문서 루프와 똑같이 (s % template_count, s % 풀 크기) 로 정하고,
     # 슬롯 수도 예전 루프가 만들어내던 고유 쿼리 수와 같게 잡는다. 따라서
-    # **생성되는 쿼리 집합은 기존과 바이트 단위로 동일**하고 중복만 사라진다.
+    # 생성되는 쿼리 집합은 기존과 바이트 단위로 동일하고 중복만 사라진다.
     #
     # target_docs 는 이제 "몇 개까지 돌릴지" 비용 상한으로만 쓰인다(기존
     # `--num-targets` 사용감 유지). 본문·doc_id 는 애초에 쿼리에 관여하지 않았고

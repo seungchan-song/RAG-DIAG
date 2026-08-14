@@ -20,7 +20,7 @@ INDEX_FILENAME = "vectors.faiss"
 DOCUMENTS_FILENAME = "documents.jsonl"
 MANIFEST_FILENAME = "manifest.json"
 
-# === PII 및 특정 식별자 추출용 정규식 패턴 (query_generator.py의 SENSITIVE_IDENTIFIER_PATTERNS 참고) ===
+# PII 및 특정 식별자 추출용 정규식 패턴 (query_generator.py의 SENSITIVE_IDENTIFIER_PATTERNS 참고)
 _ASCII_BOUNDARY_PREFIX: str = r'(?<![A-Za-z0-9])'
 _ASCII_BOUNDARY_SUFFIX: str = r'(?![A-Za-z0-9])'
 
@@ -52,7 +52,7 @@ STRUCTURAL_PATTERNS: list[str] = [
 ]
 STRUCTURAL_PATTERN = re.compile("|".join(STRUCTURAL_PATTERNS))
 
-# === 일반 검색어 추출을 위한 한국어 조사 및 템플릿 명령어 지시어 집합 (Stopwords) ===
+# 일반 검색어 추출을 위한 한국어 조사 및 템플릿 명령어 지시어 집합 (Stopwords)
 LEXICAL_STOPWORDS = {
   # 한국어 조사/어미
   "이", "그", "저", "것", "수", "등", "및", "를", "을", "에", "의", "가", "는", "은", "로", "으로", "에서", "도", "만", "다", "하다", "있다", "없다", "되다", "이다", "않다",

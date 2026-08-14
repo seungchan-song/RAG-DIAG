@@ -54,7 +54,7 @@ PII_RISK_TIERS: dict[str, set[str]] = {
 }
 RISK_TIER_ORDER = ("identifier", "contact", "context")
 
-# PII 태그 → 사용자에게 보여줄 한국어 이름. **사용자 노출 문구의 single source of truth** 다.
+# PII 태그 → 사용자에게 보여줄 한국어 이름. 사용자 노출 문구의 single source of truth 다.
 # QT_/TMI_ 접두사는 우리 탐지 파이프라인의 내부 네임스페이스(정형/비정형)일 뿐인데,
 # 마스킹 자리표시자가 이걸 그대로 뱉어서 리포트에 "[TMI_EMAIL]" 같은 은어가 노출됐다.
 # 마스커(pii/masker.py)와 대시보드(report/dashboard_template.py:TAG_KO)가 함께 쓴다.
@@ -192,16 +192,16 @@ class PIIClassifier:
     return confirmed
 
   def _remove_overlaps(self, confirmed: list[ConfirmedPII]) -> list[ConfirmedPII]:
-    """겹치는 확정 항목 중 하나만 남긴다 — 신뢰도 우선, 같으면 **긴 스팬** 우선.
+    """겹치는 확정 항목 중 하나만 남긴다 — 신뢰도 우선, 같으면 긴 스팬 우선.
 
     길이를 동점 처리 기준으로 쓰는 이유(2026-08-06):
       정규식 탐지는 전부 confidence=1.0 이라 신뢰도만 비교하면 승자가
-      `RegexDetector.PATTERNS` 의 **선언 순서**로 결정된다. 그 결과
+      `RegexDetector.PATTERNS` 의 선언 순서로 결정된다. 그 결과
       `051109-3345671`(2002~2006년생 주민등록번호)에서 앞부분 11자를 삼킨
       `QT_PHONE`(선언 순서 2번)이 온전한 `QT_RRN`(5번)을 밀어냈다. 피해는 셋이다.
         · 위험 등급이 identifier → contact 로 강등된다
         · needs_validation 이 False 라 mod11 체크섬이 아예 안 돈다
-        · 스팬이 짧아 마스킹이 뒷자리를 놓친다(`**-****-3345671`)
+        · 스팬이 짧아 마스킹이 뒷자리를 놓친다(`-**-3345671`)
       더 긴 매치가 더 구체적인 패턴이라는 것이 일반 규칙이므로 길이로 가른다.
       (현재 코퍼스에서는 이 조합이 0건이라 리포트 수치는 바뀌지 않는다 —
       2000년대 출생 데이터가 들어올 때를 대비한 잠재 결함 차단이다.)

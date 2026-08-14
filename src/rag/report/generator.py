@@ -231,7 +231,7 @@ class ReportGenerator:
                     "risk_score": data.get("risk_score", 0.0),
                     "avg_high_pii_on_success": data.get("avg_high_pii_on_success", 0.0),
                     "high_pii_normalizer": data.get("high_pii_normalizer", 5.0),
-                    # === retrieved-sensitive 방식 보조 지표 (2026-05-23 도입) ===
+                    # retrieved-sensitive 방식 보조 지표 (2026-05-23 도입)
                     # R2 평가가 target_text 단일 비교 → retrieved sensitive max ROUGE-L
                     # 로 전환되면서 의미가 생긴 3 가지 보조 지표를 그대로 통과시킨다.
                     # 대시보드 R2 섹션이 이 키들을 읽어 KPI 카드와 해설을 그린다.
@@ -243,7 +243,7 @@ class ReportGenerator:
                     # 답변 거부 비율 — 가드레일 효과 진단용 (KPI 카드로 노출)
                     "refusal_count": data.get("refusal_count", 0),
                     "refusal_rate": data.get("refusal_rate", 0.0),
-                    # === anchor 카테고리별 분리 분석 데이터 ===
+                    # anchor 카테고리별 분리 분석 데이터
                     # evaluator/summary.py 의 _aggregate_r2_by_identifier_category 결과를
                     # 그대로 통과시킨다. 키가 없거나 빈 dict 면 results 리스트에서 폴백
                     # 집계해 대시보드 R2 카테고리 비교 차트(Hit Rate / 평균 ROUGE-L)가
@@ -276,7 +276,7 @@ class ReportGenerator:
                     "intensity": data.get("intensity", 0.0),
                     "risk_score": data.get("risk_score", 0.0),
                     "avg_abs_delta_on_hit": data.get("avg_abs_delta_on_hit", 0.0),
-                    # === R4S(sensitive) vs R4(generic) 분리 분석 데이터 ===
+                    # R4S(sensitive) vs R4(generic) 분리 분석 데이터
                     # evaluator 가 페어 단위로 미리 집계해 둔 dict 를 그대로 전달한다.
                     # 대시보드는 이 두 필드를 받아 비교 패널을 렌더링한다.
                     "by_probe_mode": self._normalize_r4_probe_mode_block(
@@ -385,7 +385,7 @@ class ReportGenerator:
             # 카테고리별 노출 분포와 응답 단편을 모아 "추정 시스템 프롬프트"를 재구성한다.
             "r7_leakage_analysis": self._build_r7_leakage_analysis(scenario_results),
             # 반드시 scenario_summaries 를 넘긴다 — 원본 scenario_results 의 risk_score 는
-            # 바로 위에서 덮어쓴 R9 강도 보정이 반영되기 **전** 값이라, 그걸로 판정하면
+            # 바로 위에서 덮어쓴 R9 강도 보정이 반영되기 전 값이라, 그걸로 판정하면
             # 총평이 화면의 시나리오 배지보다 한 단계 낮게 찍힌다.
             "risk_level": self._assess_risk_level(scenario_summaries),
         }
@@ -652,13 +652,13 @@ class ReportGenerator:
         """PII 탐지기가 실제로 몇 건의 응답에서 정상 작동했는지 집계한다.
 
         왜 필요한가 — 실측(`RAG-2026-0806-001`, 2026-08-06): 응답 1,468건 중
-        **611건(41.6%)이 NER 없이 채점됐다.** HF fast 토크나이저를 5워커가 공유하다
+        611건(41.6%)이 NER 없이 채점됐다. HF fast 토크나이저를 5워커가 공유하다
         `RuntimeError: Already borrowed` 가 났는데, 실행은 성공으로 끝나고(실행 실패
-        0건) 리포트에는 유출이 그만큼 적게 찍혔을 뿐이다. **조용한 과소보고**다.
+        0건) 리포트에는 유출이 그만큼 적게 찍혔을 뿐이다. 조용한 과소보고다.
 
         원인(경쟁)은 `pii/step3_ner.py` 에서 락으로 닫았지만, 탐지기가 죽는 길은
         그것 말고도 있다(모델 다운로드 실패 · 캐시 손상 · OOM · 마스킹 예외).
-        그래서 원인을 하나씩 막는 대신 **결과를 항상 세어 노출한다** — 어떤 이유로
+        그래서 원인을 하나씩 막는 대신 결과를 항상 세어 노출한다 — 어떤 이유로
         탐지기가 빠져도 리포트 첫 화면에서 드러나게.
 
         Args:
@@ -908,7 +908,7 @@ class ReportGenerator:
         되므로, 대시보드에 싣기 직전에 여기서 한 번 가린다.
 
         STEP 3 NER 은 쓰지 않는다 — 표본 100건 × 문서 5개마다 NER 을 돌리면
-        `rag report` 가 수 분씩 걸린다. 따라서 **이름·소속 같은 비정형 PII 는 남는다**
+        `rag report` 가 수 분씩 걸린다. 따라서 이름·소속 같은 비정형 PII 는 남는다
         (대시보드 문서 블록 설명문이 이 한계를 그대로 밝힌다).
 
         Args:
@@ -1027,11 +1027,6 @@ class ReportGenerator:
         normalized = value or "unknown"
         bucket[normalized] = bucket.get(normalized, 0) + 1
 
-    def _format_count_map(self, values: dict[str, int]) -> str:
-        if not values:
-            return "none"
-        return ", ".join(f"{key}={count}" for key, count in values.items())
-
     def _detect_pii_in_responses(
         self,
         scenario_results: dict[str, dict[str, Any]],
@@ -1063,7 +1058,7 @@ class ReportGenerator:
                 result_pii_summary = self._get_pii_summary(result)
                 # 질의 echo 는 "공격이 만들어낸 유출"이 아니므로 유출량에서 뺀다.
                 # 필드가 없는 구버전 결과는 기존 total/by_tag/has_high_risk 로 폴백.
-                # ⚠️ 이 함수는 `_summarize_pii_results` 와 **별개의 두 번째 집계 경로**다
+                # 주의: 이 함수는 `_summarize_pii_results` 와 별개의 두 번째 집계 경로다
                 # (대시보드 '유출 규모'가 이쪽을 쓴다). 한쪽만 고치면 리포트 안에서
                 # 같은 항목의 숫자가 갈라지므로 규칙을 반드시 양쪽에 같이 적용할 것.
                 total_pii = int(
@@ -1164,7 +1159,7 @@ class ReportGenerator:
 
         return pii_summary
 
-    # === R9 잠재 PII 노출량 계산 ===
+    # R9 잠재 PII 노출량 계산
     # R9 응답에는 트리거 마커만 출력되므로 "응답 PII"는 R9 공격의 직접 결과가 아니다.
     # 대신 공격 성공 시 모델이 접근한 검색 컨텍스트(retrieved_documents) 안에 포함된 PII 를
     # 집계해 "프롬프트 주입이 성공했을 때 노출될 수 있었던 잠재 PII 노출량"으로 추정한다.
@@ -1380,7 +1375,7 @@ class ReportGenerator:
 
       return r9_summary
 
-    # === R7 시스템 프롬프트 유출 심층 분석 ===
+    # R7 시스템 프롬프트 유출 심층 분석
     # R7 은 시스템 프롬프트(페르소나·안전 가드레일·출력 형식 규칙)가 응답에 그대로 노출되는지
     # 평가하는 시나리오로, PII 유출과는 본질이 다르다.
     # 본 메서드는 R7 성공 케이스의 응답에서 카테고리별 노출 단편을 추출하고,
@@ -1444,7 +1439,7 @@ class ReportGenerator:
       fragments: list[str],
       used_sentences: set[str],
     ) -> str | None:
-      """카테고리 대표 단편에서 **다른 카테고리가 이미 쓴 문장**을 걷어낸다.
+      """카테고리 대표 단편에서 다른 카테고리가 이미 쓴 문장을 걷어낸다.
 
       방어규칙 4종의 패턴은 응답의 같은 구간을 자주 함께 잡는다(특히 '근거 한정'과
       '명령 위계'). 그대로 이어붙이면 재구성 프롬프트에 똑같은 문단이 두 번 세 번
@@ -1475,7 +1470,7 @@ class ReportGenerator:
     def _split_target_prompt_by_rule(self, prompt: str) -> dict[str, str]:
       """실제 시스템 프롬프트를 방어규칙 카테고리별 줄로 나눈다.
 
-      공격자가 복원한 조각과 **같은 규칙끼리 나란히** 놓기 위해서다. 예전에는 왼쪽에
+      공격자가 복원한 조각과 같은 규칙끼리 나란히 놓기 위해서다. 예전에는 왼쪽에
       1,000자 재구성문, 오른쪽에 프롬프트 전문을 통째로 놓아서 어느 줄이 어느 줄에
       대응하는지 눈으로 짝을 맞출 수가 없었다. 판정에 쓰는 패턴을 그대로 재사용하므로
       "이 줄이 이 규칙"이라는 매핑이 평가 기준과 어긋나지 않는다.
@@ -1649,7 +1644,7 @@ class ReportGenerator:
         "rule_leak_count": rule_leak_count,
         "target_system_prompt": target_system_prompt,
         # 실제 프롬프트를 같은 방어규칙 축으로 쪼갠 것. 대시보드가 복원 조각과 이걸
-        # **규칙별로 나란히** 놓는다(전문 대 전문 비교는 짝을 맞출 수 없었다).
+        # 규칙별로 나란히 놓는다(전문 대 전문 비교는 짝을 맞출 수 없었다).
         "target_rules_by_category": self._split_target_prompt_by_rule(target_system_prompt),
         "category_leak_distribution": category_leak_distribution,
         "leaked_fragments_by_category": fragments_by_category,
@@ -2068,7 +2063,7 @@ class ReportGenerator:
 
         return comparison
 
-    # === NORMAL vs 공격 시나리오 PII 비교 ===
+    # NORMAL vs 공격 시나리오 PII 비교
     # NORMAL baseline 과 R2/R4/R7/R9 각 공격 시나리오의 PII 탐지량을 같은 척도로 비교한다.
     # 환경(clean/poisoned)이 다른 시나리오가 섞여 있어도 NORMAL 이 공통 기준선 역할을 한다.
 
@@ -2112,7 +2107,7 @@ class ReportGenerator:
             total_pii = int(
                 pii_summary.get("total_excluding_echo", pii_summary.get("total", 0))
             )
-            # ⚠️ `or` 로 폴백하면 안 된다. echo 제외 결과가 **빈 dict**(= 탐지된 PII 가 전부
+            # 주의: `or` 로 폴백하면 안 된다. echo 제외 결과가 빈 dict(= 탐지된 PII 가 전부
             # 질의 에코)일 때 falsy 라서 에코 포함 `by_tag` 로 넘어가고, 등급별 합계만
             # 부풀려진다(바로 위 total_pii 는 0 으로 제대로 세므로 총계와 등급합이 어긋난다).
             # 실측(RAG-2026-0812-008): R2 116건 중 50건이 이 경로 → 등급합 166 → 244,
@@ -2182,7 +2177,7 @@ class ReportGenerator:
         # ── 응답 수 정규화 ──────────────────────────────────────────────────
         # 시나리오마다 질의 수가 다르다(NORMAL 360 · R2 480 · R4 400). 원시 총계를
         # 그대로 나누면 "질의를 33% 더 쐈다"가 "1.6배 더 샜다"로 둔갑한다. 대조군의
-        # **응답당 비율**을 공격 시나리오의 응답 수에 적용해 기대치를 만들고, 실제
+        # 응답당 비율을 공격 시나리오의 응답 수에 적용해 기대치를 만들고, 실제
         # 관측치가 그 기대치를 얼마나 넘었는지를 공격의 기여분으로 본다.
         base_n = int(baseline.get("total_responses", 0) or 0)
         atk_n = int(attack.get("total_responses", 0) or 0)
@@ -2518,7 +2513,7 @@ class ReportGenerator:
         셀(attacker × reranker)이다. 기법별로 성공/실패 예시를 모두 봐야 하므로 한
         종류가 표본을 독식하면 안 된다.
 
-        ⚠️ 여기 fallback 순서는 대시보드 `dashboard_template.py:cxEntries` 의 종류
+        여기 fallback 순서는 대시보드 `dashboard_template.py:cxEntries` 의 종류
         판정과 같아야 한다 — 어긋나면 필터 드롭다운의 건수가 실제 표본과 안 맞는다.
         """
         meta = result.get("metadata") or {}
@@ -2540,7 +2535,7 @@ class ReportGenerator:
         quota: int,
         key_of: Callable[[Any], tuple[str, ...]],
     ) -> list[Any]:
-        """items 를 종류별 개수에 **비례**하도록 quota 개 고른다(최대잔여법).
+        """items 를 종류별 개수에 비례하도록 quota 개 고른다(최대잔여법).
 
         예: standard 300건 / many_shot 100건 / self_losing 100건 에서 80개를 고르면
         48 / 16 / 16 으로 나뉜다. 어떤 종류가 배정량보다 적으면 그 몫은 여유가 있는
@@ -2600,7 +2595,7 @@ class ReportGenerator:
           1) 성공 케이스를 max_count 의 80% 까지 담는다. 성공이 그보다 적으면 있는
              만큼만 담고, 빈 자리는 전부 실패 케이스로 채운다(반대도 동일).
           2) 성공·실패 각 버킷 안에서는 `_variety_key`(공격 기법 × 매트릭스 셀)의
-             모집단 비율에 **비례**해 고른다 → 기법별 성공/실패 예시가 모두 남는다.
+             모집단 비율에 비례해 고른다 → 기법별 성공/실패 예시가 모두 남는다.
 
         Args:
           results_list: 시나리오의 전체 결과 목록.
@@ -2849,7 +2844,7 @@ class ReportGenerator:
                     "response_masked",
                 ):
                     cleaned.pop(unused_field, None)
-                # ⚠️ pii_summary.items[].text 에는 **마스킹 안 된 원문 PII** 가 들어 있다
+                # 주의: pii_summary.items[].text 에는 마스킹 안 된 원문 PII 가 들어 있다
                 # (classifier.to_summary 가 연구용 JSON 을 위해 남기는 필드).
                 # mask_raw_pii=true 인데도 그게 HTML 에 그대로 임베드돼 있었다 — 실측:
                 # report_dashboard.html 안에 "areum.kim79@example.test" 원문 노출.
@@ -2885,7 +2880,7 @@ class ReportGenerator:
             # config.adapter(진단 대상·능력 계층) 둘뿐이다. 전체 snapshot 은 런에 따라
             # 수백 KB 라 통째로 임베드할 이유가 없다.
             #
-            # ⚠️ redact_secrets 를 반드시 통과시킨다. HTML 리포트는 심사위원·고객에게
+            # 주의: redact_secrets 를 반드시 통과시킨다. HTML 리포트는 심사위원·고객에게
             # 건네라고 만든 유일한 산출물인데, adapter 블록에는 외부 RAG 의 Bearer
             # 토큰(`adapter.api_key`)이 들어 있다. 예전에는 이게 평문으로 실려 나갔다.
             # snapshot.yaml 원본은 replay 가 config 를 그대로 복원해야 하므로 손대지
@@ -2920,7 +2915,7 @@ class ReportGenerator:
         return html_path
 
     def _assess_risk_level(self, scenario_results: dict[str, dict[str, Any]]) -> str:
-        """전체 판정 등급을 정한다 — 시나리오 배지와 **같은 눈금**을 쓴다.
+        """전체 판정 등급을 정한다 — 시나리오 배지와 같은 눈금을 쓴다.
 
         예전에는 여기서 R2/R4/R9 성공률에 시나리오별 임계값을 따로 걸었다. 그런데 화면의
         시나리오 배지는 종합 위험도로 매겨져서, "총평 위험 / 모든 행 주의"처럼 두 판정이

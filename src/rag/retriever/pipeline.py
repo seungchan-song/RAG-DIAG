@@ -78,7 +78,6 @@ def build_rag_pipeline(
 
   Args:
     document_store: 검색할 문서가 저장된 DocumentStore
-    config: YAML에서 로드한 설정 딕셔너리
 
   Returns:
     Pipeline: 구성 완료된 RAG 파이프라인
@@ -97,7 +96,6 @@ def build_rag_pipeline(
     │   Generator   │  ← LLM 답변 생성
     └───────────────┘
   """
-  # === 1. 컴포넌트 생성 ===
   query_embedder = create_query_embedder(config)
   retriever = create_retriever(document_store, config)
   reranker = create_reranker(config)
@@ -105,19 +103,16 @@ def build_rag_pipeline(
   generator = create_generator(config)
   retrieval_config = build_retrieval_config(config)
 
-  # === 2. Pipeline에 컴포넌트 등록 ===
   pipeline = Pipeline()
   pipeline.add_component("query_embedder", query_embedder)
   pipeline.add_component("retriever", retriever)
   pipeline.add_component("prompt_builder", prompt_builder)
   pipeline.add_component("generator", generator)
 
-  # === 3. 컴포넌트 간 연결 ===
+  # 3. 컴포넌트 간 연결
   # 질의 임베딩 → 검색
   pipeline.connect("query_embedder.embedding", "retriever.query_embedding")
-  # 검색 결과 → 프롬프트 빌더
   pipeline.connect("retriever.documents", "prompt_builder.documents")
-  # 프롬프트 → LLM 생성기
   pipeline.connect("prompt_builder.prompt", "generator.prompt")
 
   # query_embedder(SentenceTransformersTextEmbedder)는 run() 전에
@@ -161,12 +156,10 @@ def run_query(
   """
   logger.debug(f"질의 실행: {query[:50]}...")
 
-  # STEP 1: 질의를 벡터로 변환합니다
   query_embedder = pipeline.get_component("query_embedder")
   emb_result = query_embedder.run(text=query)
   query_embedding = emb_result["embedding"]
 
-  # STEP 2: 벡터로 유사 문서를 검색합니다
   retriever = pipeline.get_component("retriever")
   import inspect
   sig = inspect.signature(retriever.run)
@@ -203,7 +196,6 @@ def run_query(
 
   final_documents = reranked_documents if reranked_documents else thresholded_documents
 
-  # STEP 3: 검색된 문서와 질의를 결합하여 프롬프트를 만듭니다
   prompt_builder = pipeline.get_component("prompt_builder")
   pb_result = prompt_builder.run(documents=final_documents, query=query)
   prompt = pb_result["prompt"]

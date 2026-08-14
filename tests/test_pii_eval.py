@@ -37,7 +37,7 @@ def _build_config(
         "enable_step4": enable_step4,
       },
       "ner": {
-        "model_path": "townboy/kpfbert-kdpii",
+        "model_path": "townboy/kpfbert-ner",
         "confidence_threshold": 0.8,
       },
       "sllm": {

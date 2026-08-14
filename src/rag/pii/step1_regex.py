@@ -4,7 +4,7 @@ STEP 1: 정규식 기반 PII 탐지 모듈
 구조화된 형태의 개인식별정보(PII)를 정규식 패턴으로 탐지합니다.
 각 패턴에는 PII 태그(예: QT_MOBILE, TMI_EMAIL)가 부여됩니다.
 
-여기에는 **국가·업계 표준으로 형식이 정해진 것만** 넣습니다(정규식 12개 ·
+여기에는 국가·업계 표준으로 형식이 정해진 것만 넣습니다(정규식 12개 ·
 아래 6번 QT_ARN 은 QT_RRN 매칭 후처리로 분기):
   1. QT_MOBILE    - 휴대전화번호 (010-XXXX-XXXX) — 이동전화 번호계획
   2. QT_PHONE     - 일반전화번호 (02-XXXX-XXXX) — 지역번호 체계
@@ -19,10 +19,10 @@ STEP 1: 정규식 기반 PII 탐지 모듈
   11. QT_ADDR     - 주소 (실제 광역자치단체명 + 시/군/구 + 로/길/동)
   12. ZIPCODE     - 우편번호 (5자리, "우편번호 06234" 문맥 한정)
 
-  ⚠️ **조직별 ID(사원번호·회원 ID·참가자 ID·계정 ID)는 여기 넣지 않습니다.**
+  조직별 ID(사원번호·회원 ID·참가자 ID·계정 ID)는 여기 넣지 않습니다.
   회사마다 체계가 달라 표준 형식이라는 게 없기 때문입니다. 예전엔 우리 합성
   코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)를 박아 뒀는데, 그러면 우리
-  데이터에서만 맞고 **남의 RAG 를 진단하면 무조건 0건**이 나옵니다. 지금은
+  데이터에서만 맞고 남의 RAG 를 진단하면 무조건 0건이 나옵니다. 지금은
   `config` 의 `pii.custom_id_patterns` 로 배포처가 선언하며(기본 비움),
   선언이 없으면 문맥을 보는 NER(STEP 3)이 전담합니다.
   CITY(도시명)도 같은 이유로 NER 담당입니다 — "서울" 같은 맨 단어라 정규식으로
@@ -69,7 +69,7 @@ class PIIMatch:
   needs_validation: bool = False
 
 
-# === PII 태그별 정규식 패턴 정의 ===
+# PII 태그별 정규식 패턴 정의
 # 각 패턴은 (태그명, 정규식, 추가검증필요여부) 튜플로 정의합니다.
 # needs_validation=True인 패턴은 STEP 2에서 체크섬 검증을 거칩니다.
 
@@ -90,14 +90,14 @@ class PIIPattern:
   needs_validation: bool = False
 
 
-# === 한국어 경계: `\b` 를 쓰면 안 되는 이유 ==================================
-# `\b` 는 유니코드 단어문자 기준이라 **한글도 단어문자로 본다.** 한국어는 조사가 값에
+# 한국어 경계: `\b` 를 쓰면 안 되는 이유
+# `\b` 는 유니코드 단어문자 기준이라 한글도 단어문자로 본다. 한국어는 조사가 값에
 # 바로 붙으므로("203.0.113.11를", "우편번호 06234가", "EMP-2024-13579로") 값과 조사
 # 사이에 단어 경계가 생기지 않아 `\b` 로 끝나는 패턴이 통째로 실패한다.
 #
-# 실측(2026-08-03): 우리 clean 코퍼스에서 IP 331건 중 **112건(34%)** 을 이 이유로
+# 실측(2026-08-03): 우리 clean 코퍼스에서 IP 331건 중 112건(34%) 을 이 이유로
 # 놓치고 있었다. 더 나쁜 건 `MBR1234567은` 처럼 조사가 붙으면 MEMBER_ID 가 실패해
-# **D13 에서 고쳤던 여권번호 오분류(QT_PASSPORT)가 되살아난다** — 가장 위험한
+# D13 에서 고쳤던 여권번호 오분류(QT_PASSPORT)가 되살아난다 — 가장 위험한
 # 고유식별 등급의 건수를 부풀리는 그 문제다.
 #
 # 그래서 경계를 ASCII 영숫자/밑줄로만 한정한다. 한글·공백·문장부호는 경계로 인정한다.
@@ -111,14 +111,12 @@ class RegexDetector:
 
   내장 국가표준 패턴 11종에 배포처가 선언한 조직별 ID 패턴
   (`pii.custom_id_patterns`)을 더해 텍스트에서 개인정보를 탐지합니다.
-  ⚠️ `detect()` 는 `self.PATTERNS`(내장)가 아니라 `self.patterns`(내장+조직별)를 순회한다.
+  `detect()` 는 `self.PATTERNS`(내장)가 아니라 `self.patterns`(내장+조직별)를 순회한다.
   탐지된 각 항목은 PIIMatch 객체로 반환됩니다.
   """
 
-  # 클래스 변수: 모든 PII 패턴 목록
-  # ClassVar로 선언하여 인스턴스가 아닌 클래스에 속하게 합니다
   PATTERNS: ClassVar[list[PIIPattern]] = [
-    # === 1. 휴대전화번호 ===
+    # 1. 휴대전화번호
     # 010-1234-5678, 010.1234.5678, 01012345678 등
     PIIPattern(
       tag="QT_MOBILE",
@@ -134,9 +132,9 @@ class RegexDetector:
       description="휴대전화번호 (010-XXXX-XXXX 등)",
     ),
 
-    # === 2. 일반전화번호 ===
+    # 2. 일반전화번호
     # 02-1234-5678, 031-123-4567, 042-123-4567 등
-    # ⚠️ 경계가 없으면 이 패턴이 **주민등록번호 앞부분을 삼킨다.**
+    # 주의: 경계가 없으면 이 패턴이 주민등록번호 앞부분을 삼킨다.
     # `051109-3345671`(2002~2006년생) 에서 `051109-3345` 를 일반전화로 매칭해,
     # 겹침 해소에서 온전한 QT_RRN 을 밀어내고 고유식별 → 연락처로 등급을 낮췄다.
     # 경계를 붙이면 매치가 숫자 중간에서 끝날 수 없어 이 조합 자체가 성립하지 않는다.
@@ -154,7 +152,7 @@ class RegexDetector:
       description="일반전화번호 (02-XXXX-XXXX, 031-XXX-XXXX 등)",
     ),
 
-    # === 3. 이메일 주소 ===
+    # 3. 이메일 주소
     # user@domain.com, test.email@company.co.kr 등
     PIIPattern(
       tag="TMI_EMAIL",
@@ -167,10 +165,10 @@ class RegexDetector:
       description="이메일 주소",
     ),
 
-    # === 4. 신용카드번호 ===
+    # 4. 신용카드번호
     # 4532-1234-5678-9012, 4532123456789012 등 (16자리)
     # needs_validation=True → STEP 2에서 Luhn 알고리즘으로 검증
-    # 경계가 없으면 20자리 계좌번호 같은 긴 숫자열의 **앞 16자리만** 카드번호로
+    # 경계가 없으면 20자리 계좌번호 같은 긴 숫자열의 앞 16자리만 카드번호로
     # 집어가 Luhn 탈락 → rejection 채널을 오염시킨다.
     PIIPattern(
       tag="QT_CARD",
@@ -189,7 +187,7 @@ class RegexDetector:
       needs_validation=True,
     ),
 
-    # === 5. 주민등록번호 ===
+    # 5. 주민등록번호
     # 900101-1234567 (13자리, 하이픈 포함)
     # needs_validation=True → STEP 2에서 mod 11 체크섬으로 검증
     # 뒷자리 첫째 1~4이면 주민등록번호(RRN), 5~8이면 외국인등록번호(ARN)
@@ -209,8 +207,8 @@ class RegexDetector:
       needs_validation=True,
     ),
 
-    # === 6. 여권번호 ===
-    # M12345678, S99585004 등 — 대한민국 여권번호는 **영문 1글자 + 숫자 8자리**다.
+    # 6. 여권번호
+    # M12345678, S99585004 등 — 대한민국 여권번호는 영문 1글자 + 숫자 8자리다.
     #
     # 이전 패턴 `[A-Z]{1,2}\d{7,8}` 은 근거 없이 넓혀 놓은 것이라 두 방향으로 틀렸다.
     #   · 너무 헐렁: `MBR1234567` 의 뒤 9글자를 `BR1234567` 여권번호로 집어가
@@ -218,7 +216,7 @@ class RegexDetector:
     #     막는 방패로 존재해 왔다(D13). 영문 1글자로 좁히면 방패가 필요 없다.
     #   · 너무 좁음: 2021년 이후 신형 여권은 숫자 사이에 영문이 섞인다
     #     (`M303C0624`). 이건 임의 영숫자 코드와 구조상 구분이 불가능해
-    #     정규식으로 잡으려 하면 오탐이 폭증한다 → **NER 에 맡긴다**
+    #     정규식으로 잡으려 하면 오탐이 폭증한다 → NER 에 맡긴다
     #     (실측: 팀원 데이터셋 48건 중 정규식 21건 / NER 48건 전량 탐지).
     PIIPattern(
       tag="QT_PASSPORT",
@@ -231,7 +229,7 @@ class RegexDetector:
       description="여권번호 (영문 1자리 + 숫자 8자리, 구형)",
     ),
 
-    # === 7. 차량번호 ===
+    # 7. 차량번호
     # 12가1234, 서울12가1234 등
     PIIPattern(
       tag="QT_CAR",
@@ -247,7 +245,7 @@ class RegexDetector:
       description="차량번호 (12가1234, 서울12가1234 등)",
     ),
 
-    # === 8. IP 주소 ===
+    # 8. IP 주소
     # 192.168.0.1, 10.0.0.1 등 (IPv4)
     PIIPattern(
       tag="QT_IP",
@@ -260,7 +258,7 @@ class RegexDetector:
       description="IP 주소 (IPv4)",
     ),
 
-    # === 9. 나이 표현 ===
+    # 9. 나이 표현
     # 25세, 만 30세, 만30세 등
     PIIPattern(
       tag="QT_AGE",
@@ -270,7 +268,7 @@ class RegexDetector:
       description="나이 표현 (25세, 만 30세 등)",
     ),
 
-    # === 10. 주소 (도로명) ===
+    # 10. 주소 (도로명)
     # "서울특별시 광진구 능동로 209" 등
     PIIPattern(
       tag="QT_ADDR",
@@ -292,9 +290,9 @@ class RegexDetector:
       description="도로명/지번 주소",
     ),
 
-    # === 11. 우편번호 (신규 33종) ===
+    # 11. 우편번호 (신규 33종)
     # 맨 5자리 숫자는 금액·수량과 구분되지 않으므로 '우편번호' 라벨 뒤에서만 잡는다.
-    # ponytail: 고정폭 lookbehind 라 "우편번호: 06234"(콜론) 형태는 놓친다.
+    # 한계: 고정폭 lookbehind 라 "우편번호: 06234"(콜론) 형태는 놓친다.
     #           코퍼스가 "우편번호 06234" 한 가지 형식만 쓰므로 지금은 충분하고,
     #           다른 표기가 나오면 라벨 부분까지 매칭에 포함시키는 쪽으로 넓힌다.
     PIIPattern(
@@ -309,10 +307,10 @@ class RegexDetector:
     """
     내장 표준 패턴에 조직별 ID 패턴(`pii.custom_id_patterns`)을 얹어 초기화한다.
 
-    사원번호·회원 ID·참가자 ID·계정 ID 는 **조직마다 체계가 달라 국가 표준이
-    없다.** 예전엔 우리 합성 코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)를
+    사원번호·회원 ID·참가자 ID·계정 ID 는 조직마다 체계가 달라 국가 표준이
+    없다. 예전엔 우리 합성 코퍼스의 접두사(`EMP-`·`MBR`·`PART-`·`admin_`)를
     코드에 박아 뒀는데, 그건 우리 데이터에서만 맞고 남의 RAG 를 진단하면
-    **무조건 0건**이 나온다. 이 도구의 목적이 남의 RAG 진단이므로 그런 값은
+    무조건 0건이 나온다. 이 도구의 목적이 남의 RAG 진단이므로 그런 값은
     코드가 아니라 배포처 설정에 있어야 한다.
 
     기본값은 비어 있다 — 아무것도 선언하지 않으면 ID 류는 문맥을 보는 NER 이
@@ -348,9 +346,6 @@ class RegexDetector:
     모든 패턴을 순회하며 매칭되는 모든 PII를 찾아 반환합니다.
     하나의 텍스트에서 여러 종류의 PII가 동시에 탐지될 수 있습니다.
 
-    Args:
-      text: PII를 탐지할 원문 텍스트
-
     Returns:
       list[PIIMatch]: 탐지된 PII 목록.
         각 항목에는 태그, 원문, 위치, 검증 필요 여부가 포함됩니다.
@@ -358,7 +353,6 @@ class RegexDetector:
     matches: list[PIIMatch] = []
 
     for pii_pattern in self.patterns:
-      # 정규식으로 텍스트에서 모든 매칭을 찾습니다
       for match in pii_pattern.pattern.finditer(text):
         pii_match = PIIMatch(
           tag=pii_pattern.tag,
@@ -381,29 +375,3 @@ class RegexDetector:
       logger.debug(f"정규식 탐지: {len(matches)}개 PII 발견")
 
     return matches
-
-  def detect_with_summary(self, text: str) -> dict:
-    """
-    PII 탐지 결과를 태그별로 요약하여 반환합니다.
-
-    Args:
-      text: PII를 탐지할 원문 텍스트
-
-    Returns:
-      dict: 탐지 결과 요약
-        - "matches": PIIMatch 목록
-        - "summary": 태그별 탐지 건수 (예: {"QT_MOBILE": 2, "TMI_EMAIL": 1})
-        - "total": 전체 탐지 건수
-    """
-    matches = self.detect(text)
-
-    # 태그별 건수를 집계합니다
-    summary: dict[str, int] = {}
-    for m in matches:
-      summary[m.tag] = summary.get(m.tag, 0) + 1
-
-    return {
-      "matches": matches,
-      "summary": summary,
-      "total": len(matches),
-    }

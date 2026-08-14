@@ -42,7 +42,7 @@ def redact_secrets(value: Any) -> Any:
   """설정 트리에서 비밀값 필드만 자리표시자로 바꾼 사본을 돌려준다.
 
   `_redact_diff_value` 가 config diff 렌더링에만 쓰던 정책(SECRET_FIELD_TOKENS)을
-  **밖으로 나가는 산출물에도** 적용하기 위한 공용 헬퍼다. 실제 유출 경로는
+  밖으로 나가는 산출물에도 적용하기 위한 공용 헬퍼다. 실제 유출 경로는
   HTML 리포트였다 — `report/generator.py` 가 `snapshot.config.adapter` 를 통째로
   임베드해서, 외부 RAG 를 진단하면 대상의 Bearer 토큰이 심사위원에게 건네는
   `report_dashboard.html` 안에 평문으로 실렸다.
@@ -91,7 +91,7 @@ class ExperimentManager:
   def create_run(self, prefix: str = "RAG") -> str:
     """Create a new run directory and return its run id."""
     today = datetime.now().strftime("%Y-%m%d")
-    # 일련번호는 **개수**가 아니라 기존 **최대 번호 + 1** 로 뽑는다. 개수로 세면 중간 런을
+    # 일련번호는 개수가 아니라 기존 최대 번호 + 1 로 뽑는다. 개수로 세면 중간 런을
     # 하나라도 지웠을 때 살아 있는 런 ID 를 다시 발급해 그 디렉터리를 덮어쓴다
     # (2026-08-11 실제 사고: RAG-2026-0811-001 을 지운 상태에서 suite 가 데모 런
     #  RAG-2026-0811-002 위에 얹혀 전 셀이 "scenario_scope 불일치"로 실패했다).
@@ -202,16 +202,16 @@ class ExperimentManager:
     scenario: str,
     result: dict[str, Any],
   ) -> Path:
-    """완료된 결과 한 건을 체크포인트 파일에 **한 줄 덧붙인다**(JSONL).
+    """완료된 결과 한 건을 체크포인트 파일에 한 줄 덧붙인다(JSONL).
 
-    왜 append 인가 — 예전에는 질의가 하나 끝날 때마다 지금까지의 결과 **전체**를
+    왜 append 인가 — 예전에는 질의가 하나 끝날 때마다 지금까지의 결과 전체를
     `json.dump(indent=2)` 로 다시 썼다. n 번째 질의에서 n 건을 쓰므로 총 쓰기량이
-    O(n²) 로 늘어난다. 실측(2026-08-06): 전체 매트릭스 런 1회에 **9.14GB** 를 쓰는데
+    O(n²) 로 늘어난다. 실측(2026-08-06): 전체 매트릭스 런 1회에 9.14GB 를 쓰는데
     최종 산출물은 124MB 였다(74배). 셀별로는 R4 3.3GB · NORMAL 2.7GB · R2 4셀 2.56GB.
     한 줄 append 로 바꾸면 총 쓰기량이 최종 파일 크기와 같아진다(O(n)).
 
     크래시 내성도 같이 좋아진다 — 예전 방식은 `open(mode="w")` 가 파일을 먼저 비우고
-    쓰므로 그 순간 죽으면 **누적분 전체**를 잃었다. append 는 마지막 줄만 잘리고,
+    쓰므로 그 순간 죽으면 누적분 전체를 잃었다. append 는 마지막 줄만 잘리고,
     `load_partial_results` 가 깨진 줄을 건너뛴다. 호출부(`cli/main.py`)가 결과를 먼저
     쓰고 체크포인트를 나중에 저장하므로, 잘린 줄에 해당하는 질의는 완료 목록에 없어
     다음 실행에서 그대로 재시도된다.

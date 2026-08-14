@@ -29,7 +29,6 @@ def create_document_embedder(config: dict[str, Any]) -> SentenceTransformersDocu
   각 Document의 content를 벡터로 변환합니다.
 
   Args:
-    config: YAML에서 로드한 설정 딕셔너리.
             config["embedding"] 아래의 model_name, device를 사용합니다.
 
   Returns:
@@ -39,7 +38,6 @@ def create_document_embedder(config: dict[str, Any]) -> SentenceTransformersDocu
     - 최초 실행 시 모델 다운로드에 시간이 걸릴 수 있습니다 (~1GB)
     - GPU가 없으면 device="cpu"로 설정합니다 (느리지만 동작함)
   """
-  # 설정값 읽기
   embedding_config = config.get("embedding", {})
   model_name = embedding_config.get("model_name", "dragonkue/BGE-m3-ko")
   device_str = embedding_config.get("device", "cpu")

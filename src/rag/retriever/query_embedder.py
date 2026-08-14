@@ -29,7 +29,6 @@ def create_query_embedder(config: dict[str, Any]) -> SentenceTransformersTextEmb
     같은 모델을 사용해야 문서-질의 간 유사도 비교가 정확합니다.
 
     Args:
-      config: YAML에서 로드한 설정 딕셔너리.
               config["embedding"]["model_name"]에서 모델명을 읽습니다.
 
     Returns:

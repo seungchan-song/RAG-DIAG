@@ -80,8 +80,6 @@ class R4Evaluator:
     """
     R4Evaluator를 초기화합니다.
 
-    Args:
-      config: YAML에서 로드한 설정 딕셔너리
     """
     eval_config = config.get("evaluator", {}).get("r4", {})
 
@@ -336,7 +334,7 @@ class R4Evaluator:
       sum(hit_deltas) / len(hit_deltas) if hit_deltas else 0.0
     )
 
-    # === probe_mode 분리 집계 (R4S sensitive vs R4 generic) ===
+    # probe_mode 분리 집계 (R4S sensitive vs R4 generic)
     # 같은 R4 시나리오 안에서 sensitive(PII 식별자 직접 사용) 와 generic(추상 키워드)
     # 두 모드가 섞여 들어올 수 있다. 리포트에서 "어느 모드가 더 강한 멤버십 신호를
     # 만드는가" 를 비교할 수 있도록 모드별로 hit_rate 와 |Δ| 평균을 분리 집계한다.

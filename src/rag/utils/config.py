@@ -29,16 +29,13 @@ def load_env() -> None:
   이 함수를 호출하면 해당 값들이 os.environ에 등록됩니다.
   .env 파일이 없으면 경고 로그를 출력하고 계속 진행합니다.
   """
-  # 프로젝트 루트 디렉토리에서 .env 파일을 찾습니다
   project_root = Path(__file__).parent.parent.parent.parent
   env_path = project_root / ".env"
 
   if env_path.exists():
-    # .env 파일이 존재하면 환경변수로 로드합니다
     load_dotenv(env_path)
     logger.info(f".env 파일 로드 완료: {env_path}")
   else:
-    # .env 파일이 없으면 경고만 출력합니다 (프로그램은 계속 실행)
     logger.warning(
       f".env 파일을 찾을 수 없습니다: {env_path}. "
       f".env.example을 복사하여 .env를 만들어주세요."
@@ -54,12 +51,12 @@ def expand_env_placeholders(value: Any) -> Any:
   """설정값 안의 `${VAR}` 를 환경변수 값으로 치환한 사본을 돌려준다.
 
   왜 필요한가 — `config/default.yaml` 은 예전부터
-  `api_key: "${ANYTHINGLLM_API_KEY}"` 처럼 쓰라고 안내해 왔는데 **치환 로직이
-  아예 없었다.** 그대로 두면 리터럴 문자열 `${ANYTHINGLLM_API_KEY}` 가 Bearer
+  `api_key: "${ANYTHINGLLM_API_KEY}"` 처럼 쓰라고 안내해 왔는데 치환 로직이 아예
+  없었다. 그대로 두면 리터럴 문자열 `${ANYTHINGLLM_API_KEY}` 가 Bearer
   토큰으로 전송돼 401 만 보고 원인을 못 찾는다(외부 RAG 실증에서 바로 밟을 지뢰).
   동시에 비밀값을 yaml 에 적지 않아도 되는 정석 경로가 열린다.
 
-  환경변수가 없으면 **빈 문자열로 치환하고 경고**한다. 자리표시자를 그대로 두면
+  환경변수가 없으면 빈 문자열로 치환하고 경고한다. 자리표시자를 그대로 두면
   가짜 토큰을 실제로 보내게 되는데, 빈 값이면 호출부가 헤더를 아예 안 붙여
   (`adapters/rest.py`) 실패 원인이 로그에 남는다.
 
@@ -154,7 +151,6 @@ def load_config(
 
   config_file = Path(config_path)
 
-  # 상대 경로인 경우 프로젝트 루트 기준으로 변환합니다
   if not config_file.is_absolute():
     project_root = Path(__file__).parent.parent.parent.parent
     config_file = project_root / config_file
@@ -165,7 +161,6 @@ def load_config(
       f"config/default.yaml 파일이 존재하는지 확인해주세요."
     )
 
-  # YAML 파일을 읽어서 딕셔너리로 파싱합니다
   with open(config_file, "r", encoding="utf-8") as f:
     raw_config = yaml.safe_load(f) or {}
 
@@ -179,7 +174,7 @@ def load_config(
 
   profile_overrides = profiles.get(profile, {})
   config = _deep_merge_dicts(raw_config, profile_overrides)
-  # `${VAR}` 치환은 프로파일 병합 **이후**에 한다 — 프로파일이 덮어쓴 값에도
+  # `${VAR}` 치환은 프로파일 병합 이후에 한다 — 프로파일이 덮어쓴 값에도
   # 동일하게 적용돼야 하기 때문. load_env() 가 CLI 진입점에서 먼저 돌아
   # .env 값이 os.environ 에 올라와 있는 상태를 전제한다.
   config = expand_env_placeholders(config)
@@ -191,20 +186,3 @@ def load_config(
     f"(profile={profile})"
   )
   return config
-
-
-def get_env(key: str, default: str | None = None) -> str | None:
-  """
-  환경변수 값을 안전하게 가져옵니다.
-
-  Args:
-    key: 환경변수 이름 (예: "OPENAI_API_KEY")
-    default: 환경변수가 없을 때 반환할 기본값
-
-  Returns:
-    환경변수 값 또는 기본값
-  """
-  value = os.getenv(key, default)
-  if value is None:
-    logger.warning(f"환경변수 '{key}'가 설정되지 않았습니다.")
-  return value

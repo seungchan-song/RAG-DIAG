@@ -39,6 +39,7 @@ env/
 
 # === 테스트/임시 파일 ===
 .pytest_cache/
+.ruff_cache/
 .tmp-python/
 
 # === 아이콘 ===

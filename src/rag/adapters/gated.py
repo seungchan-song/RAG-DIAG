@@ -1,15 +1,15 @@
 """
 CapabilityGatedAdapter — 선언된 능력 밖의 출력을 차단하는 어댑터 래퍼.
 
-목적: **degrade(축소 진단)를 truthful 하게** 만든다.
+목적: degrade(축소 진단)를 truthful 하게 만든다.
 
 우리 참조 어댑터(BuiltinHaystackAdapter)는 실제로 검색 원문·인덱스 조작을 전부 줄 수
 있다. 그래서 "이 대상 RAG 는 응답만 준다(블랙박스)" 라고 선언해도, 감싸지 않으면
 여전히 검색 원문이 트레이스에 실려 R2 가 완전판처럼 채점돼 버린다 → degrade 가
 말뿐이 된다.
 
-이 래퍼는 안쪽 어댑터가 무엇을 주든, **선언한 능력에 없는 정보는 트레이스에서 제거**
-하고 **능력 밖 메서드 호출은 막는다.** 그 결과:
+이 래퍼는 안쪽 어댑터가 무엇을 주든, 선언한 능력에 없는 정보는 트레이스에서 제거
+하고 능력 밖 메서드 호출은 막는다. 그 결과:
   · RETRIEVAL_TRACE 미선언 → 검색 원문이 빈 목록이 되어 R2 가 응답 PII 유출만 측정(축소)
   · SYSTEM_PROMPT 미선언 → system_prompt 가 None 이 되어 R7 평가 정답이 사라짐
   · INDEX_REBUILD / INDEX_WRITE 미선언 → build_variant / write_documents 가 막힘
@@ -70,9 +70,6 @@ class CapabilityGatedAdapter:
   def query(self, query: str) -> RagTrace:
     """
     안쪽 어댑터로 질의한 뒤, 선언 능력 밖 정보를 트레이스에서 제거합니다.
-
-    Args:
-      query: 질의 문자열.
 
     Returns:
       RagTrace: 능력에 맞게 걸러진 트레이스.

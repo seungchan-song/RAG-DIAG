@@ -286,7 +286,9 @@ python -m rag query -q "R9 트리거가 발견되면 어떻게 하나요?" --env
 
 ### 4.5 PII 탐지 성능 평가하기
 
-`pii-eval`은 공격 시나리오 실행이 아니라 PII 탐지 파이프라인 자체의 성능을 확인할 때 사용합니다. KDPII 형식의 JSONL 데이터셋을 입력하면 정밀도, 재현율, F1 등 PII 탐지 성능 지표를 확인할 수 있습니다.
+`pii-eval`은 공격 시나리오 실행이 아니라 PII 탐지 파이프라인 자체의 성능을 확인할 때 사용합니다. 라벨이 달린 JSONL 데이터셋을 입력하면 정밀도, 재현율, F1 등 PII 탐지 성능 지표를 확인할 수 있습니다.
+
+> 데이터셋의 라벨 체계는 **개인정보 33종**이어야 합니다. 구 KDPII 데이터셋(`CV`/`QT`/`OG`/`PS` 같은 14종 대분류)은 현재 NER 모델(`townboy/kpfbert-ner`)의 라벨 체계와 맞지 않아 채점이 성립하지 않습니다.
 
 JSONL 파일은 각 줄에 다음 필드를 포함해야 합니다.
 
@@ -296,16 +298,16 @@ JSONL 파일은 각 줄에 다음 필드를 포함해야 합니다.
 | `text` | PII 탐지 대상 원문 |
 | `entities` | 정답 엔티티 목록. 각 항목은 `start`, `end`, `label`을 포함 |
 
-전체 4단계 파이프라인을 한 번 실행하려면 다음 명령을 사용합니다.
+전체 파이프라인(STEP 0~4)을 한 번 실행하려면 다음 명령을 사용합니다.
 
 ```bash
-python -m rag pii-eval --dataset-path ./local-kdpii.jsonl --mode full
+python -m rag pii-eval --dataset-path ./pii-labeled.jsonl --mode full
 ```
 
 각 단계별 성능 변화를 비교하려면 모든 모드를 실행합니다.
 
 ```bash
-python -m rag pii-eval --dataset-path ./local-kdpii.jsonl --all-modes
+python -m rag pii-eval --dataset-path ./pii-labeled.jsonl --all-modes
 ```
 
 사용할 수 있는 모드는 다음과 같습니다.
@@ -315,9 +317,9 @@ python -m rag pii-eval --dataset-path ./local-kdpii.jsonl --all-modes
 | `step1` | 정규식 탐지만 평가 |
 | `step1_2` | 정규식 탐지와 체크섬 검증까지 평가 |
 | `step1_2_3` | KPF-BERT NER까지 포함해 평가 |
-| `full` | sLLM 교차검증까지 포함한 전체 4단계 평가 |
+| `full` | sLLM 교차검증까지 포함한 전체 평가 |
 
-> 주의: KDPII 원본 데이터셋은 저장소에 포함하지 마세요. 오픈소스 배포 시에는 합성 fixture나 별도 안내된 로컬 데이터셋을 사용해야 합니다.
+> 주의: 재배포 제약이 있는 데이터셋은 저장소에 포함하지 마세요. 배포본에서는 합성 fixture 또는 사용자가 직접 준비한 로컬 데이터셋을 사용합니다.
 
 ### 4.6 리포트만 다시 만들기
 
@@ -476,8 +478,8 @@ python -m rag run --all-scenarios -c config/anythingllm.yaml --auto-report   # �
 ### PII 탐지 성능 평가
 
 ```bash
-python -m rag pii-eval --dataset-path ./local-kdpii.jsonl --mode full
-python -m rag pii-eval --dataset-path ./local-kdpii.jsonl --all-modes
+python -m rag pii-eval --dataset-path ./pii-labeled.jsonl --mode full
+python -m rag pii-eval --dataset-path ./pii-labeled.jsonl --all-modes
 ```
 
 ### 결과 확인 및 재실행

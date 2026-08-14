@@ -26,9 +26,7 @@ def create_document_cleaner() -> DocumentCleaner:
     DocumentCleaner: 문서 정제 컴포넌트
   """
   cleaner = DocumentCleaner(
-    # 연속된 빈 줄을 제거합니다
     remove_empty_lines=True,
-    # 각 줄의 앞뒤 공백을 제거합니다
     remove_extra_whitespaces=True,
   )
 

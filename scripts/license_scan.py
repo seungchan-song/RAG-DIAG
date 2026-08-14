@@ -3,15 +3,15 @@
 
 왜 pip-licenses 가 아니라 직접 짰나:
   - 표준 라이브러리(`importlib.metadata`)만으로 되는 일에 배포 의존성을 늘릴 이유가 없다.
-  - pip-licenses 는 **환경에 설치된 전부**를 훑는다. 그러면 다른 프로젝트가 남긴 잔재까지
+  - pip-licenses 는 환경에 설치된 전부를 훑는다. 그러면 다른 프로젝트가 남긴 잔재까지
     섞여 들어와 있지도 않은 위험(예: AGPL 패키지)을 보고한다. 여기서는 `pyproject.toml` 의
-    직접 의존성에서 출발해 **실제 의존 폐포만** 따라간다.
+    직접 의존성에서 출발해 실제 의존 폐포만 따라간다.
 
 사용법:
   python scripts/license_scan.py           # THIRD_PARTY_NOTICES.md 갱신
   python scripts/license_scan.py --check   # 갱신 없이 위험 항목만 출력(종료코드 1=위험 있음)
 
-주의: 결과는 **설치된 버전 기준**이다. 의존성을 바꿨으면 설치 후 다시 돌려야 맞는다.
+주의: 결과는 설치된 버전 기준이다. 의존성을 바꿨으면 설치 후 다시 돌려야 맞는다.
 """
 
 from __future__ import annotations

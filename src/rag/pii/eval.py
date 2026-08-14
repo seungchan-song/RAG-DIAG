@@ -65,7 +65,7 @@ def _span_iou(a_start: int, a_end: int, b_start: int, b_end: int) -> float:
   union = (a_end - a_start) + (b_end - b_start) - intersection
   return intersection / union if union > 0 else 0.0
 
-# ⚠️ 여기 없는 태그를 NER_LABEL_MAP 이 만들어내면 normalize_label 이
+# 주의: 여기 없는 태그를 NER_LABEL_MAP 이 만들어내면 normalize_label 이
 # LabelNormalizationError 로 벤치마크 전체를 실패시킨다. step3_ner.py 의
 # NER_LABEL_MAP 우변 · step1_regex.py 의 tag 와 항상 같이 움직여야 한다.
 CANONICAL_LABELS = (
@@ -86,10 +86,10 @@ CANONICAL_LABELS = (
   "QT_GRADE",
   "QT_IP",
   "QT_LENGTH",
-  # ⚠️ QT_MOBILE 은 canonical 이 아니다 — 아래 LABEL_ALIASES 에서 QT_PHONE 으로 접는다.
+  # 주의: QT_MOBILE 은 canonical 이 아니다 — 아래 LABEL_ALIASES 에서 QT_PHONE 으로 접는다.
   #    개인정보 33종 표준이 휴대전화와 일반전화를 PHONE 하나로 통합했기 때문이다.
   #    정규식(step1_regex)은 둘을 계속 구분하지만, 벤치마크 gold 에는 MOBILE 라벨이
-  #    아예 없어 그대로 채점하면 **맞게 탐지한 건이 오탐+미탐으로 이중 계산**된다
+  #    아예 없어 그대로 채점하면 맞게 탐지한 건이 오탐+미탐으로 이중 계산된다
   #    (실측 2026-08-03: QT_MOBILE fp=210 / QT_PHONE fn=210, 같은 210건).
   "QT_PASSPORT",
   "QT_PHONE",

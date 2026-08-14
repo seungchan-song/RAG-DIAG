@@ -1,16 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-RAG 대규모/고품질 기업형 데이터셋 생성 스크립트
+"""기업형 합성 데이터셋 생성 스크립트.
 
-역할:
-  - c:\\subak_rag\\CAPSTONE\\data\\documents\\clean\\normal 하위에 1,000개의 일반 문서 생성
-  - c:\\subak_rag\\CAPSTONE\\data\\documents\\clean\\sensitive 하위에 200개의 민감 문서 생성
-  - 기존 27개 데이터셋 파일은 data/documents_backup/ clean 폴더에 자동 백업
-  - Mod11(주민번호) 및 Luhn(카드번호) 유효 검증을 통과하는 정형 PII 생성기 탑재
-  - 수정된 개인정보 33종 표준(신규: CITY/ZIPCODE/EMPLOYEE_ID/MEMBER_ID/PARTICIPANT_ID 포함)이 자연체 업무 문서 안에 자연스럽게 배치됨
-  - 인위적 마커(합성 안내문, 검색 앵커)를 완전히 제거해 리얼리티 확보
-  - 방안 A(Slack/이메일/회의록/위키/보고서) 및 방안 B(모듈형 문장 조합 빌더)를 통한 데이터 구조 다변화
+`data/documents/clean/` 아래에 일반 문서 1,000개와 민감 문서 200개를 만든다. 기존 파일은
+`data/documents_backup/` 으로 자동 백업한다.
+
+생성 규칙:
+  - 주민번호 Mod11 · 카드번호 Luhn 검증을 통과하는 정형 PII 를 심는다
+  - 개인정보 33종(CITY/ZIPCODE/EMPLOYEE_ID/MEMBER_ID/PARTICIPANT_ID 포함)을 업무 문서
+    문맥 안에 배치한다
+  - 합성 안내문·검색 앵커 같은 인위적 마커는 넣지 않는다 (실제 문서와 구분되면 검색
+    난이도가 왜곡된다)
+  - 문서 구조는 Slack/이메일/회의록/위키/보고서 양식과 모듈형 문장 조합으로 다변화한다
+
+모든 값은 난수 생성물이며 실제 개인정보는 포함하지 않는다.
 """
 
 from __future__ import annotations
@@ -21,9 +24,7 @@ import re
 import shutil
 from pathlib import Path
 
-# =============================================================================
-# 1. Checksum-Valid PII 및 가상 데이터 풀 정의 (audit_pii_miss_by_category.py 호환)
-# =============================================================================
+# 1. Checksum-Valid PII 및 가상 데이터 풀 정의
 
 # GT_PATTERNS 매칭을 위한 고정 풀
 FAMILY_MAP = {
@@ -318,9 +319,7 @@ def generate_synth_identifier(category: str) -> str:
     return f"{prefix}-{random.choice(['A', 'B', 'C', 'X', 'Y', 'Z'])}{random.randint(100, 999)}"
 
 
-# =============================================================================
 # 2. 문서 유형별 물리적 포맷팅 가이드 (방안 A)
-# =============================================================================
 
 def format_report(title: str, blocks: list[str], security_class: str = "") -> str:
     """다변화 및 분량 확장된 공식 보고서 포맷"""
@@ -1709,9 +1708,7 @@ def generate_document_text(is_sensitive: bool = False) -> str:
         
     return "\n\n".join(blocks)
 
-# =============================================================================
 # 5. 데이터셋 생성 및 백업 오케스트레이터
-# =============================================================================
 
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics

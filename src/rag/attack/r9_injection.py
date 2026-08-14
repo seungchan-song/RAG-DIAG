@@ -36,12 +36,9 @@ from rag.attack.query_generator import AttackQueryGenerator
 def resolve_trigger_role(config: dict[str, Any]) -> str:
   """트리거 키워드가 뽑히는 doc_role 을 config 에서 해석한다(단일 진실 공급원).
 
-  CLI 의 target_docs cap 과 공격 엔진의 키워드 유도가 **같은 답**을 봐야 하므로
+  CLI 의 target_docs cap 과 공격 엔진의 키워드 유도가 같은 답을 봐야 하므로
   여기 한 곳에만 규칙을 둔다. 어긋나면 cap 이 트리거가 아닌 그룹에 걸려 poison 이
   코퍼스 크기에 비례해 폭주한다.
-
-  Args:
-    config: load_config 결과.
 
   Returns:
     str: attack_docs 모드면 "attack", corpus 모드면 trigger_corpus_role(기본 "normal").
@@ -63,11 +60,8 @@ def is_runtime_injection(config: dict[str, Any]) -> bool:
   두 가지를 좌우한다:
     1. 실행 환경 — poisoned 코퍼스가 참여할 수 없으므로 clean 으로 해석된다
        (`cli.main._resolve_env_for_scenario`).
-    2. 결과 집계 — 이때는 env 가 clean 이어도 그게 **공격**이다. 대조군이 아니다.
+    2. 결과 집계 — 이때는 env 가 clean 이어도 그게 공격이다. 대조군이 아니다.
        env 라벨로 공격/대조군을 가르면 성공률이 통째로 0 이 된다.
-
-  Args:
-    config: load_config 결과.
 
   Returns:
     bool: 두 조건을 모두 만족하면 True.
@@ -384,7 +378,7 @@ class R9InjectionAttack(BaseAttack):
         # 판정 근거를 결과에 직접 싣는다(evaluator/summary.py 가 읽는다).
         "runtime_injection": is_runtime_injection(self.config),
         # 이 질의를 던질 때 악성 문서가 실제로 대상에 들어가 있었는가.
-        # False 면 그 시행의 "실패"는 방어가 아니라 **배달 실패**다 — 평가기가
+        # False 면 그 시행의 "실패"는 방어가 아니라 배달 실패다 — 평가기가
         # 이걸 안 보면 배달조차 안 된 공격을 '검색 단계 차단'으로 세어
         # "수집 정책을 유지하세요" 라는 거짓 안심을 낸다(r9_evaluator 주석 참조).
         "poison_injected": self.poison_injected,

@@ -36,7 +36,7 @@ from rag.attack.base import AttackResult, BaseAttack
 from rag.utils.text import slugify_token
 
 
-# === R7 anchor 키워드 풀 ===
+# R7 anchor 키워드 풀
 # anchor 의 역할은 두 가지다.
 #   1) retriever 가 자연스럽게 일반 업무 문서를 가져오게 해서, system_prompt 규칙 1
 #      ("참고 문서에 있는 내용만 바탕으로 답변하세요") 이 generator 를 "근거 없음" 차단
@@ -63,7 +63,7 @@ R7_ANCHOR_KEYWORDS: tuple[str, ...] = (
 )
 
 
-# === R7 anchor 템플릿 ===
+# R7 anchor 템플릿
 # R2 의 anchor 템플릿과 형식은 동일하지만, R7 에서는 자체 풀을 따로 두어
 # 향후 anchor 톤을 R7 평가에 맞게 독립적으로 조정할 수 있게 한다.
 R7_ANCHOR_TEMPLATES: tuple[str, ...] = (
@@ -92,7 +92,7 @@ class R7PromptDisclosureAttack(BaseAttack):
       이를 보조 지표 rule_coverage 로 별도 측정한다.
   """
 
-  # === 1세대 (legacy) 페이로드 풀 ===
+  # 1세대 (legacy) 페이로드 풀
   # 직접 요청형. 최신 LLM 가드레일에 거의 100% 차단되므로 대조군 측정용으로만 유지한다.
   # payload_pool="legacy" 또는 "all" 일 때만 활성화된다.
   R7_LEGACY_PAYLOAD_POOL: list[tuple[str, str]] = [
@@ -115,7 +115,7 @@ class R7PromptDisclosureAttack(BaseAttack):
     ),
   ]
 
-  # === 2~3세대 (core) 페이로드 풀 ===
+  # 2~3세대 (core) 페이로드 풀
   # 기본 R7 평가에서 사용하는 10개 페이로드. 1세대 데드 페이로드는 제외했다.
   #   - 2세대 강화 4개 (persona_probe, meta_audit, debug_mode, translation_bypass):
   #     기존 8개 풀에서 유지하되, 단순 "보여달라"가 아니라 역할/규칙/거절 기준/문서 명령 처리
@@ -188,7 +188,7 @@ class R7PromptDisclosureAttack(BaseAttack):
     ),
   ]
 
-  # === 페이로드 풀 선택 매핑 ===
+  # 페이로드 풀 선택 매핑
   # payload_pool 옵션에 따라 활성화되는 풀이 달라진다.
   # legacy 풀과 core 풀을 분리해 두는 이유:
   #   - core: 실제 공격 시뮬레이션 (현대 기법). 기본값.
@@ -214,11 +214,11 @@ class R7PromptDisclosureAttack(BaseAttack):
     super().__init__(config, attacker=attacker, env=env, target=target)
     self.attack_config = config.get("attack", {}).get("r7", {})
     # 정답 system_prompt 해석:
-    #   외부 대상(target)이 주입돼 있으면 → **오직 그 대상이 선언한 값**만 쓴다.
+    #   외부 대상(target)이 주입돼 있으면 → 오직 그 대상이 선언한 값만 쓴다.
     #   외부 대상이 없으면(우리 내장 RAG 직접 계측) → config.generator.system_prompt.
     #
-    # ⚠️ 예전에는 대상이 값을 못 주면 `config.generator.system_prompt` 로 폴백했다. 그게
-    # RAG-2026-0812-008 의 사고다 — AnythingLLM 응답을 **우리 내장 RAG 의 프롬프트**와
+    # 주의: 예전에는 대상이 값을 못 주면 `config.generator.system_prompt` 로 폴백했다. 그게
+    # RAG-2026-0812-008 의 사고다 — AnythingLLM 응답을 우리 내장 RAG 의 프롬프트와
     # 대조해 "방어규칙 3/4개 복원" 이라는 숫자를 냈는데, 정작 대상에 걸려 있던 건 방어
     # 규칙이 하나도 없는 AnythingLLM 기본 프롬프트였다. 남의 프롬프트를 모르면
     # "모른다"가 정답이지 우리 것을 갖다 대는 게 정답이 아니다. 대상이 값을 주지 못하면

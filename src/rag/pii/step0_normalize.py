@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-# === 제거 대상: 제로폭·보이지 않는 문자 ============================
+# 제거 대상: 제로폭·보이지 않는 문자
 # 거의 언제나 우회용이거나 의미 없는 잡음이므로 전역 제거해도 안전하다.
 _INVISIBLE_CHARS: frozenset[str] = frozenset(
   {
@@ -65,7 +65,7 @@ _INVISIBLE_CHARS: frozenset[str] = frozenset(
   }
 )
 
-# === 호모글리프(시각적 유사 문자) → 표준 문자 =======================
+# 호모글리프(시각적 유사 문자) → 표준 문자
 # 전각은 NFKC 가 처리하므로, 여기서는 NFKC 로 접히지 않는 키릴/그리스 계열 위주로 둔다.
 # 이메일/도메인 우회(예: 키릴 'а' 를 라틴 'a' 로 위장)에 특히 유효하다.
 _HOMOGLYPH_MAP: dict[str, str] = {
@@ -102,7 +102,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
   "Ο": "O",
 }
 
-# === 한글 호환 자모 결합용 테이블 ===================================
+# 한글 호환 자모 결합용 테이블
 # 사용자가 한글 키보드로 입력하는 '자소 분리' 우회는 호환 자모(U+3131~U+3163)를 쓴다.
 # 초성/중성/종성 순서로 결합해 완성형 음절(U+AC00~)을 만든다.
 _CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
@@ -204,7 +204,7 @@ class TextNormalizer:
     normalize_config = pii_config.get("normalize", {}) if isinstance(pii_config, dict) else {}
 
     self.enabled = bool(runtime_config.get("enable_step0", True))
-    # ⚠️ 임계값 성격의 값은 하드코딩이 아니라 향후 벤치마크로 재산정한다(노션 B-2 경고).
+    # 주의: 임계값 성격의 값은 하드코딩이 아니라 향후 벤치마크로 재산정한다(노션 B-2 경고).
     self.digit_spacing_min_run = max(2, int(normalize_config.get("digit_spacing_min_run", 5)))
 
   def normalize(self, text: str) -> NormalizationResult:
@@ -213,9 +213,6 @@ class TextNormalizer:
 
     STEP 0 가 비활성이면 항등 결과(원문 그대로 + 항등 매핑)를 돌려주므로 호출부는
     분기 없이 항상 동일하게 사용할 수 있다.
-
-    Args:
-      text: 원문 텍스트
 
     Returns:
       NormalizationResult: 정규화 텍스트 + 문자별 원문 스팬 + 적용된 변환 목록
@@ -365,7 +362,7 @@ class TextNormalizer:
     digit_spacing_min_run 이상일 때만 그 런 안의 공백을 지우므로, 일반 산문의 공백은
     건드리지 않는다("3 년 9 개월" 은 한글이, "8 5 / 1 0 0" 은 '/' 가 런을 끊는다).
 
-    ⚠️ 예전에는 숫자-숫자 사이만 봤다. 그래서 R2 evasion 응답의
+    예전에는 숫자-숫자 사이만 봤다. 그래서 R2 evasion 응답의
     "y e o n w o o . y a n g 8 0 @ e x a m p l e . t e s t" 가 이메일로 복원되지 않았고,
     "0 1 0 - 9 0 0 0 - 5 0 1 4" 도 하이픈에서 런이 끊겨 미복원 → NER 이 이를 QT_IP 로
     오탐했다(RAG-2026-0810-001 실측: 응답 1건당 QT_IP 6건). 런 문자에 영문·구분자를

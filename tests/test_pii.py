@@ -20,7 +20,7 @@ def _build_pii_config(
   *,
   enable_step3: bool = True,
   enable_step4: bool = True,
-  model_path: str = "townboy/kpfbert-kdpii",
+  model_path: str = "townboy/kpfbert-ner",
   revision: str = "",
 ) -> dict:
   return {

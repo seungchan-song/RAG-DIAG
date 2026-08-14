@@ -1,4 +1,5 @@
-# Default configuration for the RAG attack harness.
+# 외부 RAG(AnythingLLM) 진단용 설정. 우리 내장 RAG 로 돌릴 때는 config/default.yaml 을 쓴다.
+# default.yaml 과의 차이는 adapter 절(type: rest + 연결 정보)이며 나머지는 동일하다.
 
 ingest:
   chunk_size: 512

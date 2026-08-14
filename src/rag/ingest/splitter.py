@@ -26,7 +26,6 @@ def create_document_splitter(config: dict[str, Any]) -> DocumentSplitter:
   설정에 따라 문서를 청크로 분할하는 컴포넌트를 생성합니다.
 
   Args:
-    config: YAML에서 로드한 설정 딕셔너리.
             config["ingest"] 아래의 chunk_size, chunk_overlap, split_by를 사용합니다.
 
   Returns:
@@ -38,7 +37,6 @@ def create_document_splitter(config: dict[str, Any]) -> DocumentSplitter:
       chunk_overlap: 64      # 인접 청크 간 64 단어/문장 겹침
       split_by: "sentence"   # 문장 단위로 분할
   """
-  # 설정값 읽기 (없으면 기본값 사용)
   ingest_config = config.get("ingest", {})
   chunk_size = ingest_config.get("chunk_size", 512)
   chunk_overlap = ingest_config.get("chunk_overlap", 64)
