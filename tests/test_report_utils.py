@@ -274,11 +274,11 @@ class TestExperimentManager:
     assert loaded_results == partial_results
 
   def test_partial_results_write_volume_stays_linear(self, tmp_path, monkeypatch):
-    """부분 결과 저장이 **누적 재작성**으로 되돌아가면 실패한다.
+    """부분 결과 저장이 누적 재작성으로 되돌아가면 실패한다.
 
     실측 배경 — 예전 구현은 질의 하나가 끝날 때마다 지금까지의 결과 전체를
     다시 썼다(O(n²)). 전체 매트릭스 런 1회에 9.14GB 를 쓰는데 최종 산출물은
-    124MB 였다(74배). 최종 파일 크기가 아니라 **총 쓰기 바이트**를 재야 이
+    124MB 였다(74배). 최종 파일 크기가 아니라 총 쓰기 바이트를 재야 이
     회귀를 잡을 수 있어서, 실제 write 호출량을 세어 검증한다.
     """
     import builtins
@@ -418,7 +418,7 @@ class TestReportGenerator:
       gen.generate("NONEXISTENT-ID")
 
   def test_risk_assessment(self, tmp_path):
-    """전체 판정은 **종합 위험도**로 낸다 — 화면 배지와 같은 눈금이어야 한다.
+    """전체 판정은 종합 위험도로 낸다 — 화면 배지와 같은 눈금이어야 한다.
 
     예전에는 여기서 시나리오별 성공률 임계값을 따로 걸었다. 그래서 배지는 위험도로,
     총평은 성공률로 매겨져 "총평 위험 / 모든 행 주의" 같은 자기모순 화면이 나왔다.
@@ -872,9 +872,7 @@ class TestReportGenerator:
     assert summary["execution_reliability"]["scenarios"]["R2"]["open_failure_count"] == 1
 
 
-# ============================================================
 # NORMAL vs 공격 시나리오 PII 비교 집계 테스트
-# ============================================================
 
 class TestNormalVsAttackPiiComparison:
   """ReportGenerator._build_normal_attack_pii_comparison 의 baseline/공격 PII 집계를 검증한다."""

@@ -33,13 +33,12 @@ def create_file_router() -> FileTypeRouter:
     - .txt 파일 → "text/plain" 출력 포트
     - .md 파일  → "text/markdown" 출력 포트 (text/plain으로 처리)
   """
-  # MIME 타입 목록을 지정하여 라우터를 생성합니다
-  # 각 MIME 타입은 라우터의 출력 포트 이름이 됩니다
+  # 여기 나열한 MIME 타입이 그대로 라우터의 출력 포트 이름이 된다.
   router = FileTypeRouter(
     mime_types=[
-      "application/pdf",   # PDF 파일
-      "text/plain",        # TXT, MD 파일
-      "text/markdown",     # Markdown 파일
+      "application/pdf",
+      "text/plain",
+      "text/markdown",
     ]
   )
 

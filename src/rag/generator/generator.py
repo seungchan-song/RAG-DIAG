@@ -205,16 +205,12 @@ def create_openai_generator(
   """
   OpenAI GPT 모델을 사용하는 Generator를 생성합니다.
 
-  환경변수 OPENAI_API_KEY가 설정되어 있어야 합니다.
-  (.env 파일에서 자동 로드됩니다)
+  환경변수 OPENAI_API_KEY가 설정되어 있어야 합니다(.env 파일에서 자동 로드됩니다).
+  config["generator"]["openai"] 아래의 설정을 사용합니다.
 
   Args:
-            config["generator"]["openai"] 아래의 설정을 사용합니다.
     system_prompt: LLM의 system role 메시지로 전달할 페르소나/방어 지시문.
                    None이면 system 메시지 없이 동작합니다.
-
-  Returns:
-    OpenAIGenerator: OpenAI 기반 텍스트 생성 컴포넌트
 
   Raises:
     ValueError: OPENAI_API_KEY 환경변수가 설정되지 않았을 때
@@ -389,8 +385,8 @@ class LocalOpenAICompatGenerator:
   로컬 오픈웨이트 모델을 호출하는 Haystack 컴포넌트입니다 (대회 규정 A-1).
 
   대회 규정상 Closed API 호출(GPT-4o-mini / HCX-DASH-002)은 0건이어야 한다. Ollama ·
-  vLLM · LM Studio · llama.cpp server · TGI 등 대부분의 로컬 추론 서버는 **OpenAI 호환
-  chat-completions 엔드포인트**(`/v1/chat/completions`)를 노출하므로, base_url 만 로컬
+  vLLM · LM Studio · llama.cpp server · TGI 등 대부분의 로컬 추론 서버는 OpenAI 호환
+  chat-completions 엔드포인트(``/v1/chat/completions``)를 노출하므로, base_url 만 로컬
   서버로 두면 이 한 컴포넌트로 어떤 로컬 오픈웨이트 모델(EXAONE · Qwen2.5 · Gemma 등)이든
   붙일 수 있고 외부 API 호출이 전혀 없다.
 

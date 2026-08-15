@@ -28,15 +28,9 @@ def create_document_embedder(config: dict[str, Any]) -> SentenceTransformersDocu
   SentenceTransformers 라이브러리를 사용하여 dragonkue/BGE-m3-ko 모델을 로드하고,
   각 Document의 content를 벡터로 변환합니다.
 
-  Args:
-            config["embedding"] 아래의 model_name, device를 사용합니다.
-
-  Returns:
-    SentenceTransformersDocumentEmbedder: 문서 임베딩 컴포넌트
-
-  주의사항:
-    - 최초 실행 시 모델 다운로드에 시간이 걸릴 수 있습니다 (~1GB)
-    - GPU가 없으면 device="cpu"로 설정합니다 (느리지만 동작함)
+  config["embedding"] 아래의 model_name, device 를 사용합니다.
+  최초 실행 시 모델 다운로드에 시간이 걸릴 수 있습니다(~1GB). GPU 가 없으면
+  device="cpu" 로 두면 되고, 느리지만 정상 동작합니다.
   """
   embedding_config = config.get("embedding", {})
   model_name = embedding_config.get("model_name", "dragonkue/BGE-m3-ko")
@@ -46,9 +40,10 @@ def create_document_embedder(config: dict[str, Any]) -> SentenceTransformersDocu
   device = ComponentDevice.from_str(device_str)
 
   embedder = SentenceTransformersDocumentEmbedder(
-    model=model_name,  # 사용할 임베딩 모델
-    device=device,     # 실행 장치 (cpu/cuda)
-    # 메타데이터 필드도 임베딩에 포함할지 여부 (기본: content만)
+    model=model_name,
+    device=device,
+    # 메타데이터를 임베딩에 섞지 않는다. doc_role 같은 라벨이 벡터에 들어가면
+    # 검색이 본문이 아니라 라벨을 따라가 R2 의 라우팅 측정이 오염된다.
     meta_fields_to_embed=[],
   )
 

@@ -191,7 +191,7 @@ def _patch_success_dependencies(monkeypatch) -> None:
   # 실제 build_rag_pipeline 은 prompt_template 인자를 받는다(R7 전용 템플릿 분기).
   # CLI 는 모든 시나리오에서 prompt_template= 를 키워드로 넘기므로, 스텁이 이를
   # 받지 않으면 파이프라인 빌드가 TypeError 로 죽고 status 가 failed_setup 이 돼
-  # **실패 격리·재개 검증 자체가 실행되지 않는다**(2026-08-06 확인).
+  # 실패 격리·재개 검증 자체가 실행되지 않는다(2026-08-06 확인).
   monkeypatch.setattr(
     pipeline_module,
     "build_rag_pipeline",

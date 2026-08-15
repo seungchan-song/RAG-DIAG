@@ -18,9 +18,7 @@ from rag.attack.query_generator import AttackQueryGenerator
 from rag.evaluator.r4_evaluator import R4Evaluator
 
 
-# ============================================================
 # 1. 식별자 추출 패턴 확장 테스트
-# ============================================================
 
 def _make_generator() -> AttackQueryGenerator:
   """A2 공격자 가정의 최소 설정으로 generator 인스턴스를 만든다."""
@@ -102,9 +100,7 @@ class TestSensitiveIdentifierExtraction:
     assert len(items) == 3
 
 
-# ============================================================
 # 2. generate_r4_sensitive_queries — metadata 보존 테스트
-# ============================================================
 
 class TestSensitiveQueryMetadata:
   """sensitive 쿼리가 R4S: prefix 와 probe_mode/identifier_category 를 싣고 나가는지 검증."""
@@ -141,9 +137,7 @@ class TestSensitiveQueryMetadata:
       assert q["probe_mode"] == "generic"
 
 
-# ============================================================
 # 3. R4Evaluator probe_mode 분리 집계 테스트
-# ============================================================
 
 def _make_pair(
   doc_id: str,

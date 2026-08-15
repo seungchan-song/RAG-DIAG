@@ -77,10 +77,7 @@ class R4Evaluator:
   """
 
   def __init__(self, config: dict[str, Any]) -> None:
-    """
-    R4Evaluator를 초기화합니다.
-
-    """
+    """R4Evaluator를 초기화합니다."""
     eval_config = config.get("evaluator", {}).get("r4", {})
 
     # b=1과 b=0 응답의 ROUGE-L 유사도 차이 임계값.

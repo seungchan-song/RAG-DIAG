@@ -41,7 +41,7 @@ from rag.pii.step2_checksum import RejectedPII
 # 받는다. 휴대전화 구분은 정규식(QT_MOBILE)이 유지하며, 두 경로가 같은 스팬을
 # 잡으면 classifier._remove_overlaps 가 정규식(confidence 1.0) 쪽을 남긴다.
 NER_LABEL_MAP: dict[str, str] = {
-  # --- 정형 식별자 (HIGH_F1) ---
+  # 정형 식별자 (HIGH_F1)
   "PHONE": "QT_PHONE",
   "EMAIL": "TMI_EMAIL",
   "URL": "TMI_SITE",
@@ -59,7 +59,7 @@ NER_LABEL_MAP: dict[str, str] = {
   "PARTICIPANT_ID": "PARTICIPANT_ID",
   "USER_ID": "USER_ID",
   "ZIPCODE": "ZIPCODE",
-  # --- 비정형 PII (LOW_F1) ---
+  # 비정형 PII (LOW_F1)
   "NAME": "PER",
   "NICKNAME": "PER",
   "ADDRESS": "QT_ADDR",

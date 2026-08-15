@@ -477,8 +477,8 @@ class RestRagAdapter:
     주체가 없으면 다음 실행의 NORMAL(대조군)이 지난 회차 poison 을 검색하게 되고,
     "공격이 대조군보다 PII 를 얼마나 더 노출했나" 라는 이 프로젝트의 핵심 비교가 깨진다.
     외부 RAG 는 워크스페이스가 하나뿐이라 시나리오별로 코퍼스를 분리할 수 없어서
-    (우리 builtin 은 clean/poisoned 인덱스를 따로 둔다) 이 정리가 **주입을 켤 수 있는
-    전제 조건**이다. 같은 문제를 SOTA 어댑터는 이미 이렇게 풀었다
+    (우리 builtin 은 clean/poisoned 인덱스를 따로 둔다) 이 정리가 주입을 켤 수 있는
+    전제 조건이다. 같은 문제를 SOTA 어댑터는 이미 이렇게 풀었다
     (`adapters/sota.py:cleanup_stale_poison` · commit 8f4efbb).
 
     삭제 대상은 우리가 만든 poison 문서뿐이다 — doc_id 는 `query_generator.

@@ -49,7 +49,7 @@ def _make_local_corpus(tmp_path) -> tuple[str, str]:
   return str(tmp_path), "sensitive/s1.txt"
 
 
-# === ① 능력 선언 ===
+# ① 능력 선언
 def test_sota_adapter_declares_full_tier2_capabilities():
   adapter = SotaRagAdapter(base_url="http://x", documents_root="/root/docs")
   assert adapter.capabilities == {
@@ -62,7 +62,7 @@ def test_sota_adapter_declares_full_tier2_capabilities():
   }
 
 
-# === ② query() 매핑 ===
+# ② query() 매핑
 def test_sota_adapter_query_maps_answer_sources_and_doc_role():
   transport = _record_transport({
     "answer": "테스트 답변",
@@ -121,7 +121,7 @@ def test_sota_adapter_query_sends_exclude_filter_when_variant_has_exclusions():
   }
 
 
-# === ③ build_variant() — R4 청크 단위 → 파일 단위 번역 ===
+# ③ build_variant() — R4 청크 단위 → 파일 단위 번역
 def test_sota_adapter_build_variant_translates_chunk_id_to_source_file(tmp_path):
   local_root, relative_source = _make_local_corpus(tmp_path)
   file_doc_id = build_doc_id_from_source(relative_source)
@@ -160,7 +160,7 @@ def test_sota_adapter_build_variant_accumulates_across_calls(tmp_path):
   assert variant2.exclude_source_files == variant1.exclude_source_files
 
 
-# === ④ write_documents() — R9 poison 업로드 ===
+# ④ write_documents() — R9 poison 업로드
 def test_sota_adapter_write_documents_writes_files_and_calls_ingest(tmp_path):
   transport = _record_transport({"ok": True})
   adapter = SotaRagAdapter(
@@ -187,7 +187,7 @@ def test_sota_adapter_write_documents_writes_files_and_calls_ingest(tmp_path):
   assert infer_doc_role(tmp_path / "attack" / "poison-a.txt") == "attack"
 
 
-# === ④-2 cleanup_stale_poison() — 대조군 오염 차단 ===
+# ④-2 cleanup_stale_poison() — 대조군 오염 차단
 def test_cleanup_stale_poison_removes_only_our_poison_files(tmp_path):
   """우리가 만든 poison-*.txt 만 지우고 같은 폴더의 남의 문서는 남긴다."""
   attack_dir = tmp_path / "attack"
@@ -239,7 +239,7 @@ def test_build_variant_does_not_delete_poison_mid_run(tmp_path):
   assert live.exists()
 
 
-# === ⑤ from_config() 검증 ===
+# ⑤ from_config() 검증
 def test_sota_adapter_from_config_requires_base_url_and_documents_root():
   with pytest.raises(AdapterConfigError):
     SotaRagAdapter.from_config({"adapter": {"type": "sota", "documents_root": "/root/docs"}})
@@ -253,7 +253,7 @@ def test_sota_adapter_from_config_requires_base_url_and_documents_root():
   assert adapter.documents_root == "/root/docs"
 
 
-# === ⑥ 레지스트리 연동 ===
+# ⑥ 레지스트리 연동
 def test_registry_lists_sota():
   assert "sota" in available_adapters()
 
@@ -295,7 +295,7 @@ def test_create_target_adapter_gates_sota_with_limited_caps():
   assert gated.capabilities == {Capability.QUERY}
 
 
-# === ⑦ declare_sensitive 보조 라벨 ===
+# ⑦ declare_sensitive 보조 라벨
 def test_sota_adapter_declare_sensitive_accumulates():
   adapter = SotaRagAdapter(base_url="http://x", documents_root="/root/docs")
   adapter.declare_sensitive(["d1", "d2"])

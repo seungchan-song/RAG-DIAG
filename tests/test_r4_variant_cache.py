@@ -1,12 +1,12 @@
 """R4 비회원 반사실 어댑터 캐시의 스레드 안전성 회귀 테스트.
 
-왜 이 파일이 있나 — CLI 는 `R4MembershipAttack` 인스턴스 **하나**를
+왜 이 파일이 있나 — CLI 는 `R4MembershipAttack` 인스턴스 하나를
 `ThreadPoolExecutor(max_workers=5)` 위에서 공유한다(`cli/main.py:_process_query_task`).
 그런데 `generate_queries` 는 문서당 b=1 쿼리를 전부 쌓고 이어서 b=0 쿼리를 쌓으므로,
 같은 `target_doc_id` 의 b=0 쿼리들이 큐에서 나란히 워커로 들어간다.
 
 락이 없던 시절 `_resolve_non_member_adapter` 는 조회와 저장 사이가 열려 있어서
-동시 진입한 워커가 **전부 빈 캐시를 보고** `build_variant` 를 중복 실행했다
+동시 진입한 워커가 전부 빈 캐시를 보고 `build_variant` 를 중복 실행했다
 (2026-08-06 실측: 동시 5건 → 5회 전부 재구성, 캐시 적중 0). `build_variant` 는
 문서 1,200개 재색인 + 파이프라인 재빌드라 비용이 크고, 그 순간 같은 크기의
 DocumentStore 가 워커 수만큼 동시에 메모리에 뜬다.

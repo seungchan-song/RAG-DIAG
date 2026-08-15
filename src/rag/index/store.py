@@ -25,29 +25,29 @@ _ASCII_BOUNDARY_PREFIX: str = r'(?<![A-Za-z0-9])'
 _ASCII_BOUNDARY_SUFFIX: str = r'(?![A-Za-z0-9])'
 
 STRUCTURAL_PATTERNS: list[str] = [
-  # 1. SYNTH-* 합성 ID
+  # SYNTH-* 합성 ID
   r'SYNTH-[A-Z]+-[A-Z0-9]+(?:-[A-Z0-9]+)?',
-  # 2. 주민등록번호
+  # 주민등록번호
   _ASCII_BOUNDARY_PREFIX + r'\d{6}-[1-4]\d{6}' + _ASCII_BOUNDARY_SUFFIX,
-  # 3. 신용카드
+  # 신용카드
   _ASCII_BOUNDARY_PREFIX + r'\d{4}-\d{4}-\d{4}-\d{4}' + _ASCII_BOUNDARY_SUFFIX,
-  # 4. 이메일 주소
+  # 이메일 주소
   _ASCII_BOUNDARY_PREFIX + r'[\w.+-]+@[\w.-]+\.[a-z]{2,}' + _ASCII_BOUNDARY_SUFFIX,
-  # 5. 한국 휴대전화
+  # 한국 휴대전화
   _ASCII_BOUNDARY_PREFIX + r'01[016789]-\d{3,4}-\d{4}' + _ASCII_BOUNDARY_SUFFIX,
-  # 6. 일반 유선전화
+  # 일반 유선전화
   _ASCII_BOUNDARY_PREFIX + r'0[2-6]\d?-\d{3,4}-\d{4}' + _ASCII_BOUNDARY_SUFFIX,
-  # 7. 인터넷전화/특수번호
+  # 인터넷전화/특수번호
   _ASCII_BOUNDARY_PREFIX + r'0[57]0-\d{3,4}-\d{4}' + _ASCII_BOUNDARY_SUFFIX,
-  # 8. 운전면허번호
+  # 운전면허번호
   _ASCII_BOUNDARY_PREFIX + r'\d{2}-\d{2}-\d{6}-\d{2}' + _ASCII_BOUNDARY_SUFFIX,
-  # 9. 사업자등록번호
+  # 사업자등록번호 (계좌번호와 마지막 그룹 자릿수로만 갈린다)
   _ASCII_BOUNDARY_PREFIX + r'\d{3}-\d{2}-\d{5}' + _ASCII_BOUNDARY_SUFFIX,
-  # 10. 계좌번호 패턴
+  # 계좌번호
   _ASCII_BOUNDARY_PREFIX + r'\d{3}-\d{2,3}-\d{6}' + _ASCII_BOUNDARY_SUFFIX,
-  # 11. 여권번호
+  # 여권번호
   _ASCII_BOUNDARY_PREFIX + r'[A-Z]\d{8}' + _ASCII_BOUNDARY_SUFFIX,
-  # 12. 한국 차량번호
+  # 한국 차량번호
   r'\d{2,3}[가-힣]\d{4}'
 ]
 STRUCTURAL_PATTERN = re.compile("|".join(STRUCTURAL_PATTERNS))
@@ -215,7 +215,7 @@ class PersistentFaissDocumentStore:
     if self._index is None or not self._document_order:
       return []
 
-    # If query_text is not provided or empty, perform standard dense FAISS retrieval
+    # query_text 가 없으면 순수 dense 검색으로 떨어진다.
     if not query_text:
       query_array = np.asarray([query_embedding], dtype="float32")
       scores, indices = self._index.search(query_array, min(top_k, len(self._document_order)))
@@ -229,8 +229,10 @@ class PersistentFaissDocumentStore:
         results.append(document)
       return results
 
-    # Perform Hybrid Retrieval
-    # 1. Obtain dense scores for all documents in the store via FAISS
+    # 하이브리드 점수 = dense + 구조적 식별자 정확매치(건당 2.0) + 일반 키워드 겹침(최대 0.5).
+    # 구조적 매치에 큰 가중치를 주는 이유는 주민번호·이메일 같은 값은 임베딩 유사도로는
+    # 잘 안 잡히는데 정확히 일치하면 그 문서가 정답일 확률이 사실상 1 이기 때문이다.
+    # 전 문서 점수를 다시 매겨야 하므로 여기서는 top_k 가 아니라 num_docs 로 검색한다.
     num_docs = len(self._document_order)
     query_array = np.asarray([query_embedding], dtype="float32")
     scores, indices = self._index.search(query_array, num_docs)
@@ -240,10 +242,9 @@ class PersistentFaissDocumentStore:
       if index >= 0:
         dense_scores[int(index)] = float(score)
 
-    # 2. Extract structural keywords (PIIs, Synth IDs)
     structural_keywords = STRUCTURAL_PATTERN.findall(query_text)
 
-    # 3. Extract general keywords (words >= 2 chars that are not stopwords)
+    # 2자 미만은 조사·어미와 구분되지 않아 겹침 신호가 되지 못한다.
     all_words = re.findall(r"[0-9A-Za-z가-힣]{2,}", query_text)
     general_keywords = set()
     for word in all_words:
@@ -251,19 +252,16 @@ class PersistentFaissDocumentStore:
       if word_lower not in LEXICAL_STOPWORDS and word not in structural_keywords:
         general_keywords.add(word_lower)
 
-    # 4. Compute hybrid scores for all documents
     candidate_docs = []
     for idx, doc_id in enumerate(self._document_order):
       doc = self._documents[doc_id]
       dense_score = dense_scores.get(idx, 0.0)
 
-      # 4a. Structural match boost (exact match for phone, email, synth ID, RRN etc.)
       structural_boost = 0.0
       for kw in structural_keywords:
         if kw in doc.content:
           structural_boost += 2.0
 
-      # 4b. General keyword overlap lexical boost
       lexical_boost = 0.0
       if general_keywords:
         doc_words = set(re.findall(r"[0-9A-Za-z가-힣]{2,}", doc.content.lower()))
@@ -273,10 +271,10 @@ class PersistentFaissDocumentStore:
       hybrid_score = dense_score + structural_boost + lexical_boost
       candidate_docs.append((hybrid_score, doc_id, dense_score, structural_boost, lexical_boost))
 
-    # 5. Sort by hybrid score in descending order
     candidate_docs.sort(key=lambda x: x[0], reverse=True)
 
-    # 6. Retrieve top-k results and attach audit metadata
+    # retrieval_meta 에 항목별 점수를 남긴다. 리포트가 "왜 이 문서가 잡혔나"를
+    # dense 때문인지 구조적 매치 때문인지 사후에 갈라 볼 수 있어야 한다.
     results: list[Document] = []
     for hybrid_score, doc_id, d_score, s_boost, l_boost in candidate_docs[:top_k]:
       document = replace(_clone_document(self._documents[doc_id]), score=float(hybrid_score))

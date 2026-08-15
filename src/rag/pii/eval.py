@@ -123,7 +123,7 @@ CANONICAL_LABELS = (
 )
 
 LABEL_ALIASES = {
-  # --- 자체 데이터셋(개인정보 33종) 라벨 → 내부 canonical 태그 ---
+  # 자체 데이터셋(개인정보 33종) 라벨 → 내부 canonical 태그
   # NER_LABEL_MAP 과 같은 대응이어야 벤치마크 채점이 모델 출력과 맞물린다.
   "ACCOUNT_NUMBER": "QT_ACCOUNT",
   "ALIEN_NUMBER": "QT_ARN",
@@ -143,7 +143,7 @@ LABEL_ALIASES = {
   "VEHICLE_NUMBER": "QT_CAR",
   "WEIGHT": "QT_WEIGHT",
   "WORKPLACE": "ORG",
-  # --- 기존 별칭 ---
+  # 기존 별칭
   "ADDRESS": "QT_ADDR",
   "ADDR": "QT_ADDR",
   "AGE": "QT_AGE",

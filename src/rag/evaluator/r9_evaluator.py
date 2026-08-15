@@ -29,10 +29,7 @@ class R9Evaluator:
   """
 
   def __init__(self, config: dict[str, Any]) -> None:
-    """
-    R9Evaluator를 초기화합니다.
-
-    """
+    """R9Evaluator를 초기화합니다."""
     eval_config = config.get("evaluator", {}).get("r9", {})
     self.trigger_marker = eval_config.get(
       "trigger_marker", "[R9_ATTACK_SUCCESS_777]"

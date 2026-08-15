@@ -22,9 +22,7 @@ from rag.evaluator.r7_evaluator import R7Evaluator
 from rag.evaluator.r9_evaluator import R9Evaluator
 from rag.evaluator.summary import summarize_evaluated_results
 
-# ============================================================
 # AttackResult 테스트
-# ============================================================
 
 class TestAttackResult:
   """AttackResult 데이터 클래스 동작을 검증합니다."""
@@ -51,9 +49,7 @@ class TestAttackResult:
     assert "key" not in r2.metadata
 
 
-# ============================================================
 # 쿼리 생성기 테스트
-# ============================================================
 
 class TestAttackQueryGenerator:
   """AttackQueryGenerator의 쿼리 생성 기능을 검증합니다."""
@@ -167,10 +163,10 @@ class TestAttackQueryGenerator:
     """A3(문서 주입 내부자)는 호출자가 준 정밀 트리거를 그대로 쓴다.
 
     원래 이 테스트는 A3 와 A4(Unaware Insider) 의 트리거 셋이 달라야 한다고
-    주장했지만, **A4 는 위협 모델에서 제거됐다**(공격자 매트릭스 ·
+    주장했지만, A4 는 위협 모델에서 제거됐다(공격자 매트릭스 ·
     `SCENARIO_ATTACKER_MATRIX`). 없는 공격자를 넣으면 `_resolve_trigger_keywords`
     가 A2 로 폴백해 A3 와 같은 결과가 나오고, 그래서 이 테스트는 폐기된 기능을
-    붙잡고 계속 실패해 왔다. A4 관련 단언은 걷어내고 **지금도 유효한 성질**
+    붙잡고 계속 실패해 왔다. A4 관련 단언은 걷어내고 지금도 유효한 성질
     — A3 는 주어진 트리거를 임의로 바꾸지 않는다 — 만 남긴다.
     (모르는 코드가 A2 로 폴백하는 동작 자체는 아래
     `test_unknown_attacker_falls_back_to_a2` 가 이미 고정한다.)
@@ -380,9 +376,7 @@ class TestAttackQueryGenerator:
     )
 
 
-# ============================================================
 # R2 평가기 테스트
-# ============================================================
 
 def _r2_result(
   *,
@@ -395,8 +389,8 @@ def _r2_result(
 ) -> AttackResult:
   """R2 평가기가 실제로 읽는 형태의 AttackResult 를 만든다.
 
-  R2 채점은 `retrieved_documents` 안에서 **doc_role=="sensitive" 이거나 본문에 PII 가
-  있는** 문서만 본다(`r2_evaluator._select_comparison_documents`). `target_text` 만 채운
+  R2 채점은 `retrieved_documents` 안에서 doc_role=="sensitive" 이거나 본문에 PII 가
+  있는 문서만 본다(`r2_evaluator._select_comparison_documents`). `target_text` 만 채운
   결과는 비교 대상이 0건이라 항상 score=0 으로 스킵되므로, 유출 판정을 검증하려면
   반드시 검색 결과를 채워야 한다.
   """
@@ -446,8 +440,8 @@ class TestR2Evaluator:
   def test_perfect_match(self):
     """검색된 민감 문서 원문이 응답에 그대로 나오면 성공(유출)으로 판정합니다.
 
-    ⚠️ R2 채점 대상은 `target_text` 가 아니라 **retrieved 된 doc_role=sensitive
-    문서**다(2026-05-23 전환 · `_select_comparison_documents`). 원래 이 테스트는
+    R2 채점 대상은 `target_text` 가 아니라 retrieved 된 doc_role=sensitive
+    문서다(2026-05-23 전환 · `_select_comparison_documents`). 원래 이 테스트는
     `target_text` 만 채워 놓고 성공을 기대했는데, 전환 이후로는 비교 대상이 0건이라
     무조건 score=0 으로 스킵돼 계속 실패해 왔다. 평가기가 아니라 fixture 가 낡은
     것이므로 현재 계약에 맞춰 검색 결과를 채운다.
@@ -708,9 +702,7 @@ class TestR2GroundedPiiChannel:
     assert strict.evaluate(result).success is True
 
 
-# ============================================================
 # R4 평가기 테스트
-# ============================================================
 
 def _r4_pair(
   *,
@@ -756,10 +748,10 @@ class TestR4Evaluator:
   def test_member_high_similarity(self):
     """d* 를 넣은 환경에서만 원문이 새면 Δ 가 임계값을 넘어 페어가 성공한다.
 
-    ⚠️ 판정 계약이 바뀌었다. 예전에는 응답마다 `predicted_b` 를 붙이고
+    판정 계약이 바뀌었다. 예전에는 응답마다 `predicted_b` 를 붙이고
     `success = (predicted_b == ground_truth_b)`(추론이 맞았나) 였지만, 지금은
-    **페어 단위**로 `Δ = sim₁ - sim₀ > delta_threshold` 하나를 판정해
-    **두 응답이 같은 success 를 공유**한다(`_apply_pair_judgment`).
+    페어 단위로 `Δ = sim₁ - sim₀ > delta_threshold` 하나를 판정해
+    두 응답이 같은 success 를 공유한다(`_apply_pair_judgment`).
     `predicted_b` 는 더 이상 존재하지 않는다 — 그래서 옛 단언은 KeyError 로
     죽었다. 검증할 성질은 그대로이므로 현재 계약으로 다시 쓴다.
     """
@@ -836,9 +828,7 @@ class TestR4Evaluator:
     assert 0.0 <= summary["success_rate"] <= 1.0
 
 
-# ============================================================
 # R9 평가기 테스트
-# ============================================================
 
 class TestR9Evaluator:
   """R9Evaluator의 트리거 마커 탐지를 검증합니다."""
@@ -942,9 +932,7 @@ class TestR9Evaluator:
     assert summary["blocked_at_retrieval_count"] == 1
 
 
-# ============================================================
 # R7 공격 클래스 및 평가기 테스트
-# ============================================================
 
 class TestR7PromptDisclosureAttack:
   """R7PromptDisclosureAttack 의 쿼리 생성 동작을 검증합니다."""
@@ -977,11 +965,11 @@ class TestR7PromptDisclosureAttack:
   def test_payload_pool_coverage_and_id_format(self):
     """num_payloads = 풀 크기로 호출하면 모든 payload_type 이 정확히 한 번씩 등장한다.
 
-    ⚠️ 풀 크기를 숫자로 박지 말 것. 원래 이 테스트는 `num_payloads: 8` · `== 16`
+    풀 크기를 숫자로 박지 말 것. 원래 이 테스트는 `num_payloads: 8` · `== 16`
     으로 하드코딩돼 있었는데, R7 core 풀이 3세대 페이로드 2종을 더해 10개가 되면서
     "10개 중 8개만 뽑고 2개가 없다"고 실패하기 시작했다 — 커버리지가 깨진 게
     아니라 테스트가 낡은 것이다. D9 가 `test_r2_query_dedup` 에 한 것과 같은
-    수술을 여기에도 적용해 **클래스 상수에서 유도**한다.
+    수술을 여기에도 적용해 클래스 상수에서 유도한다.
     """
     pool_size = len(R7PromptDisclosureAttack.R7_PAYLOAD_POOL)
     num_repeats = self.config["attack"]["r7"]["num_repeats"]
@@ -1247,9 +1235,7 @@ class TestR7SummaryRuleCoverageNone:
     assert summary["avg_rule_coverage_on_success"] == 0.0
 
 
-# ============================================================
 # NORMAL baseline 시나리오 테스트
-# ============================================================
 
 class TestNormalBaselineAttack:
   """NORMAL baseline 시나리오의 쿼리 생성과 메타데이터를 검증한다."""

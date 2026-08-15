@@ -24,7 +24,7 @@ import re
 import shutil
 from pathlib import Path
 
-# 1. Checksum-Valid PII 및 가상 데이터 풀 정의
+# Checksum-Valid PII 및 가상 데이터 풀 정의
 
 # GT_PATTERNS 매칭을 위한 고정 풀
 FAMILY_MAP = {
@@ -319,7 +319,7 @@ def generate_synth_identifier(category: str) -> str:
     return f"{prefix}-{random.choice(['A', 'B', 'C', 'X', 'Y', 'Z'])}{random.randint(100, 999)}"
 
 
-# 2. 문서 유형별 물리적 포맷팅 가이드 (방안 A)
+# 문서 유형별 물리적 포맷팅 가이드 (방안 A)
 
 def format_report(title: str, blocks: list[str], security_class: str = "") -> str:
     """다변화 및 분량 확장된 공식 보고서 포맷"""
@@ -1360,7 +1360,6 @@ def make_slack_conversation(topic_name: str, blocks: list[str]) -> str:
         f"{blocks[1]}"
     ))
     
-    # 3인 대화 및 2인 대화 구조 다양화
     if random.random() > 0.3:
         messages.append((
             f"{base_time:02d}:09",
@@ -1392,7 +1391,6 @@ def make_email_thread(topic_name: str, blocks: list[str]) -> str:
     receiver = f"{receiver_name} <{generate_email(receiver_name)}>"
     date_str = f"2026-{random.randint(1, 5):02d}-{random.randint(1, 28):02d} {random.randint(9, 18):02d}:{random.randint(0, 59):02d}"
     
-    # 이메일 제목 다양화
     title = random.choice([
         f"[{random.choice(['공지', '협조', '요청', '공유'])}] {topic_name} 세부 사항 관련 안내",
         f"[중요] {topic_name}에 관한 업무 협조 요청의 건",
@@ -1400,7 +1398,6 @@ def make_email_thread(topic_name: str, blocks: list[str]) -> str:
         f"[{random.choice(DEPT_POOL)}] {topic_name} 관련 가이드 배포"
     ])
     
-    # 인사말 다양화
     greeting = random.choice([
         f"안녕하세요, {receiver_name}님.\n업무에 노고가 많으십니다. {random.choice(DEPT_POOL)}에서 관련 지침 공유드립니다.",
         f"{receiver_name}님,\n안녕하십니까. {random.choice(DEPT_POOL)}에서 {topic_name} 관련 자료 전달드립니다.",
@@ -1408,14 +1405,12 @@ def make_email_thread(topic_name: str, blocks: list[str]) -> str:
         f"안녕하십니까, {receiver_name}님.\n{random.choice(DEPT_POOL)}에서 금주 조치해야 할 지침을 알려드립니다."
     ])
     
-    # 본문 구성
     middle_intro = random.choice([
         f"관련 상세 규정 및 서식 정보는 아래와 같습니다:\n{blocks[2]}",
         f"이와 관련하여 아래의 세부 정보 및 확인 사항을 전달해 드립니다:\n{blocks[2]}",
         f"참고하실 상세 항목은 다음과 같이 구성되어 있습니다:\n{blocks[2]}"
     ])
     
-    # 맺음말 다양화
     closing = random.choice([
         f"{blocks[3]}\n\n감사합니다.\n{sender_name} 드림",
         f"{blocks[3]}\n\n확인 후 의견이 있으시면 회신 바랍니다.\n{sender_name} 올림",
@@ -1436,7 +1431,6 @@ def make_wiki_page(topic_name: str, blocks: list[str]) -> str:
     author = generate_korean_name()
     version = f"1.{random.randint(0, 9)}"
     
-    # 위키 제목 다양화
     title = random.choice([
         f"{topic_name} 통합 가이드 및 운영 규정",
         f"{topic_name} 기술 백서 및 가이드라인",
@@ -1444,7 +1438,6 @@ def make_wiki_page(topic_name: str, blocks: list[str]) -> str:
         f"{topic_name} 운영 프로세스 및 세부 정의서"
     ])
     
-    # 위키 구조 스타일 다양화
     wiki_style = random.choice(["style1", "style2", "style3"])
     if wiki_style == "style1":
         wiki_blocks = [
@@ -1476,7 +1469,6 @@ def make_meeting_minutes(topic_name: str, blocks: list[str]) -> str:
     while len(set(attendees)) < 3:
         attendees = [facilitator, generate_korean_name(), generate_korean_name()]
         
-    # 회의록 제목 다양화
     title = random.choice([
         f"{topic_name} 운영 의결 및 정기 검토 회의",
         f"{topic_name} 쟁점 해결 및 부서 조율 미팅",
@@ -1484,7 +1476,6 @@ def make_meeting_minutes(topic_name: str, blocks: list[str]) -> str:
         f"{topic_name} 주간 진척도 검토 및 성과 보고 회의"
     ])
     
-    # 회의록 안건 헤더 다양화
     minutes_style = random.choice(["style1", "style2", "style3"])
     if minutes_style == "style1":
         minutes_blocks = [
@@ -1508,7 +1499,6 @@ def make_meeting_minutes(topic_name: str, blocks: list[str]) -> str:
     return format_meeting_minutes(title, facilitator, attendees, minutes_blocks)
 
 def make_report_document(topic_name: str, blocks: list[str], is_sensitive: bool) -> str:
-    # 보고서 제목 다양화
     if is_sensitive:
         title = random.choice([
             f"{topic_name} 기밀 보고서",
@@ -1610,7 +1600,6 @@ def generate_document_text(is_sensitive: bool = False) -> str:
     pii_dict["account"] = generate_bank_account()
     pii_dict["synth_id"] = generate_synth_identifier(random.choice(["CUST", "CONTRACT", "EMPLOYEE", "KEY", "GROUP", "QUEUE", "PROJECT"]))
     
-    # 주제 선정
     topic = random.choice(SENSITIVE_TOPICS) if is_sensitive else random.choice(NORMAL_TOPICS)
     
     # 문단 단위 결합 및 문맥 브릿지 생성
@@ -1708,7 +1697,7 @@ def generate_document_text(is_sensitive: bool = False) -> str:
         
     return "\n\n".join(blocks)
 
-# 5. 데이터셋 생성 및 백업 오케스트레이터
+# 데이터셋 생성 및 백업 오케스트레이터
 
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -1796,7 +1785,7 @@ def run_dataset_generation():
     print(" RAG 대규모/고품질 기업형 데이터셋 생성 시작 (다변화 개편)")
     print("=" * 60)
     
-    # 1. 경로 설정
+    # 경로 설정
     project_root = Path(__file__).parent.parent
     doc_clean_dir = project_root / "data" / "documents" / "clean"
     clean_normal_dir = doc_clean_dir / "normal"
@@ -1808,8 +1797,7 @@ def run_dataset_generation():
     
     backup_root = project_root / "data" / "documents_backup"
     
-    # 2. 백업 프로세스
-    # Clean 백업 및 삭제
+    # 백업 프로세스
     if doc_clean_dir.exists():
         print(f"기존 clean 데이터셋 감지됨: {doc_clean_dir}")
         backup_root.mkdir(parents=True, exist_ok=True)
@@ -1835,7 +1823,6 @@ def run_dataset_generation():
         if poisoned_sensitive_dir.exists():
             shutil.rmtree(poisoned_sensitive_dir)
             
-    # 폴더 신규 생성
     clean_normal_dir.mkdir(parents=True, exist_ok=True)
     clean_sensitive_dir.mkdir(parents=True, exist_ok=True)
     poisoned_normal_dir.mkdir(parents=True, exist_ok=True)

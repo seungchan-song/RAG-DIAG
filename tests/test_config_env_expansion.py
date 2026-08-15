@@ -1,7 +1,7 @@
 """설정의 `${VAR}` 환경변수 치환 회귀 테스트.
 
 왜 이 파일이 있나 — `config/default.yaml` 은 예전부터
-`api_key: "${ANYTHINGLLM_API_KEY}"` 를 권장해 왔는데 **치환 로직이 아예 없었다**
+`api_key: "${ANYTHINGLLM_API_KEY}"` 를 권장해 왔는데 치환 로직이 아예 없었다
 (2026-08-06 확인: `expandvars` 전수 grep 0건). 그대로 쓰면 리터럴 문자열
 `${ANYTHINGLLM_API_KEY}` 가 Bearer 토큰으로 전송돼 401 만 보고 원인을 못 찾는다 —
 외부 RAG 실증(U9) 직전에 밟을 지뢰였다.

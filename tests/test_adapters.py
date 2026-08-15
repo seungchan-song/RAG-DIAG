@@ -44,7 +44,7 @@ def _record_transport(response: dict[str, Any]) -> Any:
   return transport
 
 
-# === 공통 fake 파이프라인 (run_query 구동용, 모델 로드 없음) ===
+# 공통 fake 파이프라인 (run_query 구동용, 모델 로드 없음)
 class _FakeQueryEmbedder:
   def run(self, text: str) -> dict[str, Any]:
     return {"embedding": [0.1, 0.2, 0.3], "text": text}
@@ -100,7 +100,7 @@ def _make_pipeline() -> _FakePipeline:
   return _FakePipeline(docs)
 
 
-# === 계약: Capability / RagTrace ===
+# 계약: Capability / RagTrace
 def test_capability_enum_is_string_valued():
   assert Capability.QUERY.value == "query"
   assert Capability.INDEX_WRITE == "index_write"
@@ -150,7 +150,7 @@ def test_ragtrace_empty_answer_yields_no_replies():
   assert engine["context_empty"] is True
 
 
-# === 참조 어댑터: BuiltinHaystackAdapter ===
+# 참조 어댑터: BuiltinHaystackAdapter
 def test_builtin_adapter_declares_full_tier2_capabilities():
   adapter = BuiltinHaystackAdapter(_make_pipeline(), {})
   for cap in Capability:
@@ -217,7 +217,7 @@ def test_builtin_adapter_build_variant_excludes_target(monkeypatch):
 
 
 def test_builtin_adapter_build_variant_keeps_store_backend(monkeypatch):
-  """반사실 인덱스는 원본과 **같은 backend** 로 만들어져야 한다(R4 교란 방지).
+  """반사실 인덱스는 원본과 같은 backend 로 만들어져야 한다(R4 교란 방지).
 
   `create_document_store()` 를 인자 없이 부르면 `ingest/writer.py` 의 backend 기본값이
   "in_memory" 라 b=0 만 InMemoryDocumentStore 가 됐다. 그러면 리트리버가 FAISS 가 아닌
@@ -288,7 +288,7 @@ def test_coerce_document_from_dict():
   assert doc.meta["doc_role"] == "attack"
 
 
-# === 능력 기반 실행 계획 ===
+# 능력 기반 실행 계획
 class _BlackboxTarget:
   """query 만 노출하는 최소 어댑터(Tier 0 미만, 블랙박스)."""
 
@@ -331,7 +331,7 @@ def test_plan_full_adapter_runs_every_scenario():
     assert plan.decision == DECISION_RUN, scenario
 
 
-# === 결합점 비파괴성: BaseAttack._run_rag_query 가 어댑터를 경유해도 동일 dict ===
+# 결합점 비파괴성: BaseAttack._run_rag_query 가 어댑터를 경유해도 동일 dict
 def test_base_attack_run_rag_query_routes_through_adapter():
   from rag.attack.normal_baseline import NormalBaselineAttack
 
@@ -361,7 +361,7 @@ def test_base_attack_uses_injected_external_target():
   assert trace["generator"]["replies"] == ["external::질문"]
 
 
-# === CLI 실행 루프 배선: skip/degrade 결정 ===
+# CLI 실행 루프 배선: skip/degrade 결정
 def test_resolve_target_capabilities_defaults_to_full():
   """adapter 설정이 없으면 우리 RAG 의 전 능력(Tier 2)으로 간주한다(비파괴)."""
   from rag.cli.main import _resolve_target_capabilities
@@ -478,7 +478,7 @@ def test_execute_single_run_skips_r4_for_blackbox_target(monkeypatch):
   assert any(name == "R4_result.json" for name, _ in exp_manager.saved_results)
 
 
-# === ① 내부 이관: R4 build_variant · R9 write_documents ===
+# ① 내부 이관: R4 build_variant · R9 write_documents
 def test_r4_execute_b0_routes_through_build_variant(monkeypatch):
   """R4 b=0 실행은 build_variant 로 만든 비회원 어댑터를 경유해야 한다(이관 검증)."""
   from rag.attack.r4_membership import R4MembershipAttack
@@ -970,7 +970,7 @@ def test_engine_dict_preserves_target_metadata():
   assert passthrough.to_engine_dict() == {"generator": {"replies": ["원본"]}}
 
 
-# === ② 외부 어댑터 주입 + truthful degrade (CapabilityGatedAdapter) ===
+# ② 외부 어댑터 주입 + truthful degrade (CapabilityGatedAdapter)
 def test_gated_adapter_strips_retrieval_when_not_declared():
   """RETRIEVAL_TRACE 미선언 시 검색 원문이 구조화 필드·raw dict 양쪽에서 비워져야 한다."""
   inner = BuiltinHaystackAdapter(_make_pipeline(), {})
@@ -1037,7 +1037,7 @@ def test_base_attack_with_gated_target_degrades_truthfully():
   assert trace["generator"]["replies"][0].startswith("answer::")
 
 
-# === ④ 어댑터 레지스트리 (config.adapter.type) ===
+# ④ 어댑터 레지스트리 (config.adapter.type)
 def test_registry_lists_builtin_and_rest():
   names = available_adapters()
   assert "builtin" in names
@@ -1075,7 +1075,7 @@ def test_create_target_adapter_gates_rest_with_limited_caps():
   assert gated.capabilities == {Capability.QUERY}
 
 
-# === ⑤ RestRagAdapter 참조 외부 어댑터 ===
+# ⑤ RestRagAdapter 참조 외부 어댑터
 def test_rest_adapter_query_parses_answer_and_sources():
   transport = _record_transport(
     {"textResponse": "유출된 답변", "sources": [{"text": "민감 원문", "score": 0.9, "title": "d1"}]}
@@ -1140,7 +1140,7 @@ def test_rest_adapter_without_system_prompt_degrades_r7():
 
 
 def test_rest_adapter_pushes_then_reads_back_system_prompt():
-  """밀어넣기를 켜면 대상에 설정한 뒤 **되읽은** 값을 정답으로 쓴다.
+  """밀어넣기를 켜면 대상에 설정한 뒤 되읽은 값을 정답으로 쓴다.
 
   설정 요청만 보내고 끝내면 실패를 조용히 넘겨 다시 "우리가 의도한 프롬프트"와
   채점하게 된다. 되읽기가 계약의 일부다.
@@ -1162,7 +1162,7 @@ def test_rest_adapter_pushes_then_reads_back_system_prompt():
 def test_rest_adapter_cleans_only_its_own_stale_poison():
   """지난 실행이 남긴 poison 만 검색 대상에서 뺀다(대조군 오염 차단).
 
-  외부 RAG 는 워크스페이스가 하나뿐이라 poison 이 남으면 **다음 실행의 NORMAL(대조군)**
+  외부 RAG 는 워크스페이스가 하나뿐이라 poison 이 남으면 다음 실행의 NORMAL(대조군)
   이 그걸 검색한다. 이 정리가 있어야 adapter.inject_poison 을 켤 수 있다
   (SOTA 어댑터가 commit 8f4efbb 에서 같은 문제를 같은 방식으로 풀었다).
   """
@@ -1188,7 +1188,7 @@ def test_rest_adapter_cleans_only_its_own_stale_poison():
 
 
 def test_rest_adapter_from_config_cleans_poison_on_construction():
-  """from_config 가 어댑터를 만들고 **정리까지 마친 뒤** 돌려주는지 고정한다.
+  """from_config 가 어댑터를 만들고 정리까지 마친 뒤 돌려주는지 고정한다.
 
   런당 정확히 한 번 도는 지점이 여기뿐이라, 이 호출이 빠지면 지난 실행의 poison 이
   다음 실행의 대조군을 오염시킨다(SOTA 어댑터도 같은 자리에 같은 호출을 둔다).

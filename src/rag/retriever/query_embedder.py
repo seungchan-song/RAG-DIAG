@@ -25,14 +25,8 @@ def create_query_embedder(config: dict[str, Any]) -> SentenceTransformersTextEmb
     """
     질의 텍스트를 벡터로 변환하는 임베딩 컴포넌트를 생성합니다.
 
-    문서 임베딩(ingest/embedder.py)과 동일한 모델을 사용합니다.
-    같은 모델을 사용해야 문서-질의 간 유사도 비교가 정확합니다.
-
-    Args:
-              config["embedding"]["model_name"]에서 모델명을 읽습니다.
-
-    Returns:
-      SentenceTransformersTextEmbedder: 질의 임베딩 컴포넌트
+    config["embedding"]["model_name"] 에서 모델명을 읽습니다. 문서 임베딩
+    (ingest/embedder.py)과 반드시 같은 모델이어야 문서-질의 유사도가 성립합니다.
     """
     embedding_config = config.get("embedding", {})
     model_name = embedding_config.get("model_name", "dragonkue/BGE-m3-ko")

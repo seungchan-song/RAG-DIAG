@@ -134,7 +134,7 @@ class BaseAttack(ABC):
     # clean → q_i(앵커)만 사용(기준선), poisoned → q_i+q_c 복합 쿼리 사용(공격)
     self.env = (env or "poisoned").lower()
     # 진단 대상 어댑터(BYO-RAG). None 이면 execute() 에 전달된 Haystack 파이프라인을
-    # 참조 어댑터(BuiltinHaystackAdapter)로 즉석에서 감싸 사용한다 → 기존 동작과 동일.
+    # 참조 어댑터(BuiltinHaystackAdapter)로 즉석에서 감싸 쓰므로 기존 동작과 동일하다.
     # 외부 RAG 를 진단할 때만 여기에 해당 어댑터를 주입한다.
     self.target: "TargetRAG | None" = target
 

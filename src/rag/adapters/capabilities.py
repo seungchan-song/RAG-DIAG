@@ -20,8 +20,8 @@ from rag.adapters.base import CAPABILITY_LABELS, Capability
 
 # 시나리오별 필수 능력 (없으면 skip)
 # 이 능력이 빠지면 시나리오 정의 자체가 성립하지 않는다.
-#   - R4: 반사실 비교(d* 포함/제외 두 세계)가 정의라 INDEX_REBUILD 없이는 불가능.
-#   - 그 외: 응답만 있으면 최소 판정/집계는 가능하므로 QUERY 만 필수.
+#    R4: 반사실 비교(d* 포함/제외 두 세계)가 정의라 INDEX_REBUILD 없이는 불가능.
+#    그 외: 응답만 있으면 최소 판정/집계는 가능하므로 QUERY 만 필수.
 SCENARIO_REQUIRED_CAPABILITIES: dict[str, set[Capability]] = {
   "NORMAL": {Capability.QUERY},
   "R7": {Capability.QUERY},
@@ -32,9 +32,9 @@ SCENARIO_REQUIRED_CAPABILITIES: dict[str, set[Capability]] = {
 
 # 시나리오별 권장 능력 (없으면 degrade)
 # 필수는 아니지만, 없으면 "완전판" 진단이 안 되고 블랙박스 수준으로 축소된다.
-#   - R7: system_prompt 가 없으면 평가 정답이 비어 있어 유사도 판정이 무의미 → 축소.
-#   - R2: 검색 원문·민감 라벨이 없으면 ROUGE 대조를 못 하고 응답 PII 유출만 측정 → 축소.
-#   - R9: 문서 주입 능력이 없으면 사전 poison 인덱스에 의존해야 함(판정 자체는 블랙박스).
+#    R7: system_prompt 가 없으면 평가 정답이 비어 있어 유사도 판정이 무의미하므로 축소한다.
+#    R2: 검색 원문·민감 라벨이 없으면 ROUGE 대조를 못 하고 응답 PII 유출만 재므로 축소한다.
+#    R9: 문서 주입 능력이 없으면 사전 poison 인덱스에 의존해야 함(판정 자체는 블랙박스).
 SCENARIO_RECOMMENDED_CAPABILITIES: dict[str, set[Capability]] = {
   "NORMAL": set(),
   "R7": {Capability.SYSTEM_PROMPT},

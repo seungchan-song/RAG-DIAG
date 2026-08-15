@@ -3,11 +3,11 @@
 왜 이 파일이 있나 — `report_dashboard.html` 은 심사위원·고객에게 건네라고 만든
 유일한 산출물인데, `report/generator.py` 가 `snapshot.config.adapter` 를 통째로
 JSON 임베드한다. `adapter.type` 이 rest/sota 면 그 블록에 외부 RAG 의 Bearer
-토큰(`adapter.api_key`)이 들어 있어, 예전에는 **평문 그대로 실려 나갔다**
+토큰(`adapter.api_key`)이 들어 있어, 예전에는 평문 그대로 실려 나갔다
 (2026-08-06 실측 확인).
 
 프로젝트에는 이미 `experiment.py:SECRET_FIELD_TOKENS` 정책이 있었는데 config diff
-렌더링에만 적용돼 있었다. 이 테스트는 그 정책이 **리포트 경계에도** 걸려 있는지를
+렌더링에만 적용돼 있었다. 이 테스트는 그 정책이 리포트 경계에도 걸려 있는지를
 고정한다. 동시에 대시보드가 실제로 읽는 필드(`adapter.type`·`capabilities`·
 `generator`)는 살아 있어야 하므로 함께 확인한다.
 

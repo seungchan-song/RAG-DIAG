@@ -82,19 +82,6 @@ def build_rag_pipeline(
   Returns:
     Pipeline: 구성 완료된 RAG 파이프라인
 
-  파이프라인 구조:
-    ┌───────────────┐
-    │ QueryEmbedder │  ← 질문을 벡터로 변환
-    └──────┬────────┘
-    ┌──────▼────────┐
-    │   Retriever   │  ← 유사 문서 검색
-    └──────┬────────┘
-    ┌──────▼────────┐
-    │ PromptBuilder │  ← 검색 결과 + 질문 → 프롬프트
-    └──────┬────────┘
-    ┌──────▼────────┐
-    │   Generator   │  ← LLM 답변 생성
-    └───────────────┘
   """
   query_embedder = create_query_embedder(config)
   retriever = create_retriever(document_store, config)
@@ -109,8 +96,6 @@ def build_rag_pipeline(
   pipeline.add_component("prompt_builder", prompt_builder)
   pipeline.add_component("generator", generator)
 
-  # 3. 컴포넌트 간 연결
-  # 질의 임베딩 → 검색
   pipeline.connect("query_embedder.embedding", "retriever.query_embedding")
   pipeline.connect("retriever.documents", "prompt_builder.documents")
   pipeline.connect("prompt_builder.prompt", "generator.prompt")
@@ -200,7 +185,8 @@ def run_query(
   pb_result = prompt_builder.run(documents=final_documents, query=query)
   prompt = pb_result["prompt"]
 
-  # STEP 4: LLM이 프롬프트를 받아 답변을 생성합니다
+  # 근거 문서가 0건이면 LLM 을 아예 부르지 않고 고정 문구로 답한다. 호출 비용도 비용이지만,
+  # 근거 없이 생성하면 모델이 지어낸 PII 가 유출 집계에 섞여 들어간다.
   context_empty = len(final_documents) == 0
   if context_empty:
     gen_result = {

@@ -34,7 +34,7 @@ def _command_pool(gen: AttackQueryGenerator) -> list[str]:
 
   슬롯 구성이 바뀌면(예: 변형 출력 유도 5종 추가) 기대 쿼리 수도 함께 변하므로,
   개수를 상수로 박지 않고 클래스 상수에서 매번 유도한다. 이 테스트가 지키려는
-  것은 슬롯 개수가 아니라 **A1 이 문서를 순회하지 않는다**는 성질이다.
+  것은 슬롯 개수가 아니라 A1 이 문서를 순회하지 않는다는 성질이다.
   """
   commands = [gen.R2_COMMAND_TEMPLATES[0]]
   if gen.R2_SELF_LOSING_TEMPLATES:
@@ -71,10 +71,10 @@ def test_a1_queries_are_all_distinct() -> None:
 def test_a1_queries_are_subset_of_doc_loop_and_cover_all_commands() -> None:
   """A1 쿼리는 예전 문서 루프가 만들던 조합의 부분집합이고, 명령 슬롯을 다 덮는다.
 
-  D6(중복 제거) 시점에는 두 집합이 **바이트 단위로 같았다**. 그때는 보폭(6)과
+  D6(중복 제거) 시점에는 두 집합이 바이트 단위로 같았다. 그때는 보폭(6)과
   키워드 풀(30)의 배수 관계 덕분에 문서 루프가 만들 수 있는 고유 조합이 정확히
   30개였기 때문이다. 이후 명령 슬롯이 늘어(변형 출력 유도 5종) 문서 루프가
-  만들 수 있는 조합은 훨씬 많아졌지만, A1 은 여전히 **키워드 풀 크기만큼만**
+  만들 수 있는 조합은 훨씬 많아졌지만, A1 은 여전히 키워드 풀 크기만큼만
   돌린다 — 문서 비의존 공격자에게 그 이상은 낭비다.
 
   그래서 지키는 성질을 두 개로 바꾼다.
@@ -88,7 +88,7 @@ def test_a1_queries_are_subset_of_doc_loop_and_cover_all_commands() -> None:
   produced = gen.generate_r2_queries(docs, env="clean")
   actual = {q["query"] for q in produced}
 
-  # --- 예전 구현 재현: slot_index 를 문서 루프 밖에서 누적시키며 순회 ---
+  # 예전 구현 재현: slot_index 를 문서 루프 밖에서 누적시키며 순회
   anchors = [
     gen.R2_ANCHOR_TEMPLATES[i] for i in gen.R2_ACTIVE_ANCHOR_INDICES
   ]
@@ -190,7 +190,7 @@ def test_normal_query_set_matches_legacy_doc_loop() -> None:
   docs = _docs(20)
   actual = {q["query"] for q in attack.generate_queries(docs)}
 
-  # --- 예전 구현 재현 ---
+  # 예전 구현 재현
   template_pool = nb._NORMAL_QUERY_TEMPLATES
   template_count = min(9, len(template_pool))
   legacy: set[str] = set()

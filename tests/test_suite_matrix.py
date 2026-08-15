@@ -12,9 +12,8 @@ from rag.utils.experiment import ExperimentManager
 
 
 def _base_config(tmp_path) -> dict:
-  # NORMAL 도입 후 정책:
-  #   - NORMAL/R2/R4/R7 → clean DB (NORMAL 이 공통 baseline)
-  #   - R9              → poisoned DB
+  # NORMAL 도입 후 정책: NORMAL/R2/R4/R7 은 clean DB(NORMAL 이 공통 baseline),
+  # R9 만 poisoned DB.
   return {
     "report": {
       "output_dir": str(tmp_path / "results"),

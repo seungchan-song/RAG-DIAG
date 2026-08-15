@@ -20,10 +20,8 @@ from __future__ import annotations
 import json
 from string import Template
 
-# ---------------------------------------------------------------------------
-# 아래 문자열이 실제 HTML 페이지 전체다. `$run_id` 등 6개 자리표시자만 치환되며,
-# 나머지 `${...}` 는 JS 템플릿 리터럴이라 safe_substitute 가 그대로 둔다(식별자 아님).
-# ---------------------------------------------------------------------------
+# 아래 문자열이 실제 HTML 페이지 전체다. $run_id 등 6개 자리표시자만 치환되며,
+# 나머지 ${...} 는 JS 템플릿 리터럴이라 safe_substitute 가 그대로 둔다(식별자 아님).
 _DASHBOARD_RAW = r"""<!doctype html>
 <html lang="ko" data-theme="light">
 <head>

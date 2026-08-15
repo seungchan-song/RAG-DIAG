@@ -116,23 +116,23 @@ class RegexDetector:
   """
 
   PATTERNS: ClassVar[list[PIIPattern]] = [
-    # 1. 휴대전화번호
+    # 휴대전화번호
     # 010-1234-5678, 010.1234.5678, 01012345678 등
     PIIPattern(
       tag="QT_MOBILE",
       pattern=re.compile(
         ASCII_LEFT_BOUNDARY
         + r"01[016789]"        # 010, 011, 016, 017, 018, 019
-        + r"[-.\s]?"           # 구분자: 하이픈, 점, 공백 (선택)
-        + r"\d{3,4}"           # 중간 3~4자리
-        + r"[-.\s]?"           # 구분자 (선택)
-        + r"\d{4}"             # 끝 4자리
+        + r"[-.\s]?"
+        + r"\d{3,4}"
+        + r"[-.\s]?"
+        + r"\d{4}"
         + ASCII_RIGHT_BOUNDARY
       ),
       description="휴대전화번호 (010-XXXX-XXXX 등)",
     ),
 
-    # 2. 일반전화번호
+    # 일반전화번호
     # 02-1234-5678, 031-123-4567, 042-123-4567 등
     # 주의: 경계가 없으면 이 패턴이 주민등록번호 앞부분을 삼킨다.
     # `051109-3345671`(2002~2006년생) 에서 `051109-3345` 를 일반전화로 매칭해,
@@ -152,20 +152,20 @@ class RegexDetector:
       description="일반전화번호 (02-XXXX-XXXX, 031-XXX-XXXX 등)",
     ),
 
-    # 3. 이메일 주소
+    # 이메일 주소
     # user@domain.com, test.email@company.co.kr 등
     PIIPattern(
       tag="TMI_EMAIL",
       pattern=re.compile(
         r"[a-zA-Z0-9._%+\-]+"  # 로컬 파트 (user.name 등)
-        r"@"                    # @ 기호
+        r"@"
         r"[a-zA-Z0-9.\-]+"     # 도메인 (company.co)
         r"\.[a-zA-Z]{2,}"      # 최상위 도메인 (.com, .kr 등)
       ),
       description="이메일 주소",
     ),
 
-    # 4. 신용카드번호
+    # 신용카드번호
     # 4532-1234-5678-9012, 4532123456789012 등 (16자리)
     # needs_validation=True → STEP 2에서 Luhn 알고리즘으로 검증
     # 경계가 없으면 20자리 계좌번호 같은 긴 숫자열의 앞 16자리만 카드번호로
@@ -174,20 +174,20 @@ class RegexDetector:
       tag="QT_CARD",
       pattern=re.compile(
         ASCII_LEFT_BOUNDARY
-        + r"\d{4}"             # 앞 4자리
-        + r"[-.\s]?"
         + r"\d{4}"
         + r"[-.\s]?"
         + r"\d{4}"
         + r"[-.\s]?"
-        + r"\d{4}"             # 끝 4자리
+        + r"\d{4}"
+        + r"[-.\s]?"
+        + r"\d{4}"
         + ASCII_RIGHT_BOUNDARY
       ),
       description="신용카드번호 (16자리)",
       needs_validation=True,
     ),
 
-    # 5. 주민등록번호
+    # 주민등록번호
     # 900101-1234567 (13자리, 하이픈 포함)
     # needs_validation=True → STEP 2에서 mod 11 체크섬으로 검증
     # 뒷자리 첫째 1~4이면 주민등록번호(RRN), 5~8이면 외국인등록번호(ARN)
@@ -198,16 +198,16 @@ class RegexDetector:
         + r"\d{2}"             # 출생년도 뒤 2자리 (90)
         + r"[01]\d"            # 출생월 (01~12)
         + r"[0-3]\d"           # 출생일 (01~31)
-        + r"[-.\s]?"           # 구분자
+        + r"[-.\s]?"
         + r"[1-8]"             # 성별/외국인 코드 (1~8)
-        + r"\d{6}"             # 나머지 6자리
+        + r"\d{6}"
         + ASCII_RIGHT_BOUNDARY
       ),
       description="주민등록번호 또는 외국인등록번호 (13자리)",
       needs_validation=True,
     ),
 
-    # 6. 여권번호
+    # 여권번호
     # M12345678, S99585004 등 — 대한민국 여권번호는 영문 1글자 + 숫자 8자리다.
     #
     # 이전 패턴 `[A-Z]{1,2}\d{7,8}` 은 근거 없이 넓혀 놓은 것이라 두 방향으로 틀렸다.
@@ -223,42 +223,42 @@ class RegexDetector:
       pattern=re.compile(
         ASCII_LEFT_BOUNDARY
         + r"[A-Z]"            # 영문 대문자 1자리 (여권 종류: M/S/R/D/O 등)
-        + r"\d{8}"            # 숫자 8자리
+        + r"\d{8}"
         + ASCII_RIGHT_BOUNDARY
       ),
       description="여권번호 (영문 1자리 + 숫자 8자리, 구형)",
     ),
 
-    # 7. 차량번호
+    # 차량번호
     # 12가1234, 서울12가1234 등
     PIIPattern(
       tag="QT_CAR",
       pattern=re.compile(
         r"(?:[가-힣]{2})?"     # 지역명 (선택): 서울, 경기 등
         r"\s?"
-        r"\d{2,3}"             # 숫자 2~3자리
+        r"\d{2,3}"
         r"\s?"
         r"[가-힣]"             # 한글 1글자 (가, 나, 다 ...)
         r"\s?"
-        r"\d{4}"               # 숫자 4자리
+        r"\d{4}"
       ),
       description="차량번호 (12가1234, 서울12가1234 등)",
     ),
 
-    # 8. IP 주소
+    # IP 주소
     # 192.168.0.1, 10.0.0.1 등 (IPv4)
     PIIPattern(
       tag="QT_IP",
       pattern=re.compile(
         ASCII_LEFT_BOUNDARY
-        + r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"  # 앞 3개 옥텟
-        + r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"           # 마지막 옥텟
+        + r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+        + r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
         + ASCII_RIGHT_BOUNDARY
       ),
       description="IP 주소 (IPv4)",
     ),
 
-    # 9. 나이 표현
+    # 나이 표현
     # 25세, 만 30세, 만30세 등
     PIIPattern(
       tag="QT_AGE",
@@ -268,7 +268,7 @@ class RegexDetector:
       description="나이 표현 (25세, 만 30세 등)",
     ),
 
-    # 10. 주소 (도로명)
+    # 주소 (도로명)
     # "서울특별시 광진구 능동로 209" 등
     PIIPattern(
       tag="QT_ADDR",
@@ -290,7 +290,7 @@ class RegexDetector:
       description="도로명/지번 주소",
     ),
 
-    # 11. 우편번호 (신규 33종)
+    # 우편번호 (신규 33종)
     # 맨 5자리 숫자는 금액·수량과 구분되지 않으므로 '우편번호' 라벨 뒤에서만 잡는다.
     # 한계: 고정폭 lookbehind 라 "우편번호: 06234"(콜론) 형태는 놓친다.
     #           코퍼스가 "우편번호 06234" 한 가지 형식만 쓰므로 지금은 충분하고,

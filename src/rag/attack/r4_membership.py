@@ -78,8 +78,8 @@ class R4MembershipAttack(BaseAttack):
     self._non_member_adapters: dict[str, Any] = {}
     # 캐시를 지키는 락. CLI 는 이 인스턴스 하나를 ThreadPoolExecutor(max_workers=5)
     # 위에서 공유하는데, generate_queries 가 문서당 b=0 쿼리를 연속으로 쌓고 실행부가
-    # 전량을 한 번에 submit 하므로 **같은 target_doc_id 의 b=0 쿼리들이 나란히 워커에
-    # 들어간다**. 락이 없으면 전부 빈 캐시를 보고 build_variant 를 중복 실행했다
+    # 전량을 한 번에 submit 하므로 같은 target_doc_id 의 b=0 쿼리들이 나란히 워커에
+    # 들어간다. 락이 없으면 전부 빈 캐시를 보고 build_variant 를 중복 실행했다
     # (실측: 동시 5건 → 5회 전부 재구성, 캐시 적중 0). build_variant 는 문서 1,200개
     # 재색인 + 파이프라인 재빌드라 비용이 크고, 그 순간 같은 크기의 store 가 워커 수만큼
     # 동시에 메모리에 뜬다.

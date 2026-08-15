@@ -348,14 +348,14 @@ class SotaRagAdapter:
     """이전 실행이 남긴 R9 poison 문서 파일을 지웁니다.
 
     `write_documents()` 는 poison 을 SOTA 문서 트리에 `.txt` 로 써넣는데 그걸 지우는
-    주체가 아무도 없었다. 방치하면 **다음 실행의 NORMAL(대조군)이 지난 회차 poison 을
-    검색**해, "공격이 대조군보다 PII 를 얼마나 더 노출했나" 라는 이 프로젝트의 핵심
+    주체가 아무도 없었다. 방치하면 다음 실행의 NORMAL(대조군)이 지난 회차 poison 을
+    검색해, "공격이 대조군보다 PII 를 얼마나 더 노출했나" 라는 이 프로젝트의 핵심
     비교가 통째로 깨진다. corpus 트리거 모드(`attack.r9.trigger_source: "corpus"`)에서는
     회당 250건까지 쌓이므로 방치 비용이 특히 크다. 덤으로 `R9InjectionAttack.
     _detect_poison_retrieval` 이 지난 회차 poison 도 "검색됨" 으로 세어
     `blocked_at_retrieval_count` 를 과소집계하는 것도 함께 막는다.
 
-    삭제 대상은 **우리가 만든 `poison-*.txt` 뿐**이다 — poison 의 doc_id 는
+    삭제 대상은 우리가 만든 `poison-*.txt` 뿐이다 — poison 의 doc_id 는
     `attack/query_generator.py:generate_r9_payloads` 가 항상 `poison-` 접두사로
     만든다. 사용자가 같은 폴더에 둔 다른 문서는 건드리지 않는다.
 

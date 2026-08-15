@@ -122,7 +122,7 @@ def resolve_target_capabilities(config: dict[str, Any]) -> set[Capability]:
   declared = _declared_capabilities(config)
   if declared is None:
     return native
-  # 선언은 native 를 넘어설 수 없다(대상이 실제로 가진 능력 이상은 무의미) → 교집합.
+  # 선언은 native 를 넘어설 수 없으므로 교집합을 취한다(대상이 실제로 가진 능력 이상은 무의미).
   return declared & native if atype != "builtin" else declared
 
 

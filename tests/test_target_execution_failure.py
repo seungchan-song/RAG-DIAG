@@ -1,14 +1,14 @@
 """대상 RAG 호출 실패가 '공격 실패' 로 위장되지 않는지 검증합니다.
 
 배경(2026-08-06 감사 U14-7):
-  `BaseAttack._run_rag_query` 가 **모든 예외를 삼키고 빈 트레이스**를 돌려줬다.
+  `BaseAttack._run_rag_query` 가 모든 예외를 삼키고 빈 트레이스를 돌려줬다.
   그 결과 대상 서버가 죽었거나 API 키가 틀렸을 때도 빈 응답 → `success=False`
-  → 리포트에는 "공격 실패"로 찍혔다. 화면에서 **방어가 막은 것과 구별되지 않는다.**
+  → 리포트에는 "공격 실패"로 찍혔다. 화면에서 방어가 막은 것과 구별되지 않는다.
 
   같은 구멍이 한 층 아래에도 있었다 — `generator/generator.py` 의 ClovaX·Local
   생성기는 HTTP 4xx/5xx 를 만나도 예외 대신 `replies=[""]` + `meta=[{"error": ...}]`
-  를 돌려준다. 그래서 base.py 의 try/except 만 걷어내면 **로컬 모델(대회 제출 경로)
-  에서는 아무것도 달라지지 않는다.** 두 경로를 함께 고정한다.
+  를 돌려준다. 그래서 base.py 의 try/except 만 걷어내면 로컬 모델(대회 제출 경로)
+  에서는 아무것도 달라지지 않는다. 두 경로를 함께 고정한다.
 
   이 프로젝트가 "방어 효과를 정량화한다"고 주장하는 이상, `is_blocked`(방어가 막음)와
   `TargetExecutionError`(부르지도 못함)는 절대 같은 칸에 들어가면 안 된다.
@@ -24,7 +24,7 @@ from rag.adapters.base import Capability, RagTrace
 from rag.attack.normal_baseline import NormalBaselineAttack
 
 # `TargetExecutionError` 는 각 테스트 본문에서 import 한다 — 모듈 최상단에서 부르면
-# 패치 이전 코드에서 **파일 전체가 수집 에러**로 끝나 정작 빨개져야 할 테스트가
+# 패치 이전 코드에서 파일 전체가 수집 에러로 끝나 정작 빨개져야 할 테스트가
 # 실행되지 않는다(D10 에서 같은 함정을 밟았다).
 
 

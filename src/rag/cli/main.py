@@ -47,8 +47,8 @@ console = Console()
 _VERSION = "0.1.0"
 
 # 시나리오별 고정 실행 환경 (옵션 B 매트릭스의 source of truth)
-# - NORMAL/R2/R4/R7 → clean DB
-# - R9              → poisoned DB (공격 문서 주입이 본질이므로 clean 의미 없음)
+#  NORMAL/R2/R4/R7 → clean DB
+#  R9              → poisoned DB (공격 문서 주입이 본질이므로 clean 의미 없음)
 # 사용자는 --env 로 명시 override 할 수 있으나, 미지정 시 이 값이 사용된다.
 SCENARIO_FIXED_ENV: dict[str, str] = {
     "NORMAL": "clean",
@@ -98,11 +98,11 @@ _SCENARIO_LABELS: dict[str, dict[str, str]] = {
 }
 
 # "방금 시도" 라벨용 한국어 매핑.
-# - NORMAL: query_type → 직접 요청/자료 조회/일상 질의 (PII 호기심 baseline)
-# - R2: 단일 시나리오 의미로 통일
-# - R7: R7_PAYLOAD_POOL 의 8개 payload_type 키를 그대로 매핑
+#  NORMAL: query_type → 직접 요청/자료 조회/일상 질의 (PII 호기심 baseline)
+#  R2: 단일 시나리오 의미로 통일
+#  R7: R7_PAYLOAD_POOL 의 8개 payload_type 키를 그대로 매핑
 #       (anchored_ 접두어가 붙은 변형은 _resolve_query_type_ko 에서 처리)
-# - R4/R9 는 query_info 구조가 달라 _resolve_query_type_ko 에서 분기 처리
+#  R4/R9 는 query_info 구조가 달라 _resolve_query_type_ko 에서 분기 처리
 _QUERY_TYPE_KO: dict[str, dict[str, str]] = {
   "NORMAL": {
     "info_request": "직접 정보 요청",
@@ -435,7 +435,7 @@ def _show_banner() -> None:
     `python -m rag` 를 인수 없이 실행했을 때 호출되며,
     ASCII 아트 로고, 버전, 프로젝트 설명, 명령어 목록을 Rich로 렌더링한다.
     """
-    # ── 로고 패널 ──────────────────────────────────────────
+    # 로고 패널
     banner_text = Text(_BANNER, style="bold cyan", justify="center")
     subtitle = Text(
         f"RAG 공격 및 한국형 PII 유출 진단 시스템  •  v{_VERSION}  •  팀 수박",
@@ -450,7 +450,7 @@ def _show_banner() -> None:
         )
     )
 
-    # ── 명령어 목록 ────────────────────────────────────────
+    # 명령어 목록
     cmd_table = Table(
         show_header=True,
         header_style="bold magenta",
@@ -507,8 +507,7 @@ def _show_banner() -> None:
         )
     )
 
-    # ── 빠른 시작 순서 ────────────────────────────────────
-    # 처음 사용자가 0 → 4 단계 순으로 따라가면 매트릭스 실험 + 리포트까지 완료된다.
+    # 빠른 시작 순서. 0 부터 4 단계까지 따라가면 매트릭스 실험과 리포트까지 끝난다.
     quick_start = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
     quick_start.add_column("Step", style="bold yellow", no_wrap=True)
     quick_start.add_column("Command", style="green")
@@ -548,8 +547,7 @@ def _show_banner() -> None:
         )
     )
 
-    # ── 팁 & 힌트 ─────────────────────────────────────────
-    # 컴팩트 유지를 위해 핵심 3개만 남긴다 (--help 안내 + resume + 단일 시나리오).
+    # 팁. 컴팩트 유지를 위해 핵심 3개만 남긴다 (--help 안내 + resume + 단일 시나리오).
     tips = Table(show_header=False, box=None, padding=(0, 1))
     tips.add_column("tip", style="white")
     tips.add_row(

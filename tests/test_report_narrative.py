@@ -30,7 +30,7 @@ def _summary() -> dict:
       },
       "NORMAL": {"scenario": "NORMAL", "total": 360, "pii_response_count": 32},
     },
-    # 표시용 배수·초과분은 **응답 수를 맞춘** 값(pii_rate_ratio / pii_excess_count)만 쓴다.
+    # 표시용 배수·초과분은 응답 수를 맞춘 값(pii_rate_ratio / pii_excess_count)만 쓴다.
     # 원시 총계(pii_total_ratio / pii_delta_total)는 질의를 더 많이 쏜 시나리오를
     # 실제보다 위험해 보이게 만들어서 화면에 노출하지 않는다.
     "normal_vs_attack_pii_comparison": {
@@ -259,7 +259,7 @@ class TestHeadlineMetrics:
 
 
 class TestRiskScaleConsistency:
-  """총평 등급 · 시나리오 배지 · 종합 위험도 점수가 **같은 눈금**을 쓰는지 고정한다.
+  """총평 등급 · 시나리오 배지 · 종합 위험도 점수가 같은 눈금을 쓰는지 고정한다.
 
   예전에는 총평이 성공률 임계값, 배지가 또 다른 성공률 임계값, 화면의 큰 숫자는
   종합 위험도라 셋이 서로 어긋났다("총평 위험 / 모든 행 주의 / 최고 57점").
