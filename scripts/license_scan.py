@@ -60,12 +60,12 @@ MODELS: list[tuple[str, str, str, str]] = [
   (
     "bbanany/qwen25-3b-korean-pii-gguf",
     "HuggingFace",
-    "Apache-2.0 (선언값 — **과다 허여**) / 실질 Qwen Research License",
+    "Qwen Research License (정확히 표기됨)",
     "STEP 4 교차검증용 로컬 sLLM(Ollama `korean-pii`). 모델 자체는 대회 "
-    "제9조① '오픈웨이트 이상' 요건을 충족한다. 다만 base 인 "
-    "`Qwen/Qwen2.5-3B-Instruct` 의 조건이 함께 적용되므로 Apache-2.0 선언은 "
-    "줄 수 없는 권리를 넘긴다. `LICENSE`·`NOTICE`·'Improved using Qwen' 도 "
-    "누락 — 위 '확인 필요' 참조",
+    "제9조① '오픈웨이트 이상' 요건을 충족한다. base 인 "
+    "`Qwen/Qwen2.5-3B-Instruct` 의 조건이 함께 적용되며, `LICENSE`+`NOTICE`+"
+    "'Improved using Qwen' 표기를 모두 갖춰 재배포 조건(§3·§4.b)을 충족한다 "
+    "— 2026-08-12 갱신본 기준, 위 '확인 필요' 참조",
   ),
   (
     "bbanany/qwen25-3b-korean-pii-qlora3",
@@ -92,6 +92,16 @@ DATASETS: list[tuple[str, str, str, str]] = [
     "CC-BY-4.0",
     "STEP 3 NER 학습셋(전량 합성, 11,732문서·33종). 저장소에 `LICENSE` 포함. "
     "출처 표기만 하면 상업적 이용까지 허용",
+  ),
+  (
+    "bbanany/korean-pii-candidate-classification",
+    "HuggingFace",
+    "other / all-rights-reserved (저장소 `LICENSE` 원문 기준)",
+    "STEP 4 sLLM(`-qlora3` → GGUF) 파인튜닝셋. 전량 합성, 19,842건"
+    "(train 15,875 / valid 1,984 / test 1,983 · 후보 태그 23종 · PII/NOT_PII 이진). "
+    "비OSI 지만 **제8조⑤⑥ 은 데이터셋 공개를 의무화하지 않고 출처·라이선스 명시만 "
+    "요구**하므로 이 표기로 요건을 충족한다(가중치 의무는 제9조②-2-나 로 별개). "
+    "재배포·상업적 이용에는 저작권자 서면 허가가 필요하다",
   ),
   (
     "KDPII",
@@ -216,17 +226,16 @@ def render(rows: list[tuple[str, str, str]], missing: list[str]) -> str:
     "공개**' 이지 OSI 인증이 아니다 — **OSI 의무는 참가팀이 직접 작성한 코드에만** 붙는다"
     "(제8조① · 제9조②-2-다). [별표2] 가 경계하라는 것도 '**재배포 및 수정본 공개 금지**' "
     "인데 §3 은 그 반대다. **→ 재학습 불필요.** "
-    "**④ 실제로 남은 결함은 GGUF 저장소 표기 2건이며, 이건 이제 규정 위반이다** — "
-    "`bbanany/qwen25-3b-korean-pii-gguf` 가 (ㄱ) 카드에 `license: apache-2.0` 을 선언하는데 "
-    "Apache-2.0 은 수령자에게 상업적 이용을 허가한다. §3.d 는 '내 수정분에 다른 조건을 "
-    "붙일 수 있다'면서도 '전체가 이 계약을 계속 준수하는 한'이라는 단서를 달고 있으므로 "
-    "**우리가 갖지 않은 권리를 넘겨주는 과다 허여**다. (ㄴ) 저장소에 `LICENSE`·`NOTICE` 가 "
-    "없고 'Improved using Qwen' 표기도 없어 §3.a·§3.c·§4.b 미충족이다. 둘 다 제9조②-2-나"
-    "(기반 라이선스 최우선 준수)와 제8조⑤⑥(활용 모델의 출처·라이선스 명확히 공개)에 걸린다. "
-    "**같은 어댑터의 `-qlora3` 는 셋 다 갖췄다**(`LICENSE` 7,388B = 원문과 바이트 동일 · "
-    "`NOTICE` 373B · 카드 본문 'Improved using Qwen.' · `license: other`"
-    "+`qwen-research-license`) — 방법을 몰라서가 아니라 GGUF 저장소에서만 빠뜨린 것이라 "
-    "**GGUF 카드 수정만으로 해소된다.** |",
+    "**④ GGUF 저장소 표기 결함 2건은 2026-08-12 에 해소됐다(2026-08-17 HF 저장소 직접 "
+    "조회로 재확인).** 한동안 `bbanany/qwen25-3b-korean-pii-gguf` 는 (ㄱ) 카드에 "
+    "`license: apache-2.0` 을 선언해 **우리가 갖지 않은 상업적 이용 권리를 넘기고**(§3.d 는 "
+    "수정분에 다른 조건을 붙이는 것을 '전체가 이 계약을 계속 준수하는 한'으로만 허용한다), "
+    "(ㄴ) `LICENSE`·`NOTICE`·'Improved using Qwen' 이 없어 §3.a·§3.c·§4.b 를 못 채웠다 — "
+    "제9조②-2-나·제8조⑤⑥ 에 걸리는 상태였다. **현재 갱신본은 셋 다 갖췄다**: "
+    "`license: other`+`license_name: qwen-research-license`+`license_link` · `LICENSE` "
+    "7,442B · `NOTICE` 378B · 카드 본문 'Improved using Qwen.'. 상류 `-qlora3` 도 동일하다. "
+    "**→ 이 항목에 남은 우리 쪽 조치는 없다.** 이력을 지우지 않고 남기는 이유는 이 파일이 "
+    "규정 증빙 원자료라 '언제 무엇을 확인했는가'가 근거이기 때문이다. |",
     "| 대회 규정 제9조④ (**미이행**) | 'AI 모델을 탑재하거나 적용한 경우, 참가자는 **모델 "
     "정보를 포함하여 지정된 서식에 따라** 관련 내용을 작성하여 출품작과 함께 제출해야 "
     "한다.' 우리는 NER(`townboy/kpfbert-ner`)·sLLM(`bbanany/qwen25-3b-korean-pii-gguf`)·"

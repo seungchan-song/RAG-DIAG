@@ -27,8 +27,11 @@ from rag.pii.step3_ner import NER_LABEL_MAP, NERMatch
 # NER_LABEL_MAP 을 뒤집되(먼저 선언된 라벨이 이김) 아래 예외만 손으로 잡는다.
 _ADAPTER_TAG_OVERRIDES: dict[str, str] = {
   # ORG 는 DEPARTMENT/WORKPLACE/SCHOOL 3개가 합쳐진 태그라 복원이 불가능하다.
-  # 어댑터가 학습한 것은 WORKPLACE 뿐이므로 그쪽으로 보낸다(정보 손실 감수).
-  # DEPARTMENT·SCHOOL 학습 추가는 팀원에게 요청해 둔 상태다.
+  # 병목은 어댑터가 아니라 우리 쪽이다 — 학습셋(dataset_report.json, 2026-08-17
+  # 확인)에 DEPARTMENT 800 · SCHOOL 800 · WORKPLACE 800 건이 다 들어 있는데,
+  # NER_LABEL_MAP 이 셋을 ORG 하나로 접어 버려 어느 쪽이었는지 여기서 알 수 없다.
+  # 셋 중 하나를 골라야 하므로 WORKPLACE 로 보낸다(정보 손실 감수).
+  # 되살리려면 NERMatch 가 원본 모델 라벨을 함께 들고 와야 한다.
   "ORG": "WORKPLACE",
 }
 
