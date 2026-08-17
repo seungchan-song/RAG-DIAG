@@ -405,6 +405,10 @@ python -m rag run --all-scenarios -c config/anythingllm.yaml --auto-report
 
 ## 5. 결과 확인 방법
 
+실행하지 않고 결과물만 먼저 보려면 [`docs/sample-reports/`](docs/sample-reports/) 에 완주한
+실험 1건(10셀 · 1,128질의)의 리포트가 그대로 담겨 있습니다. GitHub 웹에서는 HTML 이 렌더되지
+않으므로 저장소를 받은 뒤 로컬 브라우저로 여세요 (받는 방법은 그 폴더의 README 참고).
+
 실행이 끝나면 `data/results/<run_id>/` 폴더에 결과가 저장됩니다.
 
 주요 파일은 다음과 같습니다.
