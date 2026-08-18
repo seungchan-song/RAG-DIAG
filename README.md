@@ -524,3 +524,21 @@ python -m rag run --help
 - API 키가 포함된 `.env` 파일은 Git에 커밋하지 마세요.
 - 대시보드나 CSV 결과를 공유하기 전 PII 마스킹 설정을 확인하세요.
 - 오픈소스 배포 시 예제 데이터도 실제 개인정보가 없는지 확인하세요.
+
+## 10. 라이선스 및 제3자 고지
+
+- 이 저장소가 직접 작성한 소스코드: MIT License — [`LICENSE`](LICENSE)
+- 사용한 라이브러리·모델·데이터셋의 출처와 라이선스 전수: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+
+탑재 모델은 4종이며 모두 가중치가 공개돼 있고, 기본 실행 경로는 로컬 구동입니다
+(`generator.provider: "local"` · `pii.sllm.base_url: http://localhost:11434/v1`).
+
+| 구분 | 모델 | 라이선스 |
+|---|---|---|
+| 임베딩 | `dragonkue/BGE-m3-ko` | Apache-2.0 |
+| 리랭킹 | `dragonkue/bge-reranker-v2-m3-ko` | Apache-2.0 |
+| PII NER (STEP 3) | `townboy/kpfbert-ner` | MIT |
+| PII 교차검증 sLLM (STEP 4) | `bbanany/qwen25-3b-korean-pii-gguf` | Qwen Research License |
+
+`data/documents` 아래 테스트 문서는 `scripts/generate_dataset.py` 로 만든 전량 합성
+데이터이며 실제 개인정보를 포함하지 않습니다.
