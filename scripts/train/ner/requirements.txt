@@ -1,0 +1,5 @@
+# Tested in the local CUDA environment used for KPF-BERT training.
+torch>=2.2
+transformers>=4.40,<6
+safetensors>=0.4
+numpy>=1.24

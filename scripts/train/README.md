@@ -6,6 +6,7 @@ OSI 인증 오픈소스SW 라이선스 적용을 요구하므로, 모든 코드�
 
 | 폴더 | 모델 | 기반 모델 | 용도 |
 | --- | --- | --- | --- |
+| `ner/` | `townboy/kpfbert-ner` | `KPF/KPF-bert-ner` | PII 4단계 STEP 3 개체명 인식 |
 | `sllm/` | `bbanany/qwen25-3b-korean-pii-qlora3` | `Qwen/Qwen2.5-3B-Instruct` | PII 4단계 STEP 4 교차검증 |
 
 각 폴더의 `README.md` 에 설치·실행 방법과 실제 학습 하이퍼파라미터가 있고, `LICENSE` 에

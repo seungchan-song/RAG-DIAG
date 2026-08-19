@@ -1,0 +1,9 @@
+# 1) Convert character spans to KPF-BERT BIO rows
+python prepare_dataset.py --input <raw-corpus>/corpus_all.jsonl --output-dir <work>/bio --tokenizer KPF/KPF-bert-ner --label-map <raw-corpus>/label_map.json --max-length 512
+
+# 2) Fine-tune on the fixed train split (validation is used for early stopping; test is not used)
+python train.py --data <work>/bio/corpus_all_bio.jsonl --label-map <work>/bio/label_map.json --output <work>/model --model KPF/KPF-bert-ner --epochs 3 --batch-size 4 --validation-batch-size 8 --gradient-accumulation 8 --learning-rate 3e-5 --max-length 512 --patience 2
+
+# Optional final refinement stages, each starting from the previous output model
+python train.py --data <work>/bio/corpus_all_bio.jsonl --label-map <work>/bio/label_map.json --output <work>/model_refined_id --model <work>/model --tokenizer <work>/model --epochs 1 --batch-size 4 --validation-batch-size 8 --gradient-accumulation 8 --learning-rate 5e-6 --max-length 512 --patience 1 --local-files-only
+python train.py --data <work>/bio/corpus_all_bio.jsonl --label-map <work>/bio/label_map.json --output <work>/model_final --model <work>/model_refined_id --tokenizer <work>/model_refined_id --epochs 1 --batch-size 4 --validation-batch-size 8 --gradient-accumulation 8 --learning-rate 1e-6 --max-length 512 --patience 1 --local-files-only
