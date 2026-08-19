@@ -27,6 +27,23 @@ COPYLEFT = re.compile(
   r"GPL|AGPL|LGPL|MPL|EPL|CDDL|SSPL|CC.?BY.?NC|NonCommercial|Proprietary", re.I
 )
 
+# 학습·추론 코드(scripts/train/**)가 쓰는 의존성. pyproject 에는 없다 — 모델을 만들 때만
+# 쓰고 진단 파이프라인 실행에는 필요 없기 때문이다. 제8조⑥ 이 "활용한 모든 오픈소스
+# 라이브러리·프레임워크"의 출처·라이선스 공개를 요구하므로 여기에 함께 싣는다.
+# 목록을 손으로 적지 않고 requirements 파일을 직접 읽는 이유는, 팀원이 그 파일을 고쳤을 때
+# 표가 조용히 어긋나는 것을 막기 위해서다.
+TRAINING_REQUIREMENT_GLOB = "scripts/train/*/requirements*.txt"
+
+# 학습 전용 패키지는 CUDA 환경 전제라 우리 macOS/CPU 개발 환경에 설치되지 않는다.
+# importlib.metadata 로 못 읽으므로 PyPI 메타데이터를 직접 조회해 받아 적었다(2026-08-19).
+# 설치돼 있으면 아래 값이 아니라 설치된 배포판의 메타데이터가 우선한다.
+TRAINING_LICENSE_FALLBACK: dict[str, str] = {
+  "datasets": "Apache 2.0",
+  "peft": "Apache",
+  "bitsandbytes": "MIT",
+  "tensorboard": "Apache 2.0",
+}
+
 # 모델·데이터셋은 PyPI 메타데이터에 없으므로 손으로 관리한다.
 # (이름, 출처, 라이선스, 비고) — 라이선스가 불명확하면 그대로 적는다. 아는 척하지 않는다.
 MODELS: list[tuple[str, str, str, str]] = [
@@ -172,7 +189,36 @@ def dependency_closure(root: Path) -> tuple[list[tuple[str, str, str]], list[str
   return rows, sorted(missing)
 
 
-def render(rows: list[tuple[str, str, str]], missing: list[str]) -> str:
+def training_requirements(root: Path) -> list[tuple[str, str, str]]:
+  """scripts/train/**/requirements*.txt 를 읽어 (패키지, 사용처, 라이선스) 를 만든다.
+
+  버전 조건은 표에 넣지 않는다. 파일마다 범위가 달라(예: torch 가 학습은 고정 버전,
+  추론은 범위) 한 칸에 합치면 거짓이 되고, 원본 파일이 같은 저장소에 있으므로 중복이다.
+  """
+  used_by: dict[str, set[str]] = {}
+  for path in sorted(root.glob(TRAINING_REQUIREMENT_GLOB)):
+    label = f"{path.parent.name}(추론)" if "inference" in path.name else path.parent.name
+    for line in path.read_text(encoding="utf-8").splitlines():
+      line = line.strip()
+      if not line or line.startswith("#"):
+        continue
+      used_by.setdefault(normalize(line), set()).add(label)
+
+  rows: list[tuple[str, str, str]] = []
+  for name in sorted(used_by):
+    try:
+      lic = license_of(md.distribution(name))
+    except md.PackageNotFoundError:
+      lic = TRAINING_LICENSE_FALLBACK.get(name, "UNKNOWN")
+    rows.append((name, " · ".join(sorted(used_by[name])), lic))
+  return rows
+
+
+def render(
+  rows: list[tuple[str, str, str]],
+  missing: list[str],
+  training: list[tuple[str, str, str]],
+) -> str:
   """THIRD_PARTY_NOTICES.md 본문을 만든다."""
   flagged = [row for row in rows if COPYLEFT.search(row[2])]
   unknown = [row for row in rows if row[2] == "UNKNOWN"]
@@ -189,6 +235,7 @@ def render(rows: list[tuple[str, str, str]], missing: list[str]) -> str:
     "## 요약",
     "",
     f"- 파이썬 의존 폐포: **{len(rows)}개**(설치 기준)",
+    f"- 학습·추론 코드 의존성: **{len(training)}개**(`scripts/train/**`, 폐포와 별개)",
     f"- copyleft 계열: **{len(flagged)}개** — {', '.join(n for n, _, _ in flagged) or '없음'}",
     f"- 라이선스 미상: **{len(unknown)}개** — {', '.join(n for n, _, _ in unknown) or '없음'}",
     "",
@@ -268,6 +315,18 @@ def render(rows: list[tuple[str, str, str]], missing: list[str]) -> str:
     "| --- | --- | --- |",
   ]
   lines += [f"| `{n}` | {v} | {lic} |" for n, v, lic in rows]
+  lines += [
+    "",
+    "## 학습·추론 코드 의존성",
+    "",
+    "`scripts/train/**` 의 모델 학습·추론 코드가 쓰는 패키지입니다. 진단 파이프라인 실행에는",
+    "필요하지 않아 `pyproject.toml` 에 넣지 않았고, 정확한 버전 조건은 각 폴더의",
+    "`requirements*.txt` 원본에 있습니다.",
+    "",
+    "| 패키지 | 사용처 | 라이선스 |",
+    "| --- | --- | --- |",
+  ]
+  lines += [f"| `{n}` | {where} | {lic} |" for n, where, lic in training]
 
   if missing:
     lines += [
@@ -296,9 +355,10 @@ def main() -> int:
     return 1 if (flagged or unknown) else 0
 
   target = root / "THIRD_PARTY_NOTICES.md"
-  target.write_text(render(rows, missing), encoding="utf-8")
+  training = training_requirements(root)
+  target.write_text(render(rows, missing, training), encoding="utf-8")
   print(
-    f"{target.name} 생성 — 의존성 {len(rows)}개 · "
+    f"{target.name} 생성 — 의존성 {len(rows)}개 · 학습 의존성 {len(training)}개 · "
     f"copyleft {len(flagged)} · 미상 {len(unknown)}"
   )
   return 0

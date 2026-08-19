@@ -8,7 +8,8 @@
 
 ## 요약
 
-- 파이썬 의존 폐포: **87개**(설치 기준)
+- 파이썬 의존 폐포: **89개**(설치 기준)
+- 학습·추론 코드 의존성: **11개**(`scripts/train/**`, 폐포와 별개)
 - copyleft 계열: **2개** — certifi, tqdm
 - 라이선스 미상: **0개** — 없음
 
@@ -49,36 +50,37 @@
 
 | 패키지 | 버전 | 라이선스 |
 | --- | --- | --- |
-| `absl-py` | 2.4.0 | Apache-2.0 |
-| `annotated-doc` | 0.0.4 | MIT |
-| `annotated-types` | 0.7.0 | MIT License |
-| `anyio` | 4.13.0 | MIT |
+| `absl-py` | 2.5.0 | Apache-2.0 |
+| `annotated-doc` | 0.0.5 | MIT |
+| `annotated-types` | 0.8.0 | MIT |
+| `anyio` | 4.14.2 | MIT |
 | `attrs` | 26.1.0 | MIT |
 | `backoff` | 2.2.1 | MIT |
-| `certifi` | 2026.1.4 | MPL-2.0 |
-| `charset-normalizer` | 3.4.4 | MIT |
-| `click` | 8.3.2 | BSD-3-Clause |
+| `certifi` | 2026.7.22 | MPL-2.0 |
+| `charset-normalizer` | 3.4.9 | MIT |
+| `click` | 8.4.2 | BSD-3-Clause |
 | `defusedxml` | 0.7.1 | PSFL |
 | `distro` | 1.9.0 | Apache License, Version 2.0 |
-| `docling` | 2.95.0 | MIT |
-| `docling-core` | 2.77.0 | MIT |
-| `docling-haystack` | 1.0.0 | Apache-2.0 |
-| `docling-slim` | 2.95.0 | MIT |
-| `docstring_parser` | 0.17.0 | MIT |
-| `faiss-cpu` | 1.13.2 | MIT AND BSD-3-Clause |
-| `filelock` | 3.25.2 | MIT |
+| `doclang` | 0.7.3 | Apache-2.0 |
+| `docling` | 2.118.0 | MIT |
+| `docling-core` | 2.90.0 | MIT |
+| `docling-haystack` | 2.0.0 | Apache-2.0 |
+| `docling-slim` | 2.118.0 | MIT |
+| `docstring_parser` | 0.18.0 | MIT |
+| `faiss-cpu` | 1.15.0 | MIT |
+| `filelock` | 3.32.2 | MIT |
 | `filetype` | 1.2.0 | MIT |
-| `fsspec` | 2026.3.0 | BSD-3-Clause |
+| `fsspec` | 2026.7.0 | BSD-3-Clause |
 | `h11` | 0.16.0 | MIT |
-| `haystack-ai` | 2.27.0 | Apache-2.0 |
-| `haystack-experimental` | 0.19.0 | Apache-2.0 |
-| `hf-xet` | 1.4.3 | Apache-2.0 |
+| `haystack-ai` | 2.31.0 | Apache-2.0 |
+| `haystack-experimental` | 0.19.0.post1 | Apache-2.0 |
+| `hf-xet` | 1.6.0 | Apache-2.0 |
 | `httpcore` | 1.0.9 | BSD-3-Clause |
 | `httpx` | 0.28.1 | BSD-3-Clause |
-| `huggingface_hub` | 1.10.1 | Apache-2.0 |
-| `idna` | 3.11 | BSD-3-Clause |
+| `huggingface_hub` | 1.26.0 | Apache-2.0 |
+| `idna` | 3.18 | BSD-3-Clause |
 | `Jinja2` | 3.1.6 | BSD License |
-| `jiter` | 0.14.0 | MIT |
+| `jiter` | 0.16.0 | MIT |
 | `joblib` | 1.5.3 | BSD-3-Clause |
 | `jsonref` | 1.1.0 | MIT |
 | `jsonschema` | 4.26.0 | MIT |
@@ -87,40 +89,41 @@
 | `lazy_imports` | 1.2.0 | Apache-2.0 |
 | `loguru` | 0.7.3 | MIT License |
 | `lxml` | 6.1.1 | BSD-3-Clause |
-| `markdown-it-py` | 4.0.0 | MIT License |
+| `markdown-it-py` | 4.2.0 | MIT License |
 | `MarkupSafe` | 3.0.3 | BSD-3-Clause |
 | `mdurl` | 0.1.2 | MIT License |
-| `more-itertools` | 11.0.2 | MIT |
+| `more-itertools` | 11.1.0 | MIT |
 | `mpmath` | 1.3.0 | BSD |
+| `narwhals` | 2.24.0 | MIT |
 | `networkx` | 3.6.1 | BSD-3-Clause |
-| `nltk` | 3.9.4 | Apache License, Version 2.0 |
-| `numpy` | 2.4.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
-| `openai` | 2.31.0 | Apache-2.0 |
-| `packaging` | 26.0 | Apache-2.0 OR BSD-2-Clause |
-| `pandas` | 3.0.3 | BSD License |
-| `pillow` | 12.2.0 | MIT-CMU |
+| `nltk` | 3.10.1 | Apache License, Version 2.0 |
+| `numpy` | 2.4.6 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
+| `openai` | 2.53.0 | Apache-2.0 |
+| `packaging` | 26.2 | Apache-2.0 OR BSD-2-Clause |
+| `pandas` | 3.0.5 | BSD License |
+| `pillow` | 12.3.0 | MIT-CMU |
 | `pluggy` | 1.6.0 | MIT |
-| `posthog` | 7.11.0 | MIT |
-| `pydantic` | 2.13.0 | MIT |
-| `pydantic-settings` | 2.14.1 | MIT |
-| `pydantic_core` | 2.46.0 | MIT |
+| `posthog` | 7.37.2 | MIT |
+| `pydantic` | 2.13.4 | MIT |
+| `pydantic-settings` | 2.14.2 | MIT |
+| `pydantic_core` | 2.46.4 | MIT |
 | `Pygments` | 2.20.0 | BSD-2-Clause |
-| `pypdf` | 6.10.0 | BSD-3-Clause |
+| `pypdf` | 6.14.2 | BSD-3-Clause |
 | `python-dateutil` | 2.9.0.post0 | Dual License |
 | `python-dotenv` | 1.2.2 | BSD-3-Clause |
 | `PyYAML` | 6.0.3 | MIT |
 | `referencing` | 0.37.0 | MIT |
-| `regex` | 2026.4.4 | Apache-2.0 AND CNRI-Python |
-| `reportlab` | 4.5.1 | BSD license (see license.txt for details), Copyright (c) 2000-2025, ReportLab Inc. |
-| `requests` | 2.32.5 | Apache-2.0 |
+| `regex` | 2026.7.19 | Apache-2.0 AND CNRI-Python |
+| `reportlab` | 5.0.0 | BSD license (see license.txt for details), Copyright (c) 2000-2025, ReportLab Inc. |
+| `requests` | 2.34.2 | Apache-2.0 |
 | `rich` | 15.0.0 | MIT |
 | `rouge_score` | 0.1.2 | Apache Software License |
-| `rpds-py` | 0.30.0 | MIT |
-| `safetensors` | 0.7.0 | Apache Software License |
-| `scikit-learn` | 1.8.0 | BSD-3-Clause |
+| `rpds-py` | 2026.6.3 | MIT |
+| `safetensors` | 0.8.0 | Apache Software License |
+| `scikit-learn` | 1.9.0 | BSD-3-Clause |
 | `scipy` | 1.17.1 | BSD License |
-| `sentence-transformers` | 5.4.0 | Apache 2.0 |
-| `setuptools` | 81.0.0 | MIT |
+| `sentence-transformers` | 5.6.1 | Apache-2.0 |
+| `setuptools` | 83.0.0 | MIT |
 | `shellingham` | 1.5.4 | ISC License |
 | `six` | 1.17.0 | MIT |
 | `sniffio` | 1.3.1 | MIT OR Apache-2.0 |
@@ -129,17 +132,37 @@
 | `tenacity` | 9.1.4 | Apache 2.0 |
 | `threadpoolctl` | 3.6.0 | BSD-3-Clause |
 | `tokenizers` | 0.22.2 | Apache Software License |
-| `torch` | 2.12.0 | BSD-3-Clause |
-| `tqdm` | 4.67.3 | MPL-2.0 AND MIT |
-| `transformers` | 5.5.3 | Apache 2.0 License |
-| `typer` | 0.21.2 | MIT |
+| `torch` | 2.13.0 | Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT |
+| `tqdm` | 4.70.0 | MPL-2.0 AND MIT |
+| `transformers` | 5.8.1 | Apache 2.0 License |
+| `typer` | 0.26.8 | MIT |
 | `typing-inspection` | 0.4.2 | MIT |
-| `typing_extensions` | 4.15.0 | PSF-2.0 |
-| `urllib3` | 2.6.3 | MIT |
+| `typing_extensions` | 4.16.0 | PSF-2.0 |
+| `urllib3` | 2.7.0 | MIT |
+
+## 학습·추론 코드 의존성
+
+`scripts/train/**` 의 모델 학습·추론 코드가 쓰는 패키지입니다. 진단 파이프라인 실행에는
+필요하지 않아 `pyproject.toml` 에 넣지 않았고, 정확한 버전 조건은 각 폴더의
+`requirements*.txt` 원본에 있습니다.
+
+| 패키지 | 사용처 | 라이선스 |
+| --- | --- | --- |
+| `accelerate` | sllm · sllm(추론) | Apache |
+| `bitsandbytes` | sllm | MIT |
+| `datasets` | sllm | Apache 2.0 |
+| `hf-xet` | sllm | Apache-2.0 |
+| `huggingface-hub` | sllm · sllm(추론) | Apache-2.0 |
+| `numpy` | ner | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
+| `peft` | sllm | Apache |
+| `safetensors` | ner · sllm · sllm(추론) | Apache Software License |
+| `tensorboard` | sllm | Apache 2.0 |
+| `torch` | ner · sllm · sllm(추론) | Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT |
+| `transformers` | ner · sllm · sllm(추론) | Apache 2.0 License |
 
 ### 이 환경에 설치되지 않아 확인하지 못한 항목
 
 플랫폼 조건부 의존성(Windows 전용·CUDA 전용 등)이라 macOS/CPU 환경에서는 설치되지
 않습니다. 해당 플랫폼에서 다시 돌리면 표에 채워집니다.
 
-`aiocontextvars`, `colorama`, `cuda-bindings`, `cuda-toolkit`, `exceptiongroup`, `importlib-metadata`, `nvidia-cublas`, `nvidia-cudnn-cu13`, `nvidia-cusparselt-cu13`, `nvidia-nccl-cu13`, `nvidia-nvshmem-cu13`, `triton`, `tzdata`, `win32-setctime`
+`aiocontextvars`, `colorama`, `cuda-bindings`, `cuda-toolkit`, `exceptiongroup`, `nvidia-cudnn-cu13`, `nvidia-cusparselt-cu13`, `nvidia-nccl-cu13`, `nvidia-nvshmem-cu13`, `triton`, `tzdata`, `win32-setctime`
