@@ -1,0 +1,1 @@
+python train_qlora.py --train-file ./train.clean.jsonl --valid-file ./valid.clean.jsonl --output-dir ./outputs/final-mode-adapter

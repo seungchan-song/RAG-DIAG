@@ -1,0 +1,51 @@
+{
+  "artifact_type": "peft_qlora_adapter",
+  "base_model": "Qwen/Qwen2.5-3B-Instruct",
+  "train_file": "/workspace/final-mode/train.clean.jsonl",
+  "valid_file": "/workspace/final-mode/valid.clean.jsonl",
+  "train_rows": 15875,
+  "valid_rows": 1984,
+  "max_length": 512,
+  "max_observed_train_tokens": 415,
+  "max_observed_valid_tokens": 415,
+  "train_rows_truncated": 0,
+  "valid_rows_truncated": 0,
+  "epochs": 2.0,
+  "learning_rate": 0.0001,
+  "per_device_train_batch_size": 8,
+  "per_device_eval_batch_size": 16,
+  "gradient_accumulation_steps": 2,
+  "effective_batch_size": 16,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.05,
+  "best_checkpoint": "/workspace/outputs/final-mode-adapter/checkpoint-200",
+  "best_metric": 0.0022984195966273546,
+  "gpu": "NVIDIA A40",
+  "compute_dtype": "torch.bfloat16",
+  "package_versions": {
+    "torch": "2.8.0+cu128",
+    "transformers": "4.57.6",
+    "datasets": "4.8.5",
+    "accelerate": "1.14.0",
+    "peft": "0.20.0",
+    "bitsandbytes": "0.50.0",
+    "huggingface_hub": "0.36.2",
+    "safetensors": "0.8.0"
+  },
+  "train_metrics": {
+    "train_runtime": 3345.3322,
+    "train_samples_per_second": 9.491,
+    "train_steps_per_second": 0.594,
+    "total_flos": 7.34293021116334e+16,
+    "train_loss": 0.016615940113633768,
+    "epoch": 0.8060453400503779
+  },
+  "eval_metrics": {
+    "eval_loss": 0.002288818359375,
+    "eval_runtime": 119.1718,
+    "eval_samples_per_second": 16.648,
+    "eval_steps_per_second": 1.041,
+    "epoch": 0.8060453400503779
+  }
+}

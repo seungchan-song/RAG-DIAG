@@ -1,0 +1,790 @@
+{
+  "schema_version": 1,
+  "seed": 20260810,
+  "split_ratios": {
+    "train": 0.8,
+    "valid": 0.1,
+    "test": 0.09999999999999995
+  },
+  "source": {
+    "files": {
+      "train.jsonl": {
+        "rows": 18400,
+        "labels": {
+          "NOT_PII": 9200,
+          "PII": 9200
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 800,
+          "ADDRESS": 800,
+          "AGE": 800,
+          "BIRTHDATE": 800,
+          "BLOOD_TYPE": 800,
+          "CARD_NUMBER": 800,
+          "CITY": 800,
+          "DEPARTMENT": 800,
+          "EMAIL": 800,
+          "EMPLOYEE_ID": 800,
+          "GENDER": 800,
+          "HEIGHT": 800,
+          "IP_ADDRESS": 800,
+          "MAJOR": 800,
+          "NAME": 800,
+          "NATIONALITY": 800,
+          "NICKNAME": 800,
+          "PHONE_NUMBER": 800,
+          "POSITION": 800,
+          "RELIGION": 800,
+          "SCHOOL": 800,
+          "WEIGHT": 800,
+          "WORKPLACE": 800
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "ADDRESS": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "AGE": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "CITY": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "EMAIL": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "GENDER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "HEIGHT": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "MAJOR": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "NAME": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "NATIONALITY": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "NICKNAME": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "POSITION": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "RELIGION": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "SCHOOL": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "WEIGHT": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "WORKPLACE": {
+            "NOT_PII": 400,
+            "PII": 400
+          }
+        }
+      },
+      "valid.jsonl": {
+        "rows": 2300,
+        "labels": {
+          "NOT_PII": 1150,
+          "PII": 1150
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 100,
+          "ADDRESS": 100,
+          "AGE": 100,
+          "BIRTHDATE": 100,
+          "BLOOD_TYPE": 100,
+          "CARD_NUMBER": 100,
+          "CITY": 100,
+          "DEPARTMENT": 100,
+          "EMAIL": 100,
+          "EMPLOYEE_ID": 100,
+          "GENDER": 100,
+          "HEIGHT": 100,
+          "IP_ADDRESS": 100,
+          "MAJOR": 100,
+          "NAME": 100,
+          "NATIONALITY": 100,
+          "NICKNAME": 100,
+          "PHONE_NUMBER": 100,
+          "POSITION": 100,
+          "RELIGION": 100,
+          "SCHOOL": 100,
+          "WEIGHT": 100,
+          "WORKPLACE": 100
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "AGE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMAIL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "GENDER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "HEIGHT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "MAJOR": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NATIONALITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NICKNAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "POSITION": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "RELIGION": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "SCHOOL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "WEIGHT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "WORKPLACE": {
+            "NOT_PII": 50,
+            "PII": 50
+          }
+        }
+      },
+      "test.jsonl": {
+        "rows": 2300,
+        "labels": {
+          "NOT_PII": 1150,
+          "PII": 1150
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 100,
+          "ADDRESS": 100,
+          "AGE": 100,
+          "BIRTHDATE": 100,
+          "BLOOD_TYPE": 100,
+          "CARD_NUMBER": 100,
+          "CITY": 100,
+          "DEPARTMENT": 100,
+          "EMAIL": 100,
+          "EMPLOYEE_ID": 100,
+          "GENDER": 100,
+          "HEIGHT": 100,
+          "IP_ADDRESS": 100,
+          "MAJOR": 100,
+          "NAME": 100,
+          "NATIONALITY": 100,
+          "NICKNAME": 100,
+          "PHONE_NUMBER": 100,
+          "POSITION": 100,
+          "RELIGION": 100,
+          "SCHOOL": 100,
+          "WEIGHT": 100,
+          "WORKPLACE": 100
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "AGE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMAIL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "GENDER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "HEIGHT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "MAJOR": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NATIONALITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NICKNAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "POSITION": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "RELIGION": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "SCHOOL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "WEIGHT": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "WORKPLACE": {
+            "NOT_PII": 50,
+            "PII": 50
+          }
+        }
+      }
+    },
+    "total_rows": 23000,
+    "unique_rows": 19842,
+    "duplicate_rows_removed": 3158,
+    "exact_cross_split_overlap": {
+      "train.jsonl__valid.jsonl": 299,
+      "train.jsonl__test.jsonl": 302,
+      "valid.jsonl__test.jsonl": 142
+    }
+  },
+  "clean": {
+    "files": {
+      "train.clean.jsonl": {
+        "rows": 15875,
+        "labels": {
+          "NOT_PII": 6675,
+          "PII": 9200
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 800,
+          "ADDRESS": 800,
+          "AGE": 500,
+          "BIRTHDATE": 800,
+          "BLOOD_TYPE": 458,
+          "CARD_NUMBER": 800,
+          "CITY": 800,
+          "DEPARTMENT": 744,
+          "EMAIL": 800,
+          "EMPLOYEE_ID": 800,
+          "GENDER": 500,
+          "HEIGHT": 618,
+          "IP_ADDRESS": 800,
+          "MAJOR": 557,
+          "NAME": 799,
+          "NATIONALITY": 800,
+          "NICKNAME": 451,
+          "PHONE_NUMBER": 800,
+          "POSITION": 675,
+          "RELIGION": 537,
+          "SCHOOL": 617,
+          "WEIGHT": 623,
+          "WORKPLACE": 796
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "ADDRESS": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "AGE": {
+            "NOT_PII": 100,
+            "PII": 400
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 58,
+            "PII": 400
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "CITY": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 344,
+            "PII": 400
+          },
+          "EMAIL": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "GENDER": {
+            "NOT_PII": 100,
+            "PII": 400
+          },
+          "HEIGHT": {
+            "NOT_PII": 218,
+            "PII": 400
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "MAJOR": {
+            "NOT_PII": 157,
+            "PII": 400
+          },
+          "NAME": {
+            "NOT_PII": 399,
+            "PII": 400
+          },
+          "NATIONALITY": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "NICKNAME": {
+            "NOT_PII": 51,
+            "PII": 400
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 400,
+            "PII": 400
+          },
+          "POSITION": {
+            "NOT_PII": 275,
+            "PII": 400
+          },
+          "RELIGION": {
+            "NOT_PII": 137,
+            "PII": 400
+          },
+          "SCHOOL": {
+            "NOT_PII": 217,
+            "PII": 400
+          },
+          "WEIGHT": {
+            "NOT_PII": 223,
+            "PII": 400
+          },
+          "WORKPLACE": {
+            "NOT_PII": 396,
+            "PII": 400
+          }
+        },
+        "sha256": "f79f825f49f1b275d85705c5e0fb659dc1fbb9c9683914e377bb1ed7d1dcd9ab"
+      },
+      "valid.clean.jsonl": {
+        "rows": 1984,
+        "labels": {
+          "NOT_PII": 834,
+          "PII": 1150
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 100,
+          "ADDRESS": 100,
+          "AGE": 63,
+          "BIRTHDATE": 100,
+          "BLOOD_TYPE": 57,
+          "CARD_NUMBER": 100,
+          "CITY": 100,
+          "DEPARTMENT": 93,
+          "EMAIL": 100,
+          "EMPLOYEE_ID": 100,
+          "GENDER": 62,
+          "HEIGHT": 77,
+          "IP_ADDRESS": 100,
+          "MAJOR": 70,
+          "NAME": 100,
+          "NATIONALITY": 100,
+          "NICKNAME": 56,
+          "PHONE_NUMBER": 100,
+          "POSITION": 84,
+          "RELIGION": 67,
+          "SCHOOL": 77,
+          "WEIGHT": 78,
+          "WORKPLACE": 100
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "AGE": {
+            "NOT_PII": 13,
+            "PII": 50
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 7,
+            "PII": 50
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 43,
+            "PII": 50
+          },
+          "EMAIL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "GENDER": {
+            "NOT_PII": 12,
+            "PII": 50
+          },
+          "HEIGHT": {
+            "NOT_PII": 27,
+            "PII": 50
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "MAJOR": {
+            "NOT_PII": 20,
+            "PII": 50
+          },
+          "NAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NATIONALITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NICKNAME": {
+            "NOT_PII": 6,
+            "PII": 50
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "POSITION": {
+            "NOT_PII": 34,
+            "PII": 50
+          },
+          "RELIGION": {
+            "NOT_PII": 17,
+            "PII": 50
+          },
+          "SCHOOL": {
+            "NOT_PII": 27,
+            "PII": 50
+          },
+          "WEIGHT": {
+            "NOT_PII": 28,
+            "PII": 50
+          },
+          "WORKPLACE": {
+            "NOT_PII": 50,
+            "PII": 50
+          }
+        },
+        "sha256": "6bebcbb5780f1f150e04ede9871592d31e0da302b76105bf2b5712bbc7ba7fe2"
+      },
+      "test.clean.jsonl": {
+        "rows": 1983,
+        "labels": {
+          "NOT_PII": 833,
+          "PII": 1150
+        },
+        "tags": {
+          "ACCOUNT_NUMBER": 100,
+          "ADDRESS": 100,
+          "AGE": 63,
+          "BIRTHDATE": 100,
+          "BLOOD_TYPE": 57,
+          "CARD_NUMBER": 100,
+          "CITY": 100,
+          "DEPARTMENT": 93,
+          "EMAIL": 100,
+          "EMPLOYEE_ID": 100,
+          "GENDER": 62,
+          "HEIGHT": 77,
+          "IP_ADDRESS": 100,
+          "MAJOR": 70,
+          "NAME": 100,
+          "NATIONALITY": 100,
+          "NICKNAME": 56,
+          "PHONE_NUMBER": 100,
+          "POSITION": 84,
+          "RELIGION": 67,
+          "SCHOOL": 77,
+          "WEIGHT": 78,
+          "WORKPLACE": 99
+        },
+        "strata": {
+          "ACCOUNT_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "AGE": {
+            "NOT_PII": 13,
+            "PII": 50
+          },
+          "BIRTHDATE": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "BLOOD_TYPE": {
+            "NOT_PII": 7,
+            "PII": 50
+          },
+          "CARD_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "CITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "DEPARTMENT": {
+            "NOT_PII": 43,
+            "PII": 50
+          },
+          "EMAIL": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "EMPLOYEE_ID": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "GENDER": {
+            "NOT_PII": 12,
+            "PII": 50
+          },
+          "HEIGHT": {
+            "NOT_PII": 27,
+            "PII": 50
+          },
+          "IP_ADDRESS": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "MAJOR": {
+            "NOT_PII": 20,
+            "PII": 50
+          },
+          "NAME": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NATIONALITY": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "NICKNAME": {
+            "NOT_PII": 6,
+            "PII": 50
+          },
+          "PHONE_NUMBER": {
+            "NOT_PII": 50,
+            "PII": 50
+          },
+          "POSITION": {
+            "NOT_PII": 34,
+            "PII": 50
+          },
+          "RELIGION": {
+            "NOT_PII": 17,
+            "PII": 50
+          },
+          "SCHOOL": {
+            "NOT_PII": 27,
+            "PII": 50
+          },
+          "WEIGHT": {
+            "NOT_PII": 28,
+            "PII": 50
+          },
+          "WORKPLACE": {
+            "NOT_PII": 49,
+            "PII": 50
+          }
+        },
+        "sha256": "11bca5e38fecf61b4dcd10861d5a711a557aa730020686f4893072e34f148f8c"
+      }
+    },
+    "total_rows": 19842,
+    "pairwise_overlap": {
+      "train__valid": 0,
+      "train__test": 0,
+      "valid__test": 0
+    }
+  }
+}

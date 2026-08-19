@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# PyTorch 2.8.0+cu128 was used in the recorded training run. Install the
+# CUDA-matched PyTorch wheel for the target machine before this file if needed.
+torch==2.8.0
+# Remaining dependency ranges are from the original RunPod training package.
+transformers>=4.51,<5
+datasets>=3.5,<5
+accelerate>=1.6,<2
+peft>=0.15,<1
+bitsandbytes>=0.45,<1
+huggingface_hub>=0.34,<1
+hf_xet>=1.1.5,<2
+safetensors>=0.5.3,<1
+tensorboard>=2.18,<3
