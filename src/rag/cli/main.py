@@ -1285,7 +1285,7 @@ def demo(
             )
         )
         if open_report:
-            webbrowser.open(dashboard_path.as_uri())
+            webbrowser.open(dashboard_path.resolve().as_uri())
     else:
         console.print(
             f"\n[yellow]대시보드 파일을 찾지 못했습니다:[/yellow] {dashboard_path}"

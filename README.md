@@ -15,19 +15,38 @@
 
 ## 빠른 시작 (심사위원용 원커맨드 데모)
 
-전체 데이터셋을 준비할 필요 없이, 저장소를 클론한 직후 아래 네 줄이면 전체 파이프라인
+전체 데이터셋을 준비할 필요 없이, 저장소를 클론한 직후 아래 명령어로 전체 파이프라인
 (인덱싱 → 공격 → 한국형 PII 탐지 → HTML 리포트)을 바로 체험할 수 있습니다.
 
+### macOS
 ```bash
-pip install -e .            # 실행에 필요한 최소 의존성만 설치 (개발 도구 제외)
-ollama serve &              # 로컬 LLM 서버 기동 (별도 터미널에서 실행해도 됩니다)
-ollama pull qwen2.5:3b      # 응답 생성 모델 내려받기 (약 2GB, 최초 1회)
-python -m rag demo          # 소형 데모셋으로 대표 시나리오 실행 후 HTML 리포트 자동 오픈
+pip install -e .                        # 실행에 필요한 최소 의존성만 설치 (개발 도구 제외)
+brew install ollama && ollama serve &   # Ollama 설치 및 서버 백그라운드 기동
+ollama pull qwen2.5:3b                  # 응답 생성 모델 내려받기 (약 2GB, 최초 1회)
+python -m rag demo                      # 소형 데모셋으로 대표 시나리오 실행 후 HTML 리포트 자동 오픈
+```
+
+### Linux (Ubuntu 등)
+```bash
+pip install -e .                        # 실행에 필요한 최소 의존성만 설치 (개발 도구 제외)
+curl -fsSL https://ollama.com/install.sh | sh && ollama serve &  # Ollama 설치 및 서버 백그라운드 기동
+ollama pull qwen2.5:3b                  # 응답 생성 모델 내려받기 (약 2GB, 최초 1회)
+python -m rag demo                      # 소형 데모셋으로 대표 시나리오 실행 후 HTML 리포트 자동 오픈
+```
+
+### Windows (PowerShell)
+```powershell
+pip install -e .                        # 실행에 필요한 최소 의존성만 설치 (개발 도구 제외)
+winget install Ollama.Ollama            # Ollama 설치 (또는 https://ollama.com/download/windows 에서 다운로드)
+# ⚠️ 설치 완료 후 현재 PowerShell 창을 닫고 새 PowerShell 창을 열어 아래 명령을 진행하세요.
+ollama pull qwen2.5:3b                  # 응답 생성 모델 내려받기 (약 2GB, 최초 1회)
+python -m rag demo                      # 소형 데모셋으로 대표 시나리오 실행 후 HTML 리포트 자동 오픈
 ```
 
 - **로컬 LLM 서버(Ollama)가 반드시 떠 있어야 합니다** — 안 떠 있으면 `python -m rag demo` 가
   실행 전에 안내 메시지를 내고 중단합니다(`cli/main.py:_preflight_local_generator`). Ollama
   설치는 아래 [2.3](#23-로컬-llm-준비-필수) 참고.
+- 💡 **Windows PowerShell 주의사항**: PowerShell에서는 `&` 백그라운드 연산자를 사용할 수 없습니다. Windows용 Ollama는 설치 후 작업 표시줄(트레이 아이콘)에서 백그라운드로 자동 실행되므로 `ollama serve`를 별도로 띄우지 않아도 되며, 수동 구동 시 `Start-Process ollama -ArgumentList "serve"` 또는 별도 터미널 창을 사용하세요.
 - 실행되는 것: 소형 데모 코퍼스(`data/documents/demo/`) 인덱싱 → `NORMAL`(기준선) +
   `R2`(검색 데이터 유출) 실행 → PII 탐지 → `data/results/<run_id>/report_dashboard.html` 생성.
 - 데모 인덱스는 `data/indexes/_demo/` 에 **격리 생성**되어 실제 인덱스를 덮어쓰지 않습니다.
@@ -83,11 +102,30 @@ python -m rag
 
 #### (1) 응답 생성기 — 필수
 
+Ollama 설치 및 모델 준비 과정은 OS별로 다음과 같습니다.
+
+##### macOS
 ```bash
-brew install ollama          # macOS. Linux: curl -fsSL https://ollama.com/install.sh | sh
-ollama serve                 # 별도 터미널에서 계속 띄워 둡니다
+brew install ollama          # Ollama 설치
+ollama serve &               # 서버 기동 (별도 터미널에서 실행 가능)
 ollama pull qwen2.5:3b       # 기본 생성 모델 (약 2GB)
 ```
+
+##### Linux (Ubuntu 등)
+```bash
+curl -fsSL https://ollama.com/install.sh | sh  # Ollama 설치
+ollama serve &               # 서버 기동 (별도 터미널에서 실행 가능)
+ollama pull qwen2.5:3b       # 기본 생성 모델 (약 2GB)
+```
+
+##### Windows (PowerShell)
+```powershell
+winget install Ollama.Ollama # 설치 (또는 https://ollama.com/download/windows 다운로드)
+# ⚠️ 설치 후 현재 PowerShell 창을 닫고 새 PowerShell 창을 열어 진행합니다.
+ollama pull qwen2.5:3b       # 기본 생성 모델 (약 2GB)
+```
+
+> 💡 **PowerShell `&` 연산자 주의**: PowerShell에서는 `&` 백그라운드 연산자를 지원하지 않아 `AmpersandNotAllowed` 에러가 발생합니다. Windows 환경에서는 설치 시 트레이에서 자동 실행되므로 `ollama serve` 명령이 필요 없으며, 필요 시 `Start-Process ollama -ArgumentList "serve"` 또는 별도 터미널 창에서 사용하세요.
 
 `config/default.yaml` 의 기본값이 `generator.provider: "local"` · `generator.local.model: "qwen2.5:3b"`
 입니다. 서버가 응답하지 않거나 모델이 등록되지 않았으면 `rag run` / `rag demo` 가 **질의를 시작하기
@@ -449,7 +487,8 @@ python -m rag run --all-scenarios -c config/anythingllm.yaml --auto-report
 ```bash
 pip install -e .                        # 실행용 (심사·사용자)
 pip install -e ".[dev]"                 # 기여자용 (pytest, ruff 포함)
-ollama serve                            # 로컬 LLM 서버 (별도 터미널)
+# Ollama 설치 (macOS: brew install ollama | Linux: curl ... | Windows: winget install Ollama.Ollama)
+ollama serve                            # 로컬 LLM 서버 (macOS/Linux. Windows는 설치 시 자동 실행)
 ollama pull qwen2.5:3b                  # 응답 생성 모델
 ollama create korean-pii -f Modelfile   # PII 교차검증 sLLM (~/korean-pii 에서)
 ```
